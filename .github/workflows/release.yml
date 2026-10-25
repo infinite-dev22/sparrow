@@ -301,7 +301,7 @@ jobs:
           verbose: true
 
       - name: "Staple Release Build"
-        uses: sparrow/xcode-staple@062485d6eeafe841c18a412f012e80f49e23c517
+        uses: lapce/xcode-staple@062485d6eeafe841c18a412f012e80f49e23c517
         with:
           product-path: "./target/release-lto/macos/sparrow-macos.dmg"
 
