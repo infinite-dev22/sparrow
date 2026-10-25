@@ -1,5 +1,5 @@
 {
-    "image": "ghcr.io/lapce/lapdev-devcontainer-lapce",
+    "image": "ghcr.io/sparrow/lapdev-devcontainer-sparrow",
     "forwardPorts": [6080],
     "portsAttributes": {
         "6080": {

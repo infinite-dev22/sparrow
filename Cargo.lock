@@ -926,7 +926,7 @@ dependencies = [
  "nom",
  "pathdiff",
  "serde",
- "toml 0.5.9",
+ "toml",
 ]
 
 [[package]]
@@ -2984,172 +2984,6 @@ dependencies = [
  "arrayvec",
  "serde",
  "smallvec",
-]
-
-[[package]]
-name = "lapce"
-version = "0.4.6"
-dependencies = [
- "lapce-app",
- "lapce-proxy",
-]
-
-[[package]]
-name = "lapce-app"
-version = "0.4.6"
-dependencies = [
- "Inflector",
- "alacritty_terminal",
- "anyhow",
- "backtrace",
- "base64 0.21.7",
- "bytemuck",
- "chrono",
- "clap",
- "config",
- "criterion",
- "crossbeam-channel",
- "dmg",
- "flate2",
- "floem",
- "fs_extra",
- "globset",
- "im",
- "include_dir",
- "indexmap",
- "interprocess",
- "itertools 0.12.1",
- "lapce-core",
- "lapce-proxy",
- "lapce-rpc",
- "lapce-xi-rope",
- "lsp-types",
- "notify",
- "nucleo",
- "once_cell",
- "open",
- "parking_lot",
- "percent-encoding",
- "pulldown-cmark",
- "rayon",
- "regex",
- "reqwest",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "smallvec",
- "structdesc",
- "strum 0.27.2",
- "strum_macros 0.27.2",
- "tar",
- "tempfile",
- "thiserror 1.0.69",
- "toml 0.8.2",
- "toml_edit 0.20.2",
- "tracing 0.2.0",
- "tracing-appender",
- "tracing-log",
- "tracing-subscriber",
- "unicode-width",
- "url",
- "windows-sys 0.60.2",
- "zip",
- "zstd",
-]
-
-[[package]]
-name = "lapce-core"
-version = "0.4.6"
-dependencies = [
- "ahash",
- "anyhow",
- "arc-swap",
- "directories",
- "floem-editor-core",
- "git2",
- "hashbrown 0.14.5",
- "include_dir",
- "itertools 0.12.1",
- "lapce-rpc",
- "lapce-xi-rope",
- "libloading",
- "lsp-types",
- "once_cell",
- "regex",
- "remain",
- "slotmap",
- "strum 0.27.2",
- "strum_macros 0.27.2",
- "thiserror 1.0.69",
- "tracing 0.2.0",
- "tree-sitter",
-]
-
-[[package]]
-name = "lapce-proxy"
-version = "0.4.6"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "clap",
- "crossbeam-channel",
- "directories",
- "dyn-clone",
- "flate2",
- "floem-editor-core",
- "git2",
- "globset",
- "grep-matcher",
- "grep-regex",
- "grep-searcher",
- "ignore",
- "indexmap",
- "interprocess",
- "jsonrpc-lite",
- "lapce-core",
- "lapce-rpc",
- "lapce-xi-rope",
- "libc",
- "locale_config",
- "lsp-types",
- "notify",
- "parking_lot",
- "polling",
- "psp-types",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tar",
- "toml 0.8.2",
- "tracing 0.2.0",
- "tracing-log",
- "trash",
- "url",
- "walkdir",
- "wasi-common",
- "wasi-experimental-http-wasmtime",
- "wasmtime",
- "wasmtime-wasi",
- "zstd",
-]
-
-[[package]]
-name = "lapce-rpc"
-version = "0.4.6"
-dependencies = [
- "anyhow",
- "crossbeam-channel",
- "human-sort",
- "indexmap",
- "lapce-xi-rope",
- "lsp-types",
- "parking_lot",
- "serde",
- "serde_json",
- "tracing 0.2.0",
- "url",
 ]
 
 [[package]]
@@ -5229,6 +5063,172 @@ dependencies = [
 ]
 
 [[package]]
+name = "sparrow"
+version = "0.4.6"
+dependencies = [
+ "sparrow-app",
+ "sparrow-proxy",
+]
+
+[[package]]
+name = "sparrow-app"
+version = "0.4.6"
+dependencies = [
+ "Inflector",
+ "alacritty_terminal",
+ "anyhow",
+ "backtrace",
+ "base64 0.21.7",
+ "bytemuck",
+ "chrono",
+ "clap",
+ "config",
+ "criterion",
+ "crossbeam-channel",
+ "dmg",
+ "flate2",
+ "floem",
+ "fs_extra",
+ "globset",
+ "im",
+ "include_dir",
+ "indexmap",
+ "interprocess",
+ "itertools 0.12.1",
+ "lapce-xi-rope",
+ "lsp-types",
+ "notify",
+ "nucleo",
+ "once_cell",
+ "open",
+ "parking_lot",
+ "percent-encoding",
+ "pulldown-cmark",
+ "rayon",
+ "regex",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smallvec",
+ "sparrow-core",
+ "sparrow-proxy",
+ "sparrow-rpc",
+ "structdesc",
+ "strum 0.27.2",
+ "strum_macros 0.27.2",
+ "tar",
+ "tempfile",
+ "thiserror 1.0.69",
+ "toml",
+ "toml_edit 0.20.2",
+ "tracing 0.2.0",
+ "tracing-appender",
+ "tracing-log",
+ "tracing-subscriber",
+ "unicode-width",
+ "url",
+ "windows-sys 0.45.0",
+ "zip",
+ "zstd",
+]
+
+[[package]]
+name = "sparrow-core"
+version = "0.4.6"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "arc-swap",
+ "directories",
+ "floem-editor-core",
+ "git2",
+ "hashbrown 0.14.5",
+ "include_dir",
+ "itertools 0.12.1",
+ "lapce-xi-rope",
+ "libloading",
+ "lsp-types",
+ "once_cell",
+ "regex",
+ "remain",
+ "slotmap",
+ "sparrow-rpc",
+ "strum 0.27.2",
+ "strum_macros 0.27.2",
+ "thiserror 1.0.69",
+ "tracing 0.2.0",
+ "tree-sitter",
+]
+
+[[package]]
+name = "sparrow-proxy"
+version = "0.4.6"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "clap",
+ "crossbeam-channel",
+ "directories",
+ "dyn-clone",
+ "flate2",
+ "floem-editor-core",
+ "git2",
+ "globset",
+ "grep-matcher",
+ "grep-regex",
+ "grep-searcher",
+ "ignore",
+ "indexmap",
+ "interprocess",
+ "jsonrpc-lite",
+ "lapce-xi-rope",
+ "libc",
+ "locale_config",
+ "lsp-types",
+ "notify",
+ "parking_lot",
+ "polling",
+ "psp-types",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sparrow-core",
+ "sparrow-rpc",
+ "tar",
+ "toml",
+ "tracing 0.2.0",
+ "tracing-log",
+ "trash",
+ "url",
+ "walkdir",
+ "wasi-common",
+ "wasi-experimental-http-wasmtime",
+ "wasmtime",
+ "wasmtime-wasi",
+ "zstd",
+]
+
+[[package]]
+name = "sparrow-rpc"
+version = "0.4.6"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "human-sort",
+ "indexmap",
+ "lapce-xi-rope",
+ "lsp-types",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tracing 0.2.0",
+ "url",
+]
+
+[[package]]
 name = "spinning"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5721,18 +5721,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d82e1a7758622a465f8cee077614c73484dac5b836c02ff6a40d5d1010324d7"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "toml"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "185d8ab0dfbb35cf1399a6344d8484209c088f75f8f68230da55d48d95d43e3d"
-dependencies = [
- "serde",
- "serde_spanned",
- "toml_datetime 0.6.3",
- "toml_edit 0.20.2",
 ]
 
 [[package]]
@@ -6409,7 +6397,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "sha2",
- "toml 0.5.9",
+ "toml",
  "windows-sys 0.48.0",
  "zstd",
 ]

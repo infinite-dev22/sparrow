@@ -1,7 +1,7 @@
 #:schema ../extra/schemas/color-theme.json
 
 [color-theme]
-name = "Lapce Light"
+name = "sparrow Light"
 
 [ui]
 font-family = ""
@@ -88,38 +88,38 @@ dim-text = "#A0A1A7"
 "bracket.unpaired" = "$red"
 
 [color-theme.ui]
-"lapce.error" = "#E51400"
-"lapce.warn" = "#E9A700"
-"lapce.dropdown_shadow" = "#B4B4B4"
-"lapce.border" = "#B4B4B4"
-"lapce.scroll_bar" = "#B4B4B4BB"
+"sparrow.error" = "#E51400"
+"sparrow.warn" = "#E9A700"
+"sparrow.dropdown_shadow" = "#B4B4B4"
+"sparrow.border" = "#B4B4B4"
+"sparrow.scroll_bar" = "#B4B4B4BB"
 
-"lapce.button.primary.background" = "#50a14f"
-"lapce.button.primary.foreground" = "$white"
+"sparrow.button.primary.background" = "#50a14f"
+"sparrow.button.primary.foreground" = "$white"
 
 # tab
-"lapce.tab.active.background" = "$primary-background"
-"lapce.tab.active.foreground" = "$text"
-"lapce.tab.active.underline" = "#528BFF"
+"sparrow.tab.active.background" = "$primary-background"
+"sparrow.tab.active.foreground" = "$text"
+"sparrow.tab.active.underline" = "#528BFF"
 
-"lapce.tab.inactive.background" = "#EAEAEB"
-"lapce.tab.inactive.foreground" = "$text"
-"lapce.tab.inactive.underline" = "#528BFF77"
+"sparrow.tab.inactive.background" = "#EAEAEB"
+"sparrow.tab.inactive.foreground" = "$text"
+"sparrow.tab.inactive.underline" = "#528BFF77"
 
-"lapce.tab.separator" = "#B4B4B4"
+"sparrow.tab.separator" = "#B4B4B4"
 
-"lapce.icon.active" = "$text"
-"lapce.icon.inactive" = "$dim-text"
+"sparrow.icon.active" = "$text"
+"sparrow.icon.inactive" = "$dim-text"
 
-"lapce.remote.icon" = "$white"
-"lapce.remote.local" = "#4078F2"
-"lapce.remote.connected" = "#50A14F"
-"lapce.remote.connecting" = "#C18401"
-"lapce.remote.disconnected" = "#E45649"
+"sparrow.remote.icon" = "$white"
+"sparrow.remote.local" = "#4078F2"
+"sparrow.remote.connected" = "#50A14F"
+"sparrow.remote.connecting" = "#C18401"
+"sparrow.remote.disconnected" = "#E45649"
 
-"lapce.plugin.name" = "#444444"
-"lapce.plugin.description" = "$text"
-"lapce.plugin.author" = "#707070"
+"sparrow.plugin.name" = "#444444"
+"sparrow.plugin.description" = "$text"
+"sparrow.plugin.author" = "#707070"
 
 "terminal.cursor" = "$text"
 "terminal.foreground" = "$text"
