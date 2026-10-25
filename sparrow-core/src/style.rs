@@ -1,7 +1,7 @@
 use std::str;
 
-use sparrow_rpc::style::{LineStyle, Style};
 use lapce_xi_rope::{LinesMetric, Rope, spans::Spans};
+use sparrow_rpc::style::{LineStyle, Style};
 
 pub const SCOPES: &[&str] = &[
     "constant",

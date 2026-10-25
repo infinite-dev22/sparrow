@@ -23,7 +23,9 @@ use super::{
     view::foldable_panel_section,
 };
 use crate::{
-    command::{CommandKind, InternalCommand, SparrowCommand, SparrowWorkbenchCommand},
+    command::{
+        CommandKind, InternalCommand, SparrowCommand, SparrowWorkbenchCommand,
+    },
     config::{color::SparrowColor, icon::SparrowIcons},
     editor::view::editor_view,
     settings::checkbox,
@@ -166,8 +168,9 @@ pub fn source_control_panel(
                             .border_color(config.color(SparrowColor::SPARROW_BORDER))
                             .hover(|s| {
                                 s.cursor(CursorStyle::Pointer).background(
-                                    config
-                                        .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                                    config.color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
                                 )
                             })
                             .active(|s| {

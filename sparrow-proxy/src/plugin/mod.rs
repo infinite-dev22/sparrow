@@ -20,16 +20,6 @@ use anyhow::{Result, anyhow};
 use crossbeam_channel::{Receiver, Sender};
 use dyn_clone::DynClone;
 use flate2::read::GzDecoder;
-use sparrow_core::directory::Directory;
-use sparrow_rpc::{
-    RequestId, RpcError,
-    core::CoreRpcHandler,
-    dap_types::{self, DapId, RunDebugConfig, SourceBreakpoint, ThreadId},
-    plugin::{PluginId, VoltInfo, VoltMetadata},
-    proxy::ProxyRpcHandler,
-    style::LineStyle,
-    terminal::TermId,
-};
 use lapce_xi_rope::{Rope, RopeDelta};
 use lsp_types::{
     CallHierarchyClientCapabilities, CallHierarchyIncomingCall,
@@ -76,6 +66,16 @@ use lsp_types::{
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
+use sparrow_core::directory::Directory;
+use sparrow_rpc::{
+    RequestId, RpcError,
+    core::CoreRpcHandler,
+    dap_types::{self, DapId, RunDebugConfig, SourceBreakpoint, ThreadId},
+    plugin::{PluginId, VoltInfo, VoltMetadata},
+    proxy::ProxyRpcHandler,
+    style::LineStyle,
+    terminal::TermId,
+};
 use tar::Archive;
 use tracing::error;
 

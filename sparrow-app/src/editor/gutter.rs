@@ -6,8 +6,8 @@ use floem::{
     text::{Attrs, AttrsList, FamilyOwned, TextLayout},
 };
 use im::HashMap;
-use sparrow_core::{buffer::rope_text::RopeText, mode::Mode};
 use serde::{Deserialize, Serialize};
+use sparrow_core::{buffer::rope_text::RopeText, mode::Mode};
 
 use super::{EditorData, view::changes_colors_screen};
 use crate::config::{SparrowConfig, color::SparrowColor};

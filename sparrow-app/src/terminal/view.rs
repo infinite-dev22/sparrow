@@ -21,11 +21,11 @@ use floem::{
     text::{Attrs, AttrsList, FamilyOwned, TextLayout, Weight},
     views::editor::{core::register::Clipboard, text::SystemClipboard},
 };
-use sparrow_core::mode::Mode;
-use sparrow_rpc::{proxy::ProxyRpcHandler, terminal::TermId};
 use lsp_types::Position;
 use parking_lot::RwLock;
 use regex::Regex;
+use sparrow_core::mode::Mode;
+use sparrow_rpc::{proxy::ProxyRpcHandler, terminal::TermId};
 use unicode_width::UnicodeWidthChar;
 
 use super::{panel::TerminalPanelData, raw::RawTerminal};

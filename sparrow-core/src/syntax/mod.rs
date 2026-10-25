@@ -19,12 +19,12 @@ use ahash::RandomState;
 use floem_editor_core::util::{matching_bracket_general, matching_pair_direction};
 use hashbrown::raw::RawTable;
 use itertools::Itertools;
-use sparrow_rpc::style::{LineStyle, Style};
 use lapce_xi_rope::{
     Interval, Rope,
     spans::{Spans, SpansBuilder},
 };
 use slotmap::{DefaultKey as LayerId, HopSlotMap};
+use sparrow_rpc::style::{LineStyle, Style};
 use thiserror::Error;
 use tree_sitter::{Node, Parser, Point, QueryCursor, Tree};
 
@@ -518,7 +518,9 @@ impl SyntaxLayers {
                 InjectionLanguageMarker::Filename(path) => {
                     SparrowLanguage::from_path_raw(path)
                 }
-                InjectionLanguageMarker::Shebang(id) => SparrowLanguage::from_name(id),
+                InjectionLanguageMarker::Shebang(id) => {
+                    SparrowLanguage::from_name(id)
+                }
             };
             language
                 .map(get_highlight_config)

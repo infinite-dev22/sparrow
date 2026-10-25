@@ -11,8 +11,8 @@ use floem::{
 };
 use im::HashMap;
 use itertools::Itertools;
-use sparrow_rpc::file_line::FileLine;
 use lsp_types::{Location, SymbolKind, request::GotoImplementationResponse};
+use sparrow_rpc::file_line::FileLine;
 
 use super::position::PanelPosition;
 use crate::{

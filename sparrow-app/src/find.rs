@@ -4,16 +4,16 @@ use floem::{
     prelude::SignalTrack,
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
 };
-use sparrow_core::{
-    selection::{SelRegion, Selection},
-    word::WordCursor,
-};
 use lapce_xi_rope::{
     Cursor, Interval, Rope,
     find::{CaseMatching, find, is_multiline_regex},
 };
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
+use sparrow_core::{
+    selection::{SelRegion, Selection},
+    word::WordCursor,
+};
 
 const REGEX_SIZE_LIMIT: usize = 1000000;
 

@@ -41,7 +41,8 @@ impl SvgStore {
 
     pub fn get_default_svg(&mut self, name: &str) -> String {
         if !self.svgs.contains_key(name) {
-            let file = if name == "sparrow_remote.svg" || name == "sparrow_logo.svg" {
+            let file = if name == "sparrow_remote.svg" || name == "sparrow_logo.svg"
+            {
                 SPARROW_ICONS_DIR.get_file(name).unwrap()
             } else {
                 CODICONS_ICONS_DIR

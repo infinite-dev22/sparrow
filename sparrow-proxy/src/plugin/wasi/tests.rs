@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use sparrow_rpc::plugin::VoltMetadata;
 use serde_json::{Value, json};
+use sparrow_rpc::plugin::VoltMetadata;
 
 use super::{load_volt, unflatten_map};
 

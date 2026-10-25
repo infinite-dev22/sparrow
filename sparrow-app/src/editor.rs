@@ -32,6 +32,14 @@ use floem::{
     },
 };
 use itertools::Itertools;
+use lapce_xi_rope::{Rope, RopeDelta, Transformer};
+use lsp_types::{
+    CodeActionResponse, CompletionItem, CompletionTextEdit, GotoDefinitionResponse,
+    HoverContents, InlayHint, InlayHintLabel, InlineCompletionTriggerKind, Location,
+    MarkedString, MarkupKind, Range, TextEdit,
+};
+use nucleo::Utf32Str;
+use serde::{Deserialize, Serialize};
 use sparrow_core::{
     buffer::{
         InvalLines,
@@ -49,14 +57,6 @@ use sparrow_core::{
     selection::{InsertDrift, SelRegion, Selection},
 };
 use sparrow_rpc::{buffer::BufferId, plugin::PluginId, proxy::ProxyResponse};
-use lapce_xi_rope::{Rope, RopeDelta, Transformer};
-use lsp_types::{
-    CodeActionResponse, CompletionItem, CompletionTextEdit, GotoDefinitionResponse,
-    HoverContents, InlayHint, InlayHintLabel, InlineCompletionTriggerKind, Location,
-    MarkedString, MarkupKind, Range, TextEdit,
-};
-use nucleo::Utf32Str;
-use serde::{Deserialize, Serialize};
 use view::StickyHeaderInfo;
 
 use self::{
@@ -64,7 +64,9 @@ use self::{
     location::{EditorLocation, EditorPosition},
 };
 use crate::{
-    command::{CommandKind, InternalCommand, SparrowCommand, SparrowWorkbenchCommand},
+    command::{
+        CommandKind, InternalCommand, SparrowCommand, SparrowWorkbenchCommand,
+    },
     completion::CompletionStatus,
     config::SparrowConfig,
     db::SparrowDb,

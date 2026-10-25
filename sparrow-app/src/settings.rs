@@ -20,11 +20,11 @@ use floem::{
 };
 use indexmap::IndexMap;
 use inflector::Inflector;
-use sparrow_core::{buffer::rope_text::RopeText, mode::Mode};
-use sparrow_rpc::plugin::VoltID;
 use lapce_xi_rope::Rope;
 use serde::Serialize;
 use serde_json::Value;
+use sparrow_core::{buffer::rope_text::RopeText, mode::Mode};
+use sparrow_rpc::plugin::VoltID;
 
 use crate::{
     command::CommandExecuted,
@@ -416,7 +416,9 @@ pub fn settings_view(
             s.padding_horiz(20.0)
                 .width_pct(100.0)
                 .apply_if(kind == current_kind.get(), |s| {
-                    s.background(config.color(SparrowColor::PANEL_CURRENT_BACKGROUND))
+                    s.background(
+                        config.color(SparrowColor::PANEL_CURRENT_BACKGROUND),
+                    )
                 })
                 .hover(|s| {
                     s.cursor(CursorStyle::Pointer).background(
@@ -1021,8 +1023,9 @@ fn color_section_list(
                                     .apply_if(same, |s| s.hide())
                                     .active(|s| {
                                         s.background(
-                                            config
-                                                .color(SparrowColor::PANEL_BACKGROUND),
+                                            config.color(
+                                                SparrowColor::PANEL_BACKGROUND,
+                                            ),
                                         )
                                     })
                             })

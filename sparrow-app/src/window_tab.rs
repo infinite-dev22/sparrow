@@ -30,6 +30,11 @@ use floem::{
 use im::HashMap;
 use indexmap::IndexMap;
 use itertools::Itertools;
+use lsp_types::{
+    CodeActionOrCommand, CodeLens, Diagnostic, ProgressParams, ProgressToken,
+    ShowMessageParams,
+};
+use serde_json::Value;
 use sparrow_core::{
     command::FocusCommand, cursor::CursorAffinity, directory::Directory, meta,
     mode::Mode, register::Register,
@@ -44,11 +49,6 @@ use sparrow_rpc::{
     source_control::FileDiff,
     terminal::TermId,
 };
-use lsp_types::{
-    CodeActionOrCommand, CodeLens, Diagnostic, ProgressParams, ProgressToken,
-    ShowMessageParams,
-};
-use serde_json::Value;
 use tracing::{Level, debug, error, event};
 
 use crate::{
@@ -62,7 +62,7 @@ use crate::{
     completion::{CompletionData, CompletionStatus},
     config::SparrowConfig,
     db::SparrowDb,
-    debug::{DapData, SparrowBreakpoint, RunDebugMode, RunDebugProcess},
+    debug::{DapData, RunDebugMode, RunDebugProcess, SparrowBreakpoint},
     doc::DocContent,
     editor::{
         InlineFindDirection,

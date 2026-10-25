@@ -81,7 +81,9 @@ impl PaletteKind {
             PaletteKind::WorkspaceSymbol => {
                 Some(SparrowWorkbenchCommand::PaletteWorkspaceSymbol)
             }
-            PaletteKind::Workspace => Some(SparrowWorkbenchCommand::PaletteWorkspace),
+            PaletteKind::Workspace => {
+                Some(SparrowWorkbenchCommand::PaletteWorkspace)
+            }
             PaletteKind::Command => Some(SparrowWorkbenchCommand::PaletteCommand),
             PaletteKind::File => Some(SparrowWorkbenchCommand::Palette),
             PaletteKind::FileChooser => None,
@@ -95,9 +97,13 @@ impl PaletteKind {
             PaletteKind::RunAndDebug => {
                 Some(SparrowWorkbenchCommand::PaletteRunAndDebug)
             }
-            PaletteKind::ColorTheme => Some(SparrowWorkbenchCommand::ChangeColorTheme),
+            PaletteKind::ColorTheme => {
+                Some(SparrowWorkbenchCommand::ChangeColorTheme)
+            }
             PaletteKind::IconTheme => Some(SparrowWorkbenchCommand::ChangeIconTheme),
-            PaletteKind::Language => Some(SparrowWorkbenchCommand::ChangeFileLanguage),
+            PaletteKind::Language => {
+                Some(SparrowWorkbenchCommand::ChangeFileLanguage)
+            }
             PaletteKind::LineEnding => {
                 Some(SparrowWorkbenchCommand::ChangeFileLineEnding)
             }

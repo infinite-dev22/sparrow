@@ -7,8 +7,8 @@ use std::{
     time::Instant,
 };
 
-use sparrow_rpc::terminal::TermId;
 use parking_lot::RwLock;
+use sparrow_rpc::terminal::TermId;
 
 use super::raw::RawTerminal;
 

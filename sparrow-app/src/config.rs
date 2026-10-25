@@ -7,13 +7,13 @@ use std::{
 use ::core::slice;
 use floem::{peniko::Color, prelude::palette::css};
 use itertools::Itertools;
-use sparrow_core::directory::Directory;
-use sparrow_proxy::plugin::wasi::find_all_volts;
-use sparrow_rpc::plugin::VoltID;
 use lsp_types::{CompletionItemKind, SymbolKind};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use serde::Deserialize;
+use sparrow_core::directory::Directory;
+use sparrow_proxy::plugin::wasi::find_all_volts;
+use sparrow_rpc::plugin::VoltID;
 use strum::VariantNames;
 use tracing::error;
 
@@ -47,7 +47,8 @@ const DEFAULT_LIGHT_THEME: &str = include_str!("../../defaults/light-theme.toml"
 const DEFAULT_DARK_THEME: &str = include_str!("../../defaults/dark-theme.toml");
 const DEFAULT_ICON_THEME: &str = include_str!("../../defaults/icon-theme.toml");
 
-static DEFAULT_CONFIG: Lazy<config::Config> = Lazy::new(SparrowConfig::default_config);
+static DEFAULT_CONFIG: Lazy<config::Config> =
+    Lazy::new(SparrowConfig::default_config);
 static DEFAULT_SPARROW_CONFIG: Lazy<SparrowConfig> =
     Lazy::new(SparrowConfig::default_sparrow_config);
 

@@ -24,12 +24,12 @@ use floem::{
     unit::PxPct,
     views::Decorators,
 };
+use lapce_xi_rope::Rope;
 use sparrow_core::{
     buffer::rope_text::RopeText,
     cursor::{Cursor, CursorMode},
     selection::Selection,
 };
-use lapce_xi_rope::Rope;
 
 use crate::{
     config::{SparrowConfig, color::SparrowColor},
@@ -790,7 +790,9 @@ impl View for TextInput {
 
                 cx.stroke(
                     &line,
-                    self.config.get_untracked().color(SparrowColor::EDITOR_CARET),
+                    self.config
+                        .get_untracked()
+                        .color(SparrowColor::EDITOR_CARET),
                     &Stroke::new(2.0),
                 );
             }

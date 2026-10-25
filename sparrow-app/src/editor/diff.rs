@@ -10,13 +10,13 @@ use floem::{
         Decorators, clip, dyn_stack, editor::id::EditorId, empty, label, stack, svg,
     },
 };
+use lapce_xi_rope::Rope;
+use serde::{Deserialize, Serialize};
 use sparrow_core::buffer::{
     diff::{DiffExpand, DiffLines, expand_diff_lines, rope_diff},
     rope_text::RopeText,
 };
 use sparrow_rpc::{buffer::BufferId, proxy::ProxyResponse};
-use lapce_xi_rope::Rope;
-use serde::{Deserialize, Serialize};
 
 use super::{EditorData, EditorViewKind};
 use crate::{
@@ -368,12 +368,14 @@ pub fn diff_show_more_section_view(
             label(move || format!("{} Hidden Lines", section.lines)),
             label(|| "|".to_string()).style(|s| s.margin_left(10.0)),
             stack((
-                svg(move || config.get().ui_svg(SparrowIcons::FOLD)).style(move |s| {
-                    let config = config.get();
-                    let size = config.ui.icon_size() as f32;
-                    s.size(size, size)
-                        .color(config.color(SparrowColor::EDITOR_FOREGROUND))
-                }),
+                svg(move || config.get().ui_svg(SparrowIcons::FOLD)).style(
+                    move |s| {
+                        let config = config.get();
+                        let size = config.ui.icon_size() as f32;
+                        s.size(size, size)
+                            .color(config.color(SparrowColor::EDITOR_FOREGROUND))
+                    },
+                ),
                 label(|| "Expand All".to_string()).style(|s| s.margin_left(6.0)),
             ))
             .on_event_stop(EventListener::PointerDown, move |_| {})

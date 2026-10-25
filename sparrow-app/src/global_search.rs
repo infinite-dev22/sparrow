@@ -7,9 +7,9 @@ use floem::{
     views::VirtualVector,
 };
 use indexmap::IndexMap;
+use lapce_xi_rope::Rope;
 use sparrow_core::{mode::Mode, selection::Selection};
 use sparrow_rpc::proxy::{ProxyResponse, SearchMatch};
-use lapce_xi_rope::Rope;
 
 use crate::{
     command::{CommandExecuted, CommandKind},

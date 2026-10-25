@@ -225,51 +225,52 @@ fn available_view(plugin: PluginData, core_rpc: CoreRpcHandler) -> impl View {
     let internal_command = plugin.common.internal_command;
 
     let local_plugin = plugin.clone();
-    let install_button =
-        move |id: VoltID, info: RwSignal<VoltInfo>, installing: RwSignal<bool>| {
-            let plugin = local_plugin.clone();
-            let installed = create_memo(move |_| {
-                installed.with(|installed| installed.contains_key(&id))
-            });
-            label(move || {
-                if installed.get() {
-                    "Installed".to_string()
-                } else if installing.get() {
-                    "Installing".to_string()
-                } else {
-                    "Install".to_string()
-                }
-            })
-            .disabled(move || installed.get() || installing.get())
-            .on_click_stop(move |_| {
-                plugin.install_volt(info.get_untracked());
-            })
-            .style(move |s| {
-                let config = config.get();
-                s.color(config.color(SparrowColor::SPARROW_BUTTON_PRIMARY_FOREGROUND))
-                    .background(
-                        config.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND),
+    let install_button = move |id: VoltID,
+                               info: RwSignal<VoltInfo>,
+                               installing: RwSignal<bool>| {
+        let plugin = local_plugin.clone();
+        let installed = create_memo(move |_| {
+            installed.with(|installed| installed.contains_key(&id))
+        });
+        label(move || {
+            if installed.get() {
+                "Installed".to_string()
+            } else if installing.get() {
+                "Installing".to_string()
+            } else {
+                "Install".to_string()
+            }
+        })
+        .disabled(move || installed.get() || installing.get())
+        .on_click_stop(move |_| {
+            plugin.install_volt(info.get_untracked());
+        })
+        .style(move |s| {
+            let config = config.get();
+            s.color(config.color(SparrowColor::SPARROW_BUTTON_PRIMARY_FOREGROUND))
+                .background(
+                    config.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND),
+                )
+                .margin_left(6.0)
+                .padding_horiz(6.0)
+                .border_radius(6.0)
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer).background(
+                        config
+                            .color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND)
+                            .multiply_alpha(0.8),
                     )
-                    .margin_left(6.0)
-                    .padding_horiz(6.0)
-                    .border_radius(6.0)
-                    .hover(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config
-                                .color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND)
-                                .multiply_alpha(0.8),
-                        )
-                    })
-                    .active(|s| {
-                        s.background(
-                            config
-                                .color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND)
-                                .multiply_alpha(0.6),
-                        )
-                    })
-                    .disabled(|s| s.background(config.color(SparrowColor::EDITOR_DIM)))
-            })
-        };
+                })
+                .active(|s| {
+                    s.background(
+                        config
+                            .color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND)
+                            .multiply_alpha(0.6),
+                    )
+                })
+                .disabled(|s| s.background(config.color(SparrowColor::EDITOR_DIM)))
+        })
+    };
 
     let view_fn = move |(_, id, volt): (usize, VoltID, AvailableVoltData)| {
         let info = volt.info.get_untracked();

@@ -5,9 +5,9 @@ use floem::{
     peniko::kurbo::Rect,
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate},
 };
+use lsp_types::CodeActionOrCommand;
 use sparrow_core::{command::FocusCommand, mode::Mode, movement::Movement};
 use sparrow_rpc::plugin::PluginId;
-use lsp_types::CodeActionOrCommand;
 
 use crate::{
     command::{CommandExecuted, CommandKind, InternalCommand},

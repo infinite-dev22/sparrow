@@ -15,8 +15,8 @@ use floem::{
     },
     views::editor::id::EditorId,
 };
-use sparrow_rpc::plugin::VoltID;
 use serde::{Deserialize, Serialize};
+use sparrow_rpc::plugin::VoltID;
 
 use crate::{
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},

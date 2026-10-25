@@ -5,15 +5,15 @@ use floem::{
     reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::editor::{id::EditorId, text::Document},
 };
-use sparrow_core::{
-    buffer::rope_text::RopeText, movement::Movement, rope_text_pos::RopeTextPosition,
-};
-use sparrow_rpc::{plugin::PluginId, proxy::ProxyRpcHandler};
 use lsp_types::{
     CompletionItem, CompletionResponse, CompletionTextEdit, InsertTextFormat,
     Position,
 };
 use nucleo::Utf32Str;
+use sparrow_core::{
+    buffer::rope_text::RopeText, movement::Movement, rope_text_pos::RopeTextPosition,
+};
+use sparrow_rpc::{plugin::PluginId, proxy::ProxyRpcHandler};
 
 use crate::{config::SparrowConfig, editor::EditorData, snippet::Snippet};
 

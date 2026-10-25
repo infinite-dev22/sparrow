@@ -10,10 +10,10 @@ use std::{
 
 use anyhow::{Result, anyhow};
 use floem_editor_core::buffer::rope_text::CharIndicesJoin;
-use sparrow_core::encoding::offset_utf8_to_utf16;
-use sparrow_rpc::buffer::BufferId;
 use lapce_xi_rope::{RopeDelta, interval::IntervalBounds, rope::Rope};
 use lsp_types::*;
+use sparrow_core::encoding::offset_utf8_to_utf16;
+use sparrow_rpc::buffer::BufferId;
 
 #[derive(Clone)]
 pub struct Buffer {

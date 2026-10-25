@@ -350,7 +350,8 @@ fn download_remote(
                 "https://github.com/infinite-dev22/sparrow/releases/download/{proxy_version}/{proxy_filename}.gz"
             );
             debug!("proxy download URI: {url}");
-            let mut resp = sparrow_proxy::get_url(url, None).expect("request failed");
+            let mut resp =
+                sparrow_proxy::get_url(url, None).expect("request failed");
             if resp.status().is_success() {
                 let mut out = std::fs::File::create(&local_proxy_file)
                     .expect("failed to create file");

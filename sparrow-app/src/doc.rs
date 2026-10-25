@@ -35,6 +35,16 @@ use floem::{
     },
 };
 use itertools::Itertools;
+use lapce_xi_rope::{
+    Interval, Rope, RopeDelta, Transformer,
+    spans::{Spans, SpansBuilder},
+};
+use lsp_types::{
+    CodeActionOrCommand, CodeLens, Diagnostic, DiagnosticSeverity,
+    DocumentSymbolResponse, InlayHint, InlayHintLabel, TextEdit,
+};
+use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use sparrow_core::{
     buffer::{
         Buffer, InvalLines,
@@ -62,16 +72,6 @@ use sparrow_rpc::{
     proxy::ProxyResponse,
     style::{LineStyle, LineStyles, Style},
 };
-use lapce_xi_rope::{
-    Interval, Rope, RopeDelta, Transformer,
-    spans::{Spans, SpansBuilder},
-};
-use lsp_types::{
-    CodeActionOrCommand, CodeLens, Diagnostic, DiagnosticSeverity,
-    DocumentSymbolResponse, InlayHint, InlayHintLabel, TextEdit,
-};
-use serde::{Deserialize, Serialize};
-use smallvec::SmallVec;
 
 use crate::{
     command::{CommandKind, SparrowCommand},
@@ -1981,9 +1981,10 @@ impl DocumentPhantom for Doc {
             text.push(inline_completion_text);
         }
 
-        if let Some(preedit) = self
-            .preedit_phantom(Some(config.color(SparrowColor::EDITOR_FOREGROUND)), line)
-        {
+        if let Some(preedit) = self.preedit_phantom(
+            Some(config.color(SparrowColor::EDITOR_FOREGROUND)),
+            line,
+        ) {
             text.push(preedit)
         }
 

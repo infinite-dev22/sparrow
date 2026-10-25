@@ -101,7 +101,9 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                         }) {
                             let svg = match (mode, stopped) {
                                 (RunDebugMode::Run, false) => SparrowIcons::START,
-                                (RunDebugMode::Run, true) => SparrowIcons::RUN_ERRORS,
+                                (RunDebugMode::Run, true) => {
+                                    SparrowIcons::RUN_ERRORS
+                                }
                                 (RunDebugMode::Debug, false) => SparrowIcons::DEBUG,
                                 (RunDebugMode::Debug, true) => {
                                     SparrowIcons::DEBUG_DISCONNECT
@@ -120,11 +122,9 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                                     .style(move |s| {
                                         let config = config.get();
                                         let size = config.ui.icon_size() as f32;
-                                        s.size(size, size).color(
-                                            config.color(
-                                                SparrowColor::SPARROW_ICON_ACTIVE,
-                                            ),
-                                        )
+                                        s.size(size, size).color(config.color(
+                                            SparrowColor::SPARROW_ICON_ACTIVE,
+                                        ))
                                     }),
                             )
                             .style(|s| s.padding_horiz(10.0).padding_vert(12.0)),
@@ -152,7 +152,9 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                                     .height(header_height.get() - 15.0)
                                     .border_right(1.0)
                                     .border_color(
-                                        config.get().color(SparrowColor::SPARROW_BORDER),
+                                        config
+                                            .get()
+                                            .color(SparrowColor::SPARROW_BORDER),
                                     )
                                     .pointer_events_none()
                             }),

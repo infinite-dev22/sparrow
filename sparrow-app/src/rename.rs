@@ -6,10 +6,10 @@ use floem::{
     peniko::kurbo::Rect,
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
 };
-use sparrow_core::{command::FocusCommand, mode::Mode, selection::Selection};
-use sparrow_rpc::proxy::ProxyResponse;
 use lapce_xi_rope::Rope;
 use lsp_types::Position;
+use sparrow_core::{command::FocusCommand, mode::Mode, selection::Selection};
+use sparrow_rpc::proxy::ProxyResponse;
 
 use crate::{
     command::{CommandExecuted, CommandKind, InternalCommand, SparrowCommand},

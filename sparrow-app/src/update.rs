@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use sparrow_core::{directory::Directory, meta};
 use serde::Deserialize;
+use sparrow_core::{directory::Directory, meta};
 
 #[derive(Clone, Deserialize, Debug)]
 pub struct ReleaseInfo {
@@ -72,7 +72,8 @@ pub fn download_release(release: &ReleaseInfo) -> Result<PathBuf> {
 
     for asset in &release.assets {
         if asset.name == name {
-            let mut resp = sparrow_proxy::get_url(&asset.browser_download_url, None)?;
+            let mut resp =
+                sparrow_proxy::get_url(&asset.browser_download_url, None)?;
             if !resp.status().is_success() {
                 return Err(anyhow!("download file error {}", resp.text()?));
             }
@@ -216,7 +217,8 @@ pub fn cleanup() {
     // Clean up backup exe after an update
     if let Ok(process_path) = std::env::current_exe() {
         if let Some(dst_parent) = process_path.parent() {
-            if let Err(err) = std::fs::remove_file(dst_parent.join("sparrow.exe.bak"))
+            if let Err(err) =
+                std::fs::remove_file(dst_parent.join("sparrow.exe.bak"))
             {
                 tracing::error!("{:?}", err);
             }

@@ -23,15 +23,15 @@ use floem::{
 };
 use im::Vector;
 use itertools::Itertools;
+use lapce_xi_rope::Rope;
+use lsp_types::{DocumentSymbol, DocumentSymbolResponse};
+use nucleo::Utf32Str;
 use sparrow_core::{
     buffer::rope_text::RopeText, command::FocusCommand, language::SparrowLanguage,
     line_ending::LineEnding, mode::Mode, movement::Movement, selection::Selection,
     syntax::Syntax,
 };
 use sparrow_rpc::proxy::{PathRequest, ProxyResponse};
-use lapce_xi_rope::Rope;
-use lsp_types::{DocumentSymbol, DocumentSymbolResponse};
-use nucleo::Utf32Str;
 use strum::{EnumMessage, IntoEnumIterator};
 use tracing::error;
 

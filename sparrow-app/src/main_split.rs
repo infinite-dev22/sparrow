@@ -14,6 +14,13 @@ use floem::{
     views::editor::id::EditorId,
 };
 use itertools::Itertools;
+use lapce_xi_rope::{Rope, spans::SpansBuilder};
+use lsp_types::{
+    CodeAction, CodeActionOrCommand, DiagnosticSeverity, DocumentChangeOperation,
+    DocumentChanges, OneOf, Position, TextEdit, Url, WorkspaceEdit,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sparrow_core::{
     buffer::rope_text::RopeText, command::FocusCommand, cursor::Cursor,
     rope_text_pos::RopeTextPosition, selection::Selection, syntax::Syntax,
@@ -24,13 +31,6 @@ use sparrow_rpc::{
     plugin::{PluginId, VoltID},
     proxy::ProxyResponse,
 };
-use lapce_xi_rope::{Rope, spans::SpansBuilder};
-use lsp_types::{
-    CodeAction, CodeActionOrCommand, DiagnosticSeverity, DocumentChangeOperation,
-    DocumentChanges, OneOf, Position, TextEdit, Url, WorkspaceEdit,
-};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tracing::{Level, event};
 
 use crate::{

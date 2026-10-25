@@ -13,8 +13,8 @@ use floem::{
     views::{Decorators, dyn_stack, label, stack, svg},
 };
 use indexmap::IndexMap;
-use sparrow_core::mode::{Mode, VisualMode};
 use lsp_types::{DiagnosticSeverity, ProgressToken};
+use sparrow_core::mode::{Mode, VisualMode};
 
 use crate::{
     app::clickable_icon,
@@ -125,12 +125,14 @@ pub fn status(
                     .selectable(false)
             }),
             stack((
-                svg(move || config.get().ui_svg(SparrowIcons::SCM)).style(move |s| {
-                    let config = config.get();
-                    let icon_size = config.ui.icon_size() as f32;
-                    s.size(icon_size, icon_size)
-                        .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
-                }),
+                svg(move || config.get().ui_svg(SparrowIcons::SCM)).style(
+                    move |s| {
+                        let config = config.get();
+                        let icon_size = config.ui.icon_size() as f32;
+                        s.size(icon_size, icon_size)
+                            .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
+                    },
+                ),
                 label(branch).style(move |s| {
                     s.margin_left(10.0)
                         .color(config.get().color(SparrowColor::STATUS_FOREGROUND))
@@ -173,8 +175,9 @@ pub fn status(
                         move |s| {
                             let config = config.get();
                             let size = config.ui.icon_size() as f32;
-                            s.size(size, size)
-                                .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
+                            s.size(size, size).color(
+                                config.color(SparrowColor::SPARROW_ICON_ACTIVE),
+                            )
                         },
                     ),
                     label(move || diagnostic_count.get().0.to_string()).style(
@@ -192,9 +195,9 @@ pub fn status(
                         move |s| {
                             let config = config.get();
                             let size = config.ui.icon_size() as f32;
-                            s.size(size, size)
-                                .margin_left(5.0)
-                                .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
+                            s.size(size, size).margin_left(5.0).color(
+                                config.color(SparrowColor::SPARROW_ICON_ACTIVE),
+                            )
                         },
                     ),
                     label(move || diagnostic_count.get().1.to_string()).style(

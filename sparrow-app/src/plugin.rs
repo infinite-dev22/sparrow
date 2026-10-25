@@ -23,15 +23,15 @@ use floem::{
     },
 };
 use indexmap::IndexMap;
+use lsp_types::MessageType;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sparrow_core::{command::EditCommand, directory::Directory, mode::Mode};
 use sparrow_proxy::plugin::{download_volt, volt_icon, wasi::find_all_volts};
 use sparrow_rpc::{
     core::{CoreNotification, CoreRpcHandler},
     plugin::{VoltID, VoltInfo, VoltMetadata},
 };
-use lsp_types::MessageType;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::{
     command::{CommandExecuted, CommandKind},
@@ -925,10 +925,9 @@ pub fn plugin_info_view(plugin: PluginData, volt: VoltID) -> impl View {
                         s.size(rect.width(), rect.height()).pointer_events_none()
                     }),
                     empty().style(move |s| {
-                        s.margin_vert(6)
-                            .height(1)
-                            .width_full()
-                            .background(config.get().color(SparrowColor::SPARROW_BORDER))
+                        s.margin_vert(6).height(1).width_full().background(
+                            config.get().color(SparrowColor::SPARROW_BORDER),
+                        )
                     }),
                     {
                         let readme = create_rw_signal(None);
@@ -984,11 +983,9 @@ pub fn plugin_info_view(plugin: PluginData, volt: VoltID) -> impl View {
                                             s.width_full()
                                                 .margin_vert(5.0)
                                                 .height(1.0)
-                                                .background(
-                                                    config.get().color(
-                                                        SparrowColor::SPARROW_BORDER,
-                                                    ),
-                                                )
+                                                .background(config.get().color(
+                                                    SparrowColor::SPARROW_BORDER,
+                                                ))
                                         }))
                                     }
                                 },

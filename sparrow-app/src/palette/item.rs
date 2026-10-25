@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
+use lsp_types::{Range, SymbolKind};
 use sparrow_core::line_ending::LineEnding;
 use sparrow_rpc::dap_types::RunDebugConfig;
-use lsp_types::{Range, SymbolKind};
 
 use crate::{
     command::{SparrowCommand, SparrowWorkbenchCommand},

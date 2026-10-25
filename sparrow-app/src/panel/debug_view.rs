@@ -276,7 +276,9 @@ fn debug_processes(
                             s.size(size, size)
                                 .margin_vert(5.0)
                                 .margin_horiz(10.0)
-                                .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
+                                .color(
+                                    config.color(SparrowColor::SPARROW_ICON_ACTIVE),
+                                )
                         })
                     },
                     label(move || p.config.name.clone()).style(|s| {
@@ -319,8 +321,9 @@ fn debug_processes(
                         })
                         .hover(|s| {
                             s.cursor(CursorStyle::Pointer).background(
-                                (config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                                    .multiply_alpha(0.3),
+                                (config
+                                    .color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                                .multiply_alpha(0.3),
                             )
                         })
                 })
@@ -433,11 +436,9 @@ fn variables_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                             .min_width_pct(100.0)
                             .hover(|s| {
                                 s.apply_if(reference > 0, |s| {
-                                    s.background(
-                                        config.get().color(
-                                            SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                        ),
-                                    )
+                                    s.background(config.get().color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ))
                                 })
                             })
                     })
@@ -729,9 +730,9 @@ fn breakpoints_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                         s.items_center().padding_horiz(10.0).width_pct(100.0).hover(
                             |s| {
                                 s.background(
-                                    config
-                                        .get()
-                                        .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                                    config.get().color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
                                 )
                             },
                         )

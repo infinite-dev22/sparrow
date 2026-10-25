@@ -5,9 +5,9 @@ use std::{
     str::FromStr,
 };
 
-use sparrow_rpc::style::{LineStyle, Style};
 use once_cell::sync::Lazy;
 use regex::Regex;
+use sparrow_rpc::style::{LineStyle, Style};
 use strum_macros::{AsRefStr, Display, EnumMessage, EnumString, IntoStaticStr};
 use tracing::{Level, event};
 use tree_sitter::{Point, TreeCursor};

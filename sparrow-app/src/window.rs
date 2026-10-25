@@ -94,8 +94,11 @@ impl WindowData {
         app_command: Listener<AppCommand>,
     ) -> Self {
         let cx = Scope::new();
-        let config =
-            SparrowConfig::load(&SparrowWorkspace::default(), &[], &extra_plugin_paths);
+        let config = SparrowConfig::load(
+            &SparrowWorkspace::default(),
+            &[],
+            &extra_plugin_paths,
+        );
         let config = cx.create_rw_signal(Arc::new(config));
         let root_view_id = cx.create_rw_signal(ViewId::new());
 

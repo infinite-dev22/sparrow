@@ -15,12 +15,12 @@ use floem::{
         virtual_stack,
     },
 };
+use lapce_xi_rope::Rope;
 use sparrow_core::selection::Selection;
 use sparrow_rpc::{
     file::{FileNodeViewData, FileNodeViewKind, Naming},
     source_control::FileDiffKind,
 };
-use lapce_xi_rope::Rope;
 
 use super::{data::FileExplorerData, node::FileNodeVirtualList};
 use crate::{
@@ -291,7 +291,9 @@ fn file_node_input_view(data: FileExplorerData, err: Option<String>) -> Containe
                     s.position(Position::Absolute)
                         .inset_top(ui_line_height.get())
                         .width_full()
-                        .color(config.color(SparrowColor::ERROR_LENS_ERROR_FOREGROUND))
+                        .color(
+                            config.color(SparrowColor::ERROR_LENS_ERROR_FOREGROUND),
+                        )
                         .background(background_color)
                         .z_index(100)
                 }),
@@ -383,7 +385,9 @@ fn file_explorer_view(
                                 .margin_horiz(6.0)
                                 .apply_if(is_dir, |s| {
                                     s.color(
-                                        config.color(SparrowColor::SPARROW_ICON_ACTIVE),
+                                        config.color(
+                                            SparrowColor::SPARROW_ICON_ACTIVE,
+                                        ),
                                     )
                                 })
                                 .apply_if(!is_dir, |s| {
@@ -407,20 +411,18 @@ fn file_explorer_view(
                             .align_items(AlignItems::Center)
                             .hover(|s| {
                                 s.background(
-                                    config
-                                        .get()
-                                        .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                                    config.get().color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
                                 )
                                 .cursor(CursorStyle::Pointer)
                             })
                             .apply_if(
                                 select.get().map(|x| x == kind).unwrap_or_default(),
                                 |x| {
-                                    x.background(
-                                        config.get().color(
-                                            SparrowColor::PANEL_CURRENT_BACKGROUND,
-                                        ),
-                                    )
+                                    x.background(config.get().color(
+                                        SparrowColor::PANEL_CURRENT_BACKGROUND,
+                                    ))
                                 },
                             )
                     }
@@ -578,7 +580,9 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                     },
                 )
                 .hover(|s| {
-                    s.background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                    s.background(
+                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
                 })
         })
         .on_event_cont(EventListener::PointerDown, move |_| {

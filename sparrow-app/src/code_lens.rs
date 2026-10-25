@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
-use sparrow_rpc::dap_types::{ConfigSource, RunDebugConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sparrow_rpc::dap_types::{ConfigSource, RunDebugConfig};
 
 use crate::{command::InternalCommand, debug::RunDebugMode, window_tab::CommonData};
 

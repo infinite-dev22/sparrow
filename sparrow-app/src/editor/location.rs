@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use floem::peniko::kurbo::Vec2;
-use sparrow_core::{buffer::rope_text::RopeText, rope_text_pos::RopeTextPosition};
 use lsp_types::Position;
+use sparrow_core::{buffer::rope_text::RopeText, rope_text_pos::RopeTextPosition};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditorLocation {

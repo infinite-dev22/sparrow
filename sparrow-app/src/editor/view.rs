@@ -41,6 +41,8 @@ use floem::{
     },
 };
 use itertools::Itertools;
+use lapce_xi_rope::find::CaseMatching;
+use lsp_types::CodeLens;
 use sparrow_core::{
     buffer::{Buffer, diff::DiffLines, rope_text::RopeText},
     cursor::{CursorAffinity, CursorMode},
@@ -50,14 +52,14 @@ use sparrow_rpc::{
     dap_types::{DapId, SourceBreakpoint},
     plugin::PluginId,
 };
-use lapce_xi_rope::find::CaseMatching;
-use lsp_types::CodeLens;
 
 use super::{DocSignal, EditorData, gutter::editor_gutter_view};
 use crate::{
     app::clickable_icon,
     command::InternalCommand,
-    config::{SparrowConfig, color::SparrowColor, editor::WrapStyle, icon::SparrowIcons},
+    config::{
+        SparrowConfig, color::SparrowColor, editor::WrapStyle, icon::SparrowIcons,
+    },
     debug::{DapData, SparrowBreakpoint},
     doc::DocContent,
     editor::gutter::FoldingDisplayItem,
@@ -1647,14 +1649,14 @@ fn editor_gutter_code_lens_view(
     icon_padding: f32,
 ) -> impl View {
     let config = window_tab_data.common.config;
-    let view = container(svg(move || config.get().ui_svg(SparrowIcons::START)).style(
-        move |s| {
+    let view = container(
+        svg(move || config.get().ui_svg(SparrowIcons::START)).style(move |s| {
             let config = config.get();
             let size = config.ui.icon_size() as f32;
             s.size(size, size)
                 .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
-        },
-    ))
+        }),
+    )
     .style(move |s| {
         let config = config.get();
         s.padding(4.0)
@@ -2043,11 +2045,9 @@ fn editor_breadcrumbs(
                                     let size = config.ui.icon_size() as f32;
                                     s.apply_if(i == 0, |s| s.hide())
                                         .size(size, size)
-                                        .color(
-                                            config.color(
-                                                SparrowColor::SPARROW_ICON_ACTIVE,
-                                            ),
-                                        )
+                                        .color(config.color(
+                                            SparrowColor::SPARROW_ICON_ACTIVE,
+                                        ))
                                 }),
                                 label(move || section.clone())
                                     .style(move |s| s.selectable(false)),

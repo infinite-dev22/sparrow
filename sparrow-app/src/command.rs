@@ -6,6 +6,8 @@ use floem::{
     views::editor::command::Command,
 };
 use indexmap::IndexMap;
+use lsp_types::{CodeActionOrCommand, Position, WorkspaceEdit};
+use serde_json::Value;
 use sparrow_core::command::{
     EditCommand, FocusCommand, MotionModeCommand, MoveCommand,
     MultiSelectionCommand, ScrollCommand,
@@ -16,8 +18,6 @@ use sparrow_rpc::{
     proxy::ProxyStatus,
     terminal::{TermId, TerminalProfile},
 };
-use lsp_types::{CodeActionOrCommand, Position, WorkspaceEdit};
-use serde_json::Value;
 use strum::{EnumMessage, IntoEnumIterator};
 use strum_macros::{Display, EnumIter, EnumString, IntoStaticStr};
 

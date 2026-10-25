@@ -132,7 +132,9 @@ pub fn keymap_view(editors: Editors, common: Rc<CommonData>) -> impl View {
                         .flex_basis(0.0)
                         .flex_grow(1.0f32)
                         .border_right(1.0)
-                        .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+                        .border_color(
+                            config.get().color(SparrowColor::SPARROW_BORDER),
+                        )
                 }),
                 {
                     let keymap = keymap.clone();
@@ -159,7 +161,9 @@ pub fn keymap_view(editors: Editors, common: Rc<CommonData>) -> impl View {
                                     .border(1.0)
                                     .border_radius(3.0)
                                     .border_color(
-                                        config.get().color(SparrowColor::SPARROW_BORDER),
+                                        config
+                                            .get()
+                                            .color(SparrowColor::SPARROW_BORDER),
                                     )
                             })
                         },
@@ -208,7 +212,9 @@ pub fn keymap_view(editors: Editors, common: Rc<CommonData>) -> impl View {
                                     .border(1.0)
                                     .border_radius(3.0)
                                     .border_color(
-                                        config.get().color(SparrowColor::SPARROW_BORDER),
+                                        config
+                                            .get()
+                                            .color(SparrowColor::SPARROW_BORDER),
                                     )
                             })
                         },
@@ -288,7 +294,9 @@ pub fn keymap_view(editors: Editors, common: Rc<CommonData>) -> impl View {
                     s.width_pct(100.0)
                         .border_radius(6.0)
                         .border(1.0)
-                        .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+                        .border_color(
+                            config.get().color(SparrowColor::SPARROW_BORDER),
+                        )
                 }),
         )
         .style(|s| s.padding_bottom(10.0).width_pct(100.0)),
@@ -441,8 +449,9 @@ fn keyboard_picker_view(
                             .border_color(config.color(SparrowColor::SPARROW_BORDER))
                             .hover(|s| {
                                 s.cursor(CursorStyle::Pointer).background(
-                                    config
-                                        .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                                    config.color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
                                 )
                             })
                             .active(|s| {
@@ -477,8 +486,9 @@ fn keyboard_picker_view(
                             .border_color(config.color(SparrowColor::SPARROW_BORDER))
                             .hover(|s| {
                                 s.cursor(CursorStyle::Pointer).background(
-                                    config
-                                        .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                                    config.color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
                                 )
                             })
                             .active(|s| {

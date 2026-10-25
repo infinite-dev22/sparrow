@@ -2,7 +2,9 @@ use std::{collections::HashMap, fmt::Display, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{debug::SparrowBreakpoint, main_split::SplitInfo, panel::data::PanelInfo};
+use crate::{
+    debug::SparrowBreakpoint, main_split::SplitInfo, panel::data::PanelInfo,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct SshHost {

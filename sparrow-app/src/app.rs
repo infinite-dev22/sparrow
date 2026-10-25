@@ -50,6 +50,9 @@ use floem::{
     },
     window::{ResizeDirection, WindowConfig, WindowId},
 };
+use lsp_types::{CompletionItemKind, MessageType, ShowMessageParams};
+use notify::Watcher;
+use serde::{Deserialize, Serialize};
 use sparrow_core::{
     command::{EditCommand, FocusCommand},
     directory::Directory,
@@ -61,9 +64,6 @@ use sparrow_rpc::{
     core::{CoreMessage, CoreNotification},
     file::PathObject,
 };
-use lsp_types::{CompletionItemKind, MessageType, ShowMessageParams};
-use notify::Watcher;
-use serde::{Deserialize, Serialize};
 use tracing_subscriber::{filter::Targets, reload::Handle};
 
 use crate::{
@@ -74,8 +74,8 @@ use crate::{
         WindowCommand,
     },
     config::{
-        SparrowConfig, color::SparrowColor, icon::SparrowIcons, ui::TabSeparatorHeight,
-        watcher::ConfigWatcher,
+        SparrowConfig, color::SparrowColor, icon::SparrowIcons,
+        ui::TabSeparatorHeight, watcher::ConfigWatcher,
     },
     db::SparrowDb,
     debug::RunDebugMode,
@@ -175,8 +175,11 @@ pub struct AppData {
 
 impl AppData {
     pub fn reload_config(&self) {
-        let config =
-            SparrowConfig::load(&SparrowWorkspace::default(), &[], &self.plugin_paths);
+        let config = SparrowConfig::load(
+            &SparrowWorkspace::default(),
+            &[],
+            &self.plugin_paths,
+        );
 
         self.config.set(Arc::new(config));
         self.window_scale.set(self.config.get().ui.scale());
@@ -751,7 +754,9 @@ fn editor_tab_header(
                                 !info.with(|info| info.is_pristine)
                                     && config.ui.tab_close_button
                                         == TabCloseButton::Off,
-                                |s| s.color(config.color(SparrowColor::SPARROW_WARN)),
+                                |s| {
+                                    s.color(config.color(SparrowColor::SPARROW_WARN))
+                                },
                             )
                     })
             })
@@ -1002,7 +1007,9 @@ fn editor_tab_header(
                 .items_center()
                 .justify_center()
                 .cursor(CursorStyle::Pointer)
-                .hover(|s| s.background(config.color(SparrowColor::HOVER_BACKGROUND)))
+                .hover(|s| {
+                    s.background(config.color(SparrowColor::HOVER_BACKGROUND))
+                })
         })
         .debug_name("Tab and Active Indicator")
         .on_event_stop(EventListener::DragOver, move |event| {
@@ -2487,7 +2494,9 @@ fn palette_item(
                         let config = config.get();
                         match mode {
                             RunDebugMode::Run => config.ui_svg(SparrowIcons::START),
-                            RunDebugMode::Debug => config.ui_svg(SparrowIcons::DEBUG),
+                            RunDebugMode::Debug => {
+                                config.ui_svg(SparrowIcons::DEBUG)
+                            }
                         }
                     })
                     .style(move |s| {
@@ -2556,7 +2565,9 @@ fn palette_item(
                                     .border(1.0)
                                     .border_radius(3.0)
                                     .border_color(
-                                        config.get().color(SparrowColor::SPARROW_BORDER),
+                                        config
+                                            .get()
+                                            .color(SparrowColor::SPARROW_BORDER),
                                     )
                                     .selectable(false)
                             })
@@ -3190,8 +3201,9 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
                             })
                             .hover(move |s| {
                                 s.background(
-                                    config
-                                        .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                                    config.color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
                                 )
                             })
                     }),
@@ -3285,8 +3297,9 @@ fn code_action(window_tab_data: Rc<WindowTabData>) -> impl View {
                             })
                             .hover(move |s| {
                                 s.background(
-                                    config
-                                        .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                                    config.color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
                                 )
                             })
                     })
@@ -3575,9 +3588,9 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
                                 s.border_bottom(2.0)
                             })
                             .border_color(
-                                config
-                                    .get()
-                                    .color(SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE),
+                                config.get().color(
+                                    SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE,
+                                ),
                             )
                     }))
                     .style(move |s| {
@@ -3625,7 +3638,9 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
                     )
                     .height_full()
                     .border_color(
-                        config.get().color(SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE),
+                        config
+                            .get()
+                            .color(SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE),
                     )
                     .apply_if(drag_over_left.get().is_some(), move |s| {
                         let drag_over_left = drag_over_left.get_untracked().unwrap();
@@ -3898,7 +3913,10 @@ pub fn launch() {
         Ok(db) => Arc::new(db),
         Err(e) => {
             #[cfg(windows)]
-            logging::error_modal("Error", &format!("Failed to create SparrowDb: {e}"));
+            logging::error_modal(
+                "Error",
+                &format!("Failed to create SparrowDb: {e}"),
+            );
 
             trace!(TraceLevel::ERROR, "Failed to create SparrowDb: {e}");
             std::process::exit(1);
@@ -3939,7 +3957,8 @@ pub fn launch() {
     }
 
     let windows = scope.create_rw_signal(im::HashMap::new());
-    let config = SparrowConfig::load(&SparrowWorkspace::default(), &[], &plugin_paths);
+    let config =
+        SparrowConfig::load(&SparrowWorkspace::default(), &[], &plugin_paths);
 
     // Restore scale from config
     window_scale.set(config.ui.scale());

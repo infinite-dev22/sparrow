@@ -23,7 +23,9 @@ use self::{
     loader::KeyMapLoader,
 };
 use crate::{
-    command::{CommandExecuted, CommandKind, SparrowCommand, sparrow_internal_commands},
+    command::{
+        CommandExecuted, CommandKind, SparrowCommand, sparrow_internal_commands,
+    },
     config::SparrowConfig,
     keypress::{
         condition::{CheckCondition, Condition},

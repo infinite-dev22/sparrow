@@ -7,9 +7,9 @@ use std::{
 use anyhow::{Result, anyhow};
 use crossbeam_channel::{Sender, unbounded};
 use floem::{peniko::kurbo::Vec2, reactive::SignalGet};
+use sha2::{Digest, Sha256};
 use sparrow_core::directory::Directory;
 use sparrow_rpc::plugin::VoltID;
-use sha2::{Digest, Sha256};
 
 use crate::{
     app::{AppData, AppInfo},
@@ -182,7 +182,10 @@ impl SparrowDb {
         Ok(workspaces)
     }
 
-    pub fn update_recent_workspace(&self, workspace: &SparrowWorkspace) -> Result<()> {
+    pub fn update_recent_workspace(
+        &self,
+        workspace: &SparrowWorkspace,
+    ) -> Result<()> {
         if workspace.path.is_none() {
             return Ok(());
         }

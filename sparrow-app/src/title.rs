@@ -67,20 +67,24 @@ fn left(
         }),
         tooltip_label(
             config,
-            container(svg(move || config.get().ui_svg(SparrowIcons::REMOTE)).style(
-                move |s| {
-                    let config = config.get();
-                    let size = (config.ui.icon_size() as f32 + 2.0).min(30.0);
-                    s.size(size, size).color(if is_local {
-                        config.color(SparrowColor::SPARROW_ICON_ACTIVE)
-                    } else {
-                        match proxy_status.get() {
-                            Some(_) => Color::WHITE,
-                            None => config.color(SparrowColor::SPARROW_ICON_ACTIVE),
-                        }
-                    })
-                },
-            )),
+            container(
+                svg(move || config.get().ui_svg(SparrowIcons::REMOTE)).style(
+                    move |s| {
+                        let config = config.get();
+                        let size = (config.ui.icon_size() as f32 + 2.0).min(30.0);
+                        s.size(size, size).color(if is_local {
+                            config.color(SparrowColor::SPARROW_ICON_ACTIVE)
+                        } else {
+                            match proxy_status.get() {
+                                Some(_) => Color::WHITE,
+                                None => {
+                                    config.color(SparrowColor::SPARROW_ICON_ACTIVE)
+                                }
+                            }
+                        })
+                    },
+                ),
+            ),
             || "Connect to Remote",
         )
         .popout_menu(move || {
@@ -176,7 +180,8 @@ fn middle(
         clickable_icon(
             || SparrowIcons::LOCATION_BACKWARD,
             move || {
-                workbench_command.send(SparrowWorkbenchCommand::JumpLocationBackward);
+                workbench_command
+                    .send(SparrowWorkbenchCommand::JumpLocationBackward);
             },
             || false,
             move || !can_jump_backward.get(),
@@ -213,7 +218,8 @@ fn middle(
                     workbench_command.send(SparrowWorkbenchCommand::OpenFolder);
                 }))
                 .entry(MenuItem::new("Open Recent Workspace").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::PaletteWorkspace);
+                    workbench_command
+                        .send(SparrowWorkbenchCommand::PaletteWorkspace);
                 }))
         })
     };
@@ -278,7 +284,8 @@ fn middle(
             clickable_icon(
                 || SparrowIcons::START,
                 move || {
-                    workbench_command.send(SparrowWorkbenchCommand::PaletteRunAndDebug)
+                    workbench_command
+                        .send(SparrowWorkbenchCommand::PaletteRunAndDebug)
                 },
                 || false,
                 || false,
@@ -342,7 +349,8 @@ fn right(
             .popout_menu(move || {
                 Menu::new("")
                     .entry(MenuItem::new("Command Palette").action(move || {
-                        workbench_command.send(SparrowWorkbenchCommand::PaletteCommand)
+                        workbench_command
+                            .send(SparrowWorkbenchCommand::PaletteCommand)
                     }))
                     .separator()
                     .entry(MenuItem::new("Open Settings").action(move || {
@@ -356,8 +364,9 @@ fn right(
                     ))
                     .entry(MenuItem::new("Open Theme Color Settings").action(
                         move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::OpenThemeColorSettings)
+                            workbench_command.send(
+                                SparrowWorkbenchCommand::OpenThemeColorSettings,
+                            )
                         },
                     ))
                     .separator()
@@ -368,8 +377,9 @@ fn right(
                         } else {
                             MenuItem::new(format!("Restart to update ({v})")).action(
                                 move || {
-                                    workbench_command
-                                        .send(SparrowWorkbenchCommand::RestartToUpdate)
+                                    workbench_command.send(
+                                        SparrowWorkbenchCommand::RestartToUpdate,
+                                    )
                                 },
                             )
                         }
