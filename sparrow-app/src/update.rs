@@ -25,12 +25,12 @@ pub fn get_latest_release() -> Result<ReleaseInfo> {
             return Err(anyhow!("no release for debug"));
         }
         meta::ReleaseType::Nightly => {
-            "https://api.github.com/repos/sparrow/sparrow/releases/tags/nightly"
+            "https://api.github.com/repos/infinite-dev22/sparrow/releases/tags/nightly"
         }
-        _ => "https://api.github.com/repos/sparrow/sparrow/releases/latest",
+        _ => "https://api.github.com/repos/infinite-dev22/sparrow/releases/latest",
     };
 
-    let resp = sparrow_proxy::get_url(url, Some("sparrow"))?;
+    let resp = sparrow_proxy::get_url(url, Some("Sparrow"))?;
     if !resp.status().is_success() {
         return Err(anyhow!("get release info failed {}", resp.text()?));
     }
@@ -56,16 +56,16 @@ pub fn download_release(release: &ReleaseInfo) -> Result<PathBuf> {
     let dir =
         Directory::updates_directory().ok_or_else(|| anyhow!("no directory"))?;
     let name = match std::env::consts::OS {
-        "macos" => "sparrow-macos.dmg",
+        "macos" => "Sparrow-macos.dmg",
         "linux" => match std::env::consts::ARCH {
-            "aarch64" => "sparrow-linux-arm64.tar.gz",
-            "x86_64" => "sparrow-linux-amd64.tar.gz",
+            "aarch64" => "Sparrow-linux-arm64.tar.gz",
+            "x86_64" => "Sparrow-linux-amd64.tar.gz",
             _ => return Err(anyhow!("arch not supported")),
         },
         #[cfg(feature = "portable")]
-        "windows" => "sparrow-windows-portable.zip",
+        "windows" => "Sparrow-windows-portable.zip",
         #[cfg(not(feature = "portable"))]
-        "windows" => "sparrow-windows.msi",
+        "windows" => "Sparrow-windows.msi",
         _ => return Err(anyhow!("os not supported")),
     };
     let file_path = dir.join(name);
@@ -95,9 +95,9 @@ pub fn extract(src: &Path, process_path: &Path) -> Result<PathBuf> {
     } else {
         dest
     };
-    std::fs::remove_dir_all(dest.join("sparrow.app"))?;
+    std::fs::remove_dir_all(dest.join("Sparrow.app"))?;
     fs_extra::copy_items(
-        &[info.mount_point.join("sparrow.app")],
+        &[info.mount_point.join("Sparrow.app")],
         dest,
         &fs_extra::dir::CopyOptions {
             overwrite: true,
@@ -108,7 +108,7 @@ pub fn extract(src: &Path, process_path: &Path) -> Result<PathBuf> {
             depth: 0,
         },
     )?;
-    Ok(dest.join("sparrow.app"))
+    Ok(dest.join("Sparrow.app"))
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
@@ -119,7 +119,7 @@ pub fn extract(src: &Path, process_path: &Path) -> Result<PathBuf> {
     let parent = src.parent().ok_or_else(|| anyhow::anyhow!("no parent"))?;
     archive.unpack(parent)?;
     std::fs::remove_file(process_path)?;
-    std::fs::copy(parent.join("sparrow").join("sparrow"), process_path)?;
+    std::fs::copy(parent.join("Sparrow").join("sparrow"), process_path)?;
     Ok(process_path.to_path_buf())
 }
 

@@ -1,7 +1,7 @@
 <h1 align="center">
   <a href="https://sparrow.dev" target="_blank">
   <img src="extra/images/logo.png" width=200 height=200/><br>
-  sparrow
+  Sparrow
   </a>
 </h1>
 
@@ -15,13 +15,13 @@
     <img src="https://img.shields.io/discord/946858761413328946?logo=discord" />
   </a>
   <a href="https://docs.sparrow.dev" target="_blank">
-      <img src="https://img.shields.io/static/v1?label=Docs&message=docs.sparrow.dev&color=blue" alt="sparrow Docs">
+      <img src="https://img.shields.io/static/v1?label=Docs&message=docs.sparrow.dev&color=blue" alt="Sparrow Docs">
   </a>
 </div>
 <br/>
 
 
-sparrow (IPA: /læps/) is written in pure Rust, with a UI in [Floem](https://github.com/infinite-dev22/floem). It is designed with [Rope Science](https://xi-editor.io/docs/rope_science_00.html) from the [Xi-Editor](https://github.com/xi-editor/xi-editor), enabling lightning-fast computation, and leverages [wgpu](https://github.com/gfx-rs/wgpu) for rendering. More information about the features of sparrow can be found on the [main website](https://sparrow.dev) and user documentation can be found on [GitBook](https://docs.sparrow.dev/).
+Sparrow (IPA: /læps/) is written in pure Rust, with a UI in [Floem](https://github.com/infinite-dev22/floem). It is designed with [Rope Science](https://xi-editor.io/docs/rope_science_00.html) from the [Xi-Editor](https://github.com/xi-editor/xi-editor), enabling lightning-fast computation, and leverages [wgpu](https://github.com/gfx-rs/wgpu) for rendering. More information about the features of Sparrow can be found on the [main website](https://sparrow.dev) and user documentation can be found on [GitBook](https://docs.sparrow.dev/).
 
 ![](https://github.com/infinite-dev22/sparrow/blob/master/extra/images/screenshot.png?raw=true)
 
@@ -31,7 +31,7 @@ sparrow (IPA: /læps/) is written in pure Rust, with a UI in [Floem](https://git
 * Modal editing support as first class citizen (Vim-like, and toggleable)
 * Built-in remote development support inspired by [VSCode Remote Development](https://code.visualstudio.com/docs/remote/remote-overview). Enjoy the benefits of a "local" experience, and seamlessly gain the full power of a remote system. We also have [Lapdev](https://lap.dev/) which can help manage your remote dev environments. 
 * Plugins can be written in programming languages that can compile to the [WASI](https://wasi.dev/) format (C, Rust, [AssemblyScript](https://www.assemblyscript.org/))
-* Built-in terminal, so you can execute commands in your workspace, without leaving sparrow.
+* Built-in terminal, so you can execute commands in your workspace, without leaving Sparrow.
 
 ## Installation
 
@@ -40,11 +40,11 @@ If you'd like to compile from source, you can find the [guide](docs/building-fro
 
 ## Contributing
 
-Guidelines for contributing to sparrow can be found in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Guidelines for contributing to Sparrow can be found in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Feedback & Contact
 
-The most popular place for sparrow developers and users is on the [Discord server](https://discord.gg/n8tGJ6Rn6D).
+The most popular place for Sparrow developers and users is on the [Discord server](https://discord.gg/n8tGJ6Rn6D).
 
 Or, join the discussion on [Reddit](https://www.reddit.com/r/sparrow/) where we are just getting started.
 
@@ -52,4 +52,4 @@ There is also a [Matrix Space](https://matrix.to/#/#sparrow-editor:matrix.org), 
 
 ## License
 
-sparrow is released under the Apache License Version 2, which is an open source license. You may contribute to this project, or use the code as you please as long as you adhere to its conditions. You can find a copy of the license text here: [`LICENSE`](LICENSE).
+Sparrow is released under the Apache License Version 2, which is an open source license. You may contribute to this project, or use the code as you please as long as you adhere to its conditions. You can find a copy of the license text here: [`LICENSE`](LICENSE).

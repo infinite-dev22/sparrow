@@ -58,7 +58,7 @@ impl Remote for SshRemote {
 
         cmd.arg(self.ssh.user_host());
 
-        if !std::env::var("sparrow_DEBUG")
+        if !std::env::var("SPARROW_DEBUG")
             .unwrap_or_default()
             .is_empty()
         {

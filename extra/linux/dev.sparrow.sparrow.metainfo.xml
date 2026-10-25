@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
     <id>dev.sparrow.sparrow</id>
-    <name>sparrow</name>
-    <developer_name>Dongdong Zhou, et al.</developer_name>
+    <name>Sparrow</name>
+    <developer_name>Jonathan Mark Mwigo</developer_name>
     <summary>Lightning-fast and powerful code editor written in Rust</summary>
     <metadata_license>MIT</metadata_license>
     <project_license>Apache-2.0</project_license>
-    <url type="homepage">https://sparrow.dev/</url>
+    <url type="homepage">https://lapce.dev/</url>
     <url type="bugtracker">https://github.com/infinite-dev22/sparrow/issues</url>
-    <url type="help">https://docs.sparrow.dev/</url>
+    <url type="help">https://docs.lapce.dev/</url>
     <categories>
         <category>IDE</category>
         <category>Development</category>
@@ -30,8 +30,8 @@
     <launchable type="desktop-id">dev.sparrow.sparrow.desktop</launchable>
     <screenshots>
         <screenshot type="default" environment="plasma">
-            <caption>sparrow source project opened in sparrow with Rust source code file opened</caption>
-            <image type="source" width="1000" height="700">https://raw.githubusercontent.com/sparrow/sparrow/refs/tags/v0.4.5/extra/images/linux/code-file-with-highlight.png</image>
+            <caption>Sparrow source project opened in Sparrow with Rust source code file opened</caption>
+            <image type="source" width="1000" height="700">https://raw.githubusercontent.com/infinite-dev22/sparrow/refs/tags/v0.4.5/extra/images/linux/code-file-with-highlight.png</image>
         </screenshot>
     </screenshots>
     <releases>

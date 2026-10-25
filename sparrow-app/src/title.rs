@@ -387,7 +387,7 @@ fn right(
                         MenuItem::new("No update available").enabled(false)
                     })
                     .separator()
-                    .entry(MenuItem::new("About sparrow").action(move || {
+                    .entry(MenuItem::new("About Sparrow").action(move || {
                         workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
                     }))
             }),

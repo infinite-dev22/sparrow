@@ -115,7 +115,7 @@ mod grammars;
 mod logging;
 
 #[derive(Parser)]
-#[clap(name = "sparrow")]
+#[clap(name = "Lparrow")]
 #[clap(version=meta::VERSION)]
 #[derive(Debug)]
 struct Cli {
@@ -209,7 +209,7 @@ impl AppData {
     fn default_window_config(&self) -> WindowConfig {
         WindowConfig::default()
             .apply_default_theme(false)
-            .title("sparrow")
+            .title("Sparrow")
     }
 
     pub fn new_window(&self, folder: Option<PathBuf>) {
@@ -3766,8 +3766,8 @@ fn window(window_data: WindowData) -> impl View {
             .or_else(|| window_tabs.last())
             .and_then(|(_, window_tab)| window_tab.workspace.display());
         match workspace {
-            Some(workspace) => format!("{workspace} - sparrow"),
-            None => "sparrow".to_string(),
+            Some(workspace) => format!("{workspace} - Sparrow"),
+            None => "Sparrow".to_string(),
         }
     })
     .on_event_stop(EventListener::ImeEnabled, move |_| {
@@ -3795,7 +3795,7 @@ fn window(window_data: WindowData) -> impl View {
             let sparrow_command = window_tab.common.sparrow_command;
             window_menu(sparrow_command, workbench_command)
         } else {
-            Menu::new("sparrow")
+            Menu::new("Sparrow")
         }
     })
     .style(|s| s.size_full())
@@ -3810,7 +3810,7 @@ pub fn launch() {
     }
 
     let (reload_handle, _guard) = logging::logging();
-    trace!(TraceLevel::INFO, "Starting up sparrow..");
+    trace!(TraceLevel::INFO, "Starting up Sparrow..");
 
     #[cfg(feature = "vendored-fonts")]
     {
@@ -3878,17 +3878,17 @@ pub fn launch() {
             .args(&args[1..])
             .stderr(stderr)
             .stdout(stdout)
-            .env("sparrow_LOG", "sparrow_app::app=error,off")
+            .env("SPARROW_LOG", "sparrow_app::app=error,off")
             .spawn()
         {
-            eprintln!("Failed to launch sparrow: {why}");
+            eprintln!("Failed to launch Sparrow: {why}");
             std::process::exit(1);
         };
         return;
     }
 
     // If the cli is not requesting a new window, and we're not developing a plugin, we try to open
-    // in the existing sparrow process
+    // in the existing Sparrow process
     if !cli.new {
         match get_socket() {
             Ok(socket) => {
@@ -4063,7 +4063,7 @@ pub fn launch() {
             }
         });
         std::thread::Builder::new()
-            .name("sparrowUpdater".to_owned())
+            .name("SparrowUpdater".to_owned())
             .spawn(move || {
                 loop {
                     if let Ok(release) = crate::update::get_latest_release() {
@@ -4264,10 +4264,10 @@ pub fn window_menu(
     sparrow_command: Listener<SparrowCommand>,
     workbench_command: Listener<SparrowWorkbenchCommand>,
 ) -> Menu {
-    Menu::new("sparrow")
+    Menu::new("Sparrow")
         .entry({
-            let mut menu = Menu::new("sparrow")
-                .entry(MenuItem::new("About sparrow").action(move || {
+            let mut menu = Menu::new("Sparrow")
+                .entry(MenuItem::new("About Sparrow").action(move || {
                     workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
                 }))
                 .separator()
@@ -4286,13 +4286,13 @@ pub fn window_menu(
                         )),
                 )
                 .separator()
-                .entry(MenuItem::new("Quit sparrow").action(move || {
+                .entry(MenuItem::new("Quit Sparrow").action(move || {
                     workbench_command.send(SparrowWorkbenchCommand::Quit);
                 }));
             if cfg!(target_os = "macos") {
                 menu = menu
                     .separator()
-                    .entry(MenuItem::new("Hide sparrow"))
+                    .entry(MenuItem::new("Hide Sparrow"))
                     .entry(MenuItem::new("Hide Others"))
                     .entry(MenuItem::new("Show All"))
             }

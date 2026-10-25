@@ -33,7 +33,7 @@ pub(super) fn logging() -> (Handle<Targets>, Option<WorkerGuard>) {
     let (log_file_filter, reload_handle) =
         reload::Subscriber::new(log_file_filter_targets);
 
-    let console_filter_targets = std::env::var("sparrow_LOG")
+    let console_filter_targets = std::env::var("SPARROW_LOG")
         .unwrap_or_default()
         .parse::<filter::Targets>()
         .unwrap_or_default();

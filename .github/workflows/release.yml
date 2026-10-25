@@ -163,8 +163,8 @@ jobs:
         include:
           - os-name: debian
             os-version: bookworm
-          - os-name: debian
-            os-version: bullseye
+           # - os-name: debian
+           #   os-version: bullseye
           - os-name: ubuntu
             os-version: jammy
           - os-name: ubuntu
@@ -269,11 +269,11 @@ jobs:
       - name: Install ARM target
         run: rustup update && rustup target add x86_64-apple-darwin
 
-      - name: Import Certificate
-        uses: Apple-Actions/import-codesign-certs@b610f78488812c1e56b20e6df63ec42d833f2d14
-        with:
-          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
-          p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+#      - name: Import Certificate
+#        uses: Apple-Actions/import-codesign-certs@b610f78488812c1e56b20e6df63ec42d833f2d14
+#        with:
+#          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
+#          p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
 
       - name: Fetch dependencies
         run: cargo fetch --locked
@@ -290,15 +290,15 @@ jobs:
           gzip -c ./target/x86_64-apple-darwin/release-lto/sparrow-proxy > ./target/release-lto/macos/sparrow-proxy-darwin-x86_64.gz
           gzip -c ./target/aarch64-apple-darwin/release-lto/sparrow-proxy > ./target/release-lto/macos/sparrow-proxy-darwin-aarch64.gz
 
-      - name: Notarize Release Build
-        uses: lando/notarize-action@b5c3ef16cf2fbcf2af26dc58c90255ec242abeed
-        with:
-          product-path: "./target/release-lto/macos/sparrow-macos.dmg"
-          appstore-connect-username: ${{ secrets.NOTARIZE_USERNAME }}
-          appstore-connect-password: ${{ secrets.NOTARIZE_PASSWORD }}
-          appstore-connect-team-id: CYSGAZFR8D
-          primary-bundle-id: "io.sparrow"
-          verbose: true
+#      - name: Notarize Release Build
+#        uses: lando/notarize-action@b5c3ef16cf2fbcf2af26dc58c90255ec242abeed
+#        with:
+#          product-path: "./target/release-lto/macos/sparrow-macos.dmg"
+#          appstore-connect-username: ${{ secrets.NOTARIZE_USERNAME }}
+#          appstore-connect-password: ${{ secrets.NOTARIZE_PASSWORD }}
+#          appstore-connect-team-id: CYSGAZFR8D
+#          primary-bundle-id: "io.sparrow"
+#          verbose: true
 
       - name: "Staple Release Build"
         uses: lapce/xcode-staple@062485d6eeafe841c18a412f012e80f49e23c517

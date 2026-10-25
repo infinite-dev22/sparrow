@@ -21,7 +21,7 @@ fn get_github_api(url: &str) -> Result<String> {
 
 pub fn find_grammar_release() -> Result<ReleaseInfo> {
     let releases: Vec<ReleaseInfo> = serde_json::from_str(&get_github_api(
-        "https://api.github.com/repos/sparrow/tree-sitter-grammars/releases?per_page=100",
+        "https://api.github.com/repos/lapce/tree-sitter-grammars/releases?per_page=100",
     ).context("Failed to retrieve releases for tree-sitter-grammars")?)?;
 
     use sparrow_core::meta::{RELEASE, ReleaseType, VERSION};

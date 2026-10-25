@@ -556,7 +556,7 @@ pub enum SparrowWorkbenchCommand {
     RestartToUpdate,
 
     #[strum(serialize = "show_about")]
-    #[strum(message = "About sparrow")]
+    #[strum(message = "About Sparrow")]
     ShowAbout,
 
     #[strum(message = "Save All Files")]
@@ -564,12 +564,12 @@ pub enum SparrowWorkbenchCommand {
     SaveAll,
 
     #[cfg(target_os = "macos")]
-    #[strum(message = "Install sparrow to PATH")]
+    #[strum(message = "Install Sparrow to PATH")]
     #[strum(serialize = "install_to_path")]
     InstallToPATH,
 
     #[cfg(target_os = "macos")]
-    #[strum(message = "Uninstall sparrow from PATH")]
+    #[strum(message = "Uninstall Sparrow from PATH")]
     #[strum(serialize = "uninstall_from_path")]
     UninstallFromPATH,
 
