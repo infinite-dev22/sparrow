@@ -8,7 +8,8 @@
 
 TARGET = sparrow
 
-CODESIGN_IDENTITY = FAC8FBEA99169DC1980731029648F110628D6A32
+# CODESIGN_IDENTITY = FAC8FBEA99169DC1980731029648F110628D6A32
+CODESIGN_IDENTITY = -
 
 ASSETS_DIR = extra
 RELEASE_DIR = target/release-lto
@@ -71,7 +72,7 @@ $(DMG_NAME)-%: $(APP_NAME)-%
 		-srcfolder $(APP_DIR) \
 		-ov -format UDZO
 	@echo "Packed '$(APP_NAME)' in '$(APP_DIR)'"
-	/usr/bin/codesign -vvv --deep  --entitlements $(ASSETS_DIR)/entitlements.plist --strict --options=runtime --force -s $(CODESIGN_IDENTITY) $(DMG_DIR)/$(DMG_NAME)
+# 	/usr/bin/codesign -vvv --deep  --entitlements $(ASSETS_DIR)/entitlements.plist --strict --options=runtime --force -s $(CODESIGN_IDENTITY) $(DMG_DIR)/$(DMG_NAME)
 
 install: $(INSTALL)-native ## Mount disk image
 install-universal: $(INSTALL)-native ## Mount universal disk image
