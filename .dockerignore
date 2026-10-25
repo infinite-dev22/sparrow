@@ -1,9 +1,9 @@
 .github
 .vscode
-.lapce
+.sparrow
 docs
 extra/linux/docker
 extra/macos
 extra/windows
 target
-lapce.spec
+sparrow.spec

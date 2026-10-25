@@ -1,7 +1,7 @@
 #:schema ../extra/schemas/color-theme.json
 
 [color-theme]
-name = "Lapce Dark"
+name = "sparrow Dark"
 
 [ui]
 font-family = ""
@@ -82,38 +82,38 @@ dim-text = "#5C6370"
 "bracket.unpaired" = "$red"
 
 [color-theme.ui]
-"lapce.error" = "$red"
-"lapce.warn" = "$yellow"
-"lapce.dropdown_shadow" = "#000000"
-"lapce.border" = "#000000"
-"lapce.scroll_bar" = "#3E4451BB"
+"sparrow.error" = "$red"
+"sparrow.warn" = "$yellow"
+"sparrow.dropdown_shadow" = "#000000"
+"sparrow.border" = "#000000"
+"sparrow.scroll_bar" = "#3E4451BB"
 
-"lapce.button.primary.background" = "#50a14f"
-"lapce.button.primary.foreground" = "$black"
+"sparrow.button.primary.background" = "#50a14f"
+"sparrow.button.primary.foreground" = "$black"
 
 # tab
-"lapce.tab.active.background" = "$primary-background"
-"lapce.tab.active.foreground" = "$text"
-"lapce.tab.active.underline" = "#528BFF"
+"sparrow.tab.active.background" = "$primary-background"
+"sparrow.tab.active.foreground" = "$text"
+"sparrow.tab.active.underline" = "#528BFF"
 
-"lapce.tab.inactive.background" = "$secondary-background"
-"lapce.tab.inactive.foreground" = "$text"
-"lapce.tab.inactive.underline" = "#528BFF77"
+"sparrow.tab.inactive.background" = "$secondary-background"
+"sparrow.tab.inactive.foreground" = "$text"
+"sparrow.tab.inactive.underline" = "#528BFF77"
 
-"lapce.tab.separator" = ""
+"sparrow.tab.separator" = ""
 
-"lapce.icon.active" = "$text"
-"lapce.icon.inactive" = "$dim-text"
+"sparrow.icon.active" = "$text"
+"sparrow.icon.inactive" = "$dim-text"
 
-"lapce.remote.icon" = "$black"
-"lapce.remote.local" = "#4078F2"
-"lapce.remote.connected" = "#50A14F"
-"lapce.remote.connecting" = "#C18401"
-"lapce.remote.disconnected" = "#E45649"
+"sparrow.remote.icon" = "$black"
+"sparrow.remote.local" = "#4078F2"
+"sparrow.remote.connected" = "#50A14F"
+"sparrow.remote.connecting" = "#C18401"
+"sparrow.remote.disconnected" = "#E45649"
 
-"lapce.plugin.name" = "#DDDDDD"
-"lapce.plugin.description" = "$text"
-"lapce.plugin.author" = "#B0B0B0"
+"sparrow.plugin.name" = "#DDDDDD"
+"sparrow.plugin.description" = "$text"
+"sparrow.plugin.author" = "#B0B0B0"
 
 "editor.background" = "$primary-background"
 "editor.foreground" = "$text"

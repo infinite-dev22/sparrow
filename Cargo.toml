@@ -1,33 +1,33 @@
 [package]
-name         = "lapce"
+name         = "sparrow"
 version      = { workspace = true }
 authors      = { workspace = true }
 edition      = { workspace = true }
 license      = { workspace = true }
 rust-version = { workspace = true }
-default-run  = "lapce"
+default-run  = "sparrow"
 
 [dependencies]
-lapce-app   = { path = "./lapce-app" }
-lapce-proxy = { path = "./lapce-proxy" }
+sparrow-app   = { path = "./sparrow-app" }
+sparrow-proxy = { path = "./sparrow-proxy" }
 
 [[bin]]
-name = "lapce"
-path = "lapce-app/src/bin/lapce.rs"
+name = "sparrow"
+path = "sparrow-app/src/bin/sparrow.rs"
 
 [[bin]]
-name = "lapce-proxy"
-path = "lapce-proxy/src/bin/lapce-proxy.rs"
+name = "sparrow-proxy"
+path = "sparrow-proxy/src/bin/sparrow-proxy.rs"
 
 [workspace]
-members = ["lapce-app", "lapce-proxy", "lapce-rpc", "lapce-core"]
+members = ["sparrow-app", "sparrow-proxy", "sparrow-rpc", "sparrow-core"]
 
 [workspace.package]
 version      = "0.4.6"
 edition      = "2024"
 rust-version = "1.98.0"
 license      = "Apache-2.0"
-homepage     = "https://lapce.dev"
+homepage     = "https://sparrow.dev"
 authors      = ["Dongdong Zhou <dzhou121@gmail.com>"]
 
 [workspace.dependencies]
@@ -72,9 +72,9 @@ psp-types = { git = "https://github.com/lapce/psp-types", rev = "f7fea28f59e7b2d
 
 lapce-xi-rope = { version = "0.3.2", features = ["serde"] }
 
-lapce-core  = { path = "./lapce-core" }
-lapce-rpc   = { path = "./lapce-rpc" }
-lapce-proxy = { path = "./lapce-proxy" }
+sparrow-core  = { path = "./sparrow-core" }
+sparrow-rpc   = { path = "./sparrow-rpc" }
+sparrow-proxy = { path = "./sparrow-proxy" }
 
 [workspace.dependencies.floem]
 # path = "../floem"
@@ -132,13 +132,13 @@ lto           = true
 codegen-units = 1
 
 # A profile which compiles all (non-workspace) dependencies in release mode
-# but Lapce code in dev mode. This gives a good debugging experience for your
+# but sparrow code in dev mode. This gives a good debugging experience for your
 # code and fast performance of other people's code. After the initial
 # build subsequent ones are as fast as dev mode builds.
 # See https://doc.rust-lang.org/cargo/reference/profiles.html
 # To use this profile:
 #   cargo build --profile fastdev
-#   cargo run --profile fastdev --bin lapce
+#   cargo run --profile fastdev --bin sparrow
 [profile.fastdev.package."*"]
 opt-level = 3
 
