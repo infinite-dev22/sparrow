@@ -11,6 +11,9 @@ use crate::config::LOGO;
 const CODICONS_ICONS_DIR: Dir =
     include_dir!("$CARGO_MANIFEST_DIR/../icons/codicons");
 const SPARROW_ICONS_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/../icons/sparrow");
+const LUCIDE_ICONS_DIR:   Dir  = include_dir!("$CARGO_MANIFEST_DIR/../icons/lucide");
+const TABLER_ICONS_DIR:   Dir  = include_dir!("$CARGO_MANIFEST_DIR/../icons/tabler");
+const DART_ICONS_DIR:     Dir  = include_dir!("$CARGO_MANIFEST_DIR/../icons/dart-flutter");
 
 #[derive(Debug, Clone)]
 pub struct SvgStore {
@@ -41,14 +44,30 @@ impl SvgStore {
 
     pub fn get_default_svg(&mut self, name: &str) -> String {
         if !self.svgs.contains_key(name) {
-            let file = if name == "sparrow_remote.svg" || name == "sparrow_logo.svg"
+            // Resolve in order of priority. Every directory listed here just
+            // needs the physical `.svg` file to exist; the logical mapping
+            // is done in icon-theme.toml.
+            let dir = if name.starts_with("sparrow_") {
+                &SPARROW_ICONS_DIR
+            } else if name.starts_with("dart_")
+                || name.starts_with("flutter_")
+                || name.starts_with("material_")
+                || name.starts_with("cupertino_")
+                || name.starts_with("pub_")
+                || name.starts_with("widget_")
             {
-                SPARROW_ICONS_DIR.get_file(name).unwrap()
+                &DART_ICONS_DIR
+            } else if let Some(_) = LUCIDE_ICONS_DIR.get_file(name) {
+                &LUCIDE_ICONS_DIR
+            } else if let Some(_) = TABLER_ICONS_DIR.get_file(name) {
+                &TABLER_ICONS_DIR
             } else {
-                CODICONS_ICONS_DIR
-                    .get_file(name)
-                    .unwrap_or_else(|| panic!("Failed to unwrap {name}"))
+                &CODICONS_ICONS_DIR
             };
+
+            let file = dir
+                .get_file(name)
+                .unwrap_or_else(|| panic!("Icon not found in any theme directory: {name}"));
             let content = file.contents_utf8().unwrap();
             self.svgs.insert(name.to_string(), content.to_string());
         }

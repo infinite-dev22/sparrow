@@ -1259,6 +1259,64 @@ impl EditorData {
             (start_position, position)
         });
 
+        // ── Dart fast path ─────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            use floem::ext_event::create_ext_action;
+
+            let internal_command = self.common.internal_command;
+            let cursor = self.cursor().read_only();
+            let trigger = create_ext_action(
+                self.scope,
+                move |locations: Vec<lsp_types::Location>| {
+                    // Race guard: user may have moved the cursor while the
+                    // request was in flight.
+                    let current_offset = cursor.with_untracked(|c| c.offset());
+                    if current_offset != offset {
+                        return;
+                    }
+                    if locations.is_empty() {
+                        return;
+                    }
+                    if locations.len() == 1 {
+                        let loc = &locations[0];
+                        internal_command.send(InternalCommand::JumpToLocation {
+                            location: EditorLocation {
+                                path: path_from_url(&loc.uri),
+                                position: Some(EditorPosition::Position(
+                                    loc.range.start,
+                                )),
+                                scroll_offset: None,
+                                ignore_unconfirmed: false,
+                                same_editor_tab: false,
+                            },
+                        });
+                    } else {
+                        internal_command.send(InternalCommand::PaletteReferences {
+                            references: locations
+                                .into_iter()
+                                .map(|l| EditorLocation {
+                                    path: path_from_url(&l.uri),
+                                    position: Some(EditorPosition::Position(
+                                        l.range.start,
+                                    )),
+                                    scroll_offset: None,
+                                    ignore_unconfirmed: false,
+                                    same_editor_tab: false,
+                                })
+                                .collect(),
+                        });
+                    }
+                },
+            );
+            self.common.dart_lsp.definition(
+                &path,
+                position.line,
+                position.character,
+                move |locations| trigger(locations),
+            );
+            return;
+        }
+
         enum DefinitionOrReference {
             Location(EditorLocation),
             References(Vec<Location>),
@@ -3024,6 +3082,35 @@ impl EditorData {
         let config = self.common.config;
         let hover_data = self.common.hover.clone();
         let editor_id = self.id();
+
+        // ── Dart fast path ─────────────────────────────────────────
+        // Skip the proxy round-trip; talk directly to the warm LSP.
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            use floem::ext_event::create_ext_action;
+
+            let hover_data_cb = hover_data.clone();
+            // `create_ext_action` returns a `Send` trigger; the closure it
+            // wraps runs on the UI thread, so it may freely touch RwSignals.
+            let trigger = create_ext_action(
+                self.scope,
+                move |hover: Option<lsp_types::Hover>| {
+                    let Some(hover) = hover else { return };
+                    let content = parse_hover_resp(hover, &config.get_untracked());
+                    hover_data_cb.content.set(content);
+                    hover_data_cb.offset.set(offset);
+                    hover_data_cb.editor_id.set(editor_id);
+                    hover_data_cb.active.set(true);
+                },
+            );
+            self.common.dart_lsp.hover(
+                &path,
+                position.line,
+                position.character,
+                move |hover| trigger(hover),
+            );
+            return;
+        }
+
         let send = create_ext_action(self.scope, move |resp| {
             if let Ok(ProxyResponse::HoverResponse { hover, .. }) = resp {
                 let content = parse_hover_resp(hover, &config.get_untracked());

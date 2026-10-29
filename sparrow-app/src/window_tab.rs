@@ -98,6 +98,8 @@ use crate::{
     window::WindowCommonData,
     workspace::{SparrowWorkspace, SparrowWorkspaceType, WorkspaceInfo},
 };
+use crate::dart::DartLspService;
+use crate::widget_tree::WidgetTreeData;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Focus {
@@ -140,6 +142,7 @@ pub struct CommonData {
     pub hover: HoverData,
     pub register: RwSignal<Register>,
     pub find: Find,
+    pub dart_lsp: DartLspService,
     pub workbench_size: RwSignal<Size>,
     pub window_origin: RwSignal<Point>,
     pub internal_command: Listener<InternalCommand>,
@@ -181,6 +184,7 @@ pub struct WindowTabData {
     pub plugin: PluginData,
     pub code_action: RwSignal<CodeActionData>,
     pub code_lens: RwSignal<Option<ViewId>>,
+    pub dart_lsp: DartLspService,
     pub source_control: SourceControlData,
     pub rename: RenameData,
     pub global_search: GlobalSearchData,
@@ -196,6 +200,7 @@ pub struct WindowTabData {
     pub progresses: RwSignal<IndexMap<ProgressToken, WorkProgress>>,
     pub messages: RwSignal<Vec<(String, ShowMessageParams)>>,
     pub common: Rc<CommonData>,
+    pub widget_tree: WidgetTreeData,
 }
 
 impl std::fmt::Debug for WindowTabData {
@@ -369,6 +374,14 @@ impl WindowTabData {
             text_layout.size().height
         });
 
+        let (dart_lsp, dart_lsp_rx) = match &workspace.kind {
+            SparrowWorkspaceType::Local => match workspace.path.clone() {
+                Some(root) => DartLspService::spawn(root),
+                None => DartLspService::spawn_unavailable(),
+            },
+            _ => DartLspService::spawn_unavailable(),
+        };
+
         let common = Rc::new(CommonData {
             workspace: workspace.clone(),
             scope: cx,
@@ -377,6 +390,7 @@ impl WindowTabData {
             completion,
             inline_completion,
             hover,
+            dart_lsp: dart_lsp.clone(),
             register,
             find,
             internal_command,
@@ -403,6 +417,7 @@ impl WindowTabData {
             cx.create_rw_signal(CodeActionData::new(cx, common.clone()));
         let source_control =
             SourceControlData::new(cx, main_split.editors, common.clone());
+        let widget_tree = WidgetTreeData::new(cx, common.clone());
         let file_explorer =
             FileExplorerData::new(cx, main_split.editors, common.clone());
 
@@ -486,7 +501,7 @@ impl WindowTabData {
                     cx,
                     panel_order,
                     panel_available_size,
-                    im::HashMap::new(),
+                    HashMap::new(),
                     common.clone(),
                 )
             });
@@ -555,13 +570,15 @@ impl WindowTabData {
             window_tab_id: WindowTabId::next(),
             workspace,
             palette,
-            main_split,
+            main_split: main_split.clone(),
             terminal,
             panel,
             file_explorer,
             code_action,
             code_lens: cx.create_rw_signal(None),
             source_control,
+            dart_lsp: dart_lsp.clone(),
+            widget_tree:widget_tree.clone(),
             plugin,
             rename,
             global_search,
@@ -633,6 +650,100 @@ impl WindowTabData {
             });
         }
 
+        {
+            let dart_lsp_effect = dart_lsp.clone();
+            let widget_tree = widget_tree.clone();
+            cx.create_effect(move |_| {
+                let Some(editor) = main_split.active_editor.get() else {
+                    widget_tree.clear();
+                    return;
+                };
+                widget_tree.analyze(&editor, &dart_lsp_effect);
+            });
+        }
+
+        {
+            let widget_tree = widget_tree.clone();
+            cx.create_effect(move |_| {
+                widget_tree.updates.with(|notif| {
+                    let Some((path, widgets)) = notif.as_ref() else { return };
+                    widget_tree.apply_update(path.clone(), widgets.clone());
+                });
+            });
+        }
+
+        // ── Dart LSP: forward buffer changes ─────────────────────────────
+        {
+            let dart_lsp = dart_lsp.clone();
+            let main_split_effect = main_split.clone();
+            cx.create_effect(move |_| {
+                let Some(editor) = main_split_effect.active_editor.get() else {
+                    return;
+                };
+                let doc = editor.doc_signal().get();
+                let path = doc.content.with_untracked(|c| c.path().cloned());
+                let Some(path) = path else { return };
+                if !crate::dart::is_dart_path(&path) {
+                    return;
+                }
+                let _ = doc.loaded.get();
+                let version = doc.buffer.with(|b| b.rev() as i64);
+                let content = doc.buffer.with(|b| b.to_string());
+                dart_lsp.send_change(path, content, version);
+            });
+        }
+
+        // ── Dart LSP: apply diagnostics ──────────────────────────────────
+        {
+            use crate::dart::DartNotification;
+
+            // Per-file highest applied LSP version, so out-of-order publishes are
+            // dropped instead of flickering the editor back to stale diagnostics.
+            let last_applied: Arc<
+                parking_lot::Mutex<std::collections::HashMap<PathBuf, i64>>,
+            > = Default::default();
+
+            let main_split_apply = main_split.clone();
+            let notification = create_signal_from_channel(dart_lsp_rx);
+
+            cx.create_effect(move |_| {
+                notification.with(|notif| {
+                    let Some(notif) = notif.as_ref() else { return };
+                    match notif {
+                        DartNotification::Diagnostics { path, version, diagnostics } => {
+                            // Version discipline: skip anything older than what we
+                            // already applied. `-1` means "server didn't tell us",
+                            // so we apply unconditionally in that case.
+                            if *version >= 0 {
+                                let mut guard = last_applied.lock();
+                                if guard.get(path).copied().unwrap_or(-1) >= *version {
+                                    return;
+                                }
+                                guard.insert(path.clone(), *version);
+                            }
+                            let Some(doc) = main_split_apply
+                                .docs
+                                .with_untracked(|docs| docs.get(path).cloned())
+                            else {
+                                return;
+                            };
+                            let data = main_split_apply.get_diagnostic_data(path);
+                            data.diagnostics.set(
+                                diagnostics.iter().cloned().collect::<im::Vector<_>>(),
+                            );
+                            doc.init_diagnostics();
+                        }
+                        DartNotification::Log(msg) => {
+                            debug!("dart lsp: {msg}");
+                        }
+                        DartNotification::Error(e) => {
+                            tracing::warn!("dart lsp: {e}");
+                        }
+                    }
+                });
+            });
+        }
+
         window_tab_data
     }
 
@@ -689,7 +800,7 @@ impl WindowTabData {
                     if let Some(meta) = plugin_metas.remove(&name) {
                         self.common.proxy.reload_volt(meta);
                     } else {
-                        tracing::error!("not found volt metadata of {}", name);
+                        error!("not found volt metadata of {}", name);
                     }
                 }
             }
@@ -754,7 +865,7 @@ impl WindowTabData {
                                 path: Some(if let Some(path) = file.path.pop() {
                                     path
                                 } else {
-                                    tracing::error!("No path");
+                                    error!("No path");
                                     return;
                                 }),
                                 last_open: std::time::SystemTime::now()
@@ -791,7 +902,7 @@ impl WindowTabData {
                                 path: if let Some(path) = file.path.pop() {
                                     path
                                 } else {
-                                    tracing::error!("No path");
+                                    error!("No path");
                                     return;
                                 },
                             })
@@ -2219,7 +2330,7 @@ impl WindowTabData {
                     .term_tx
                     .send((*term_id, TermEvent::CloseTerminal))
                 {
-                    tracing::error!("{:?}", err);
+                    error!("{:?}", err);
                 }
                 self.terminal.terminal_stopped(term_id, *exit_code);
                 if self
@@ -2676,6 +2787,7 @@ impl WindowTabData {
             | PanelKind::Problem
             | PanelKind::Debug
             | PanelKind::CallHierarchy
+            | PanelKind::WidgetTree
             | PanelKind::DocumentSymbol
             | PanelKind::References
             | PanelKind::Implementation => {
@@ -2992,7 +3104,7 @@ impl WindowTabData {
                                 for range in x.from_ranges {
                                     item_children.push(scope.create_rw_signal(
                                         CallHierarchyItemData {
-                                            view_id: floem::ViewId::new(),
+                                            view_id: ViewId::new(),
                                             item: item.clone(),
                                             from_range: range,
                                             init: false,
@@ -3012,7 +3124,7 @@ impl WindowTabData {
                         }
                     }
                     Err(err) => {
-                        tracing::error!("{:?}", err);
+                        error!("{:?}", err);
                     }
                     Ok(_) => {}
                 }

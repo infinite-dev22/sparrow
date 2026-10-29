@@ -19,6 +19,7 @@ pub enum PanelKind {
     DocumentSymbol,
     References,
     Implementation,
+    WidgetTree,
 }
 
 impl PanelKind {
@@ -35,6 +36,7 @@ impl PanelKind {
             PanelKind::DocumentSymbol => SparrowIcons::DOCUMENT_SYMBOL,
             PanelKind::References => SparrowIcons::REFERENCES,
             PanelKind::Implementation => SparrowIcons::IMPLEMENTATION,
+            PanelKind::WidgetTree => SparrowIcons::TYPE_HIERARCHY,
         }
     }
 
@@ -61,6 +63,7 @@ impl PanelKind {
             PanelKind::DocumentSymbol => PanelPosition::RightTop,
             PanelKind::References => PanelPosition::BottomLeft,
             PanelKind::Implementation => PanelPosition::BottomLeft,
+            PanelKind::WidgetTree => PanelPosition::RightTop,
         }
     }
 }

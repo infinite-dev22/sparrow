@@ -541,6 +541,13 @@ fn panel_view(
                     implementation_panel(window_tab_data.clone(), position)
                         .into_any()
                 }
+                PanelKind::WidgetTree => {
+                    crate::panel::widget_tree::widget_tree_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
             };
             view.style(|s| s.size_pct(100.0, 100.0))
         },
@@ -638,6 +645,7 @@ fn stripe_picker(
                 PanelKind::DocumentSymbol => "Document Symbol",
                 PanelKind::References => "References",
                 PanelKind::Implementation => "Implementation",
+                PanelKind::WidgetTree => "Widget Tree",
             };
             let icon = p.svg_name();
             let is_active = {

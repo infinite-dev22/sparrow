@@ -183,18 +183,21 @@ impl ColorThemeConfig {
 #[cfg(test)]
 mod tests {
     use config::Config;
-    use floem::{peniko::Color, prelude::palette::css};
+    use floem::peniko::Color;
 
-    use crate::{config::SparrowConfig, workspace::SparrowWorkspace};
+    use crate::config::{
+        DEFAULT_DARK_THEME_COLOR_CONFIG, DEFAULT_SPARROW_CONFIG,
+        color_theme::ColorThemeConfig,
+    };
 
     #[test]
     fn test_resolve() {
-        // Mimicking load
-        let workspace = SparrowWorkspace::default();
-
-        let config = SparrowConfig::merge_config(&workspace, None, None);
-        let mut sparrow_config: SparrowConfig = config.try_deserialize().unwrap();
-
+        // Hermetic: no filesystem access. This test used to route through
+        // `SparrowConfig::resolve_theme`, which reads
+        // `~/.config/sparrow/settings.toml` and merges it on top of the
+        // test theme — meaning the test's result depended on whatever the
+        // user had last saved from the theme color settings view. We now
+        // exercise the pure resolution functions directly.
         let test_theme_str = r##"
 [color-theme]
 name = "test"
@@ -211,53 +214,62 @@ color-preference = "dark"
 [color-theme.ui]
 "sparrow.error" = "#ffffff"
 "editor.background" = "$blah"
+"editor.foreground" = "$text"
 "##;
-        println!("Test theme: {test_theme_str}");
-        let test_theme_cfg = Config::builder()
+
+        let cfg = Config::builder()
             .add_source(config::File::from_str(
                 test_theme_str,
                 config::FileFormat::Toml,
             ))
             .build()
             .unwrap();
+        let test_theme: ColorThemeConfig = cfg.get("color-theme").unwrap();
 
-        sparrow_config.available_color_themes =
-            [("test".to_string(), ("test".to_string(), test_theme_cfg))]
-                .into_iter()
-                .collect();
-        // sparrow_config.available_icon_themes = Some(vec![]);
-        sparrow_config.core.color_theme = "test".to_string();
+        // The test theme intentionally overrides only a few keys. Seed its
+        // UI map with the default dark theme's entries so that
+        // `sparrow.warn` (which we assert falls through to the default) is
+        // present in the merged input — this mirrors what
+        // `merge_config` produces in the real loader.
+        let test_ui = test_theme.ui.clone();
+        let mut merged_ui = DEFAULT_DARK_THEME_COLOR_CONFIG.ui.clone();
+        merged_ui.extend(test_ui);
+        let theme = ColorThemeConfig {
+            ui: merged_ui,
+            ..test_theme
+        };
 
-        sparrow_config.resolve_theme(&workspace);
+        // Resolve with the same defaults `SparrowConfig::load` uses.
+        let base = theme
+            .base
+            .resolve(Some(&DEFAULT_DARK_THEME_COLOR_CONFIG.base));
+        let ui = theme
+            .resolve_ui_color(&base, Some(&DEFAULT_SPARROW_CONFIG.color.ui));
 
-        println!("Hot Pink: {:?}", css::HOT_PINK);
-        // test basic override
+        // Basic override from the test theme.
         assert_eq!(
-            sparrow_config.color("sparrow.error"),
-            Color::WHITE,
+            ui.get("sparrow.error"),
+            Some(&Color::WHITE),
             "Failed to get basic theme override"
         );
-        // test that it falls through to the dark theme for unspecified color
+        // Fall through to the default dark theme for an unspecified color.
         assert_eq!(
-            sparrow_config.color("sparrow.warn"),
-            Color::from_rgb8(0xE5, 0xC0, 0x7B),
+            ui.get("sparrow.warn"),
+            Some(&Color::from_rgb8(0xE5, 0xC0, 0x7B)),
             "Failed to get from fallback dark theme"
-        ); // $yellow
-        // test that our custom variable worked
+        );
+        // Custom variable `$blah` resolved correctly.
         assert_eq!(
-            sparrow_config.color("editor.background"),
-            Color::from_rgb8(0xFF, 0x00, 0xFF),
+            ui.get("editor.background"),
+            Some(&Color::from_rgb8(0xFF, 0x00, 0xFF)),
             "Failed to get from custom variable"
         );
-        // test that for text it now uses our redeclared variable
+        // Custom variable `$text` resolved correctly, overriding the value
+        // it inherits from the dark theme's `editor.foreground = "$text"`.
         assert_eq!(
-            sparrow_config.color("editor.foreground"),
-            Color::BLACK,
+            ui.get("editor.foreground"),
+            Some(&Color::BLACK),
             "Failed to get from custom variable circle back around"
         );
-
-        // don't bother filling color/icon theme list
-        // don't bother with wrap style list
-        // don't bother with terminal colors
     }
 }

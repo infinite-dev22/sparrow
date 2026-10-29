@@ -701,7 +701,7 @@ fn editor_tab_header(
     let focus = window_tab_data.common.focus;
     let config = window_tab_data.common.config;
     let internal_command = window_tab_data.common.internal_command;
-    let workbench_command = window_tab_data.common.workbench_command;
+    let _workbench_command = window_tab_data.common.workbench_command;
     let editor_tab_id =
         editor_tab.with_untracked(|editor_tab| editor_tab.editor_tab_id);
 
