@@ -23,7 +23,7 @@
 //! - Old approach:     500 ms – 2 s **per keystroke**
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
-use lsp_types::Diagnostic;
+use lsp_types::{CompletionItem, CompletionResponse, Diagnostic};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use std::io::BufWriter;
@@ -370,6 +370,45 @@ impl DartLspService {
             },
         )
     }
+
+    /// `textDocument/completion` at the given 0-based position.
+    ///
+    /// The server decides what's relevant given the current position and
+    /// document content — we don't need to compute a prefix on this side.
+    /// Returns the flattened list of items (or an empty vec on error / null).
+    pub fn completion<F>(&self, path: &Path, line: u32, character: u32, cb: F) -> i64
+    where
+        F: FnOnce(Option<Vec<CompletionItem>>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                // LSP spec: omitting `context` = Invoked. The Dart server
+                // treats that as "compute completions for this exact
+                // position", which is what we want.
+                "context": { "triggerKind": 1 }
+            }),
+            move |resp| {
+                // `result: null` means "no completions"; distinguish from
+                // transport / server error (`error` present) so the caller
+                // can clear stale state either way.
+                let items = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<CompletionResponse>(v.clone()).ok()
+                    })
+                    .map(|r| match r {
+                        CompletionResponse::Array(items) => items,
+                        CompletionResponse::List(list) => list.items,
+                    });
+                cb(items);
+            },
+        )
+    }
 }
 
 impl Drop for DartLspService {
@@ -543,10 +582,12 @@ fn initialize(
 ) -> Result<(), String> {
     let id = state.next_id.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = crossbeam_channel::bounded(1);
-    state
-        .pending_requests
-        .lock()
-        .insert(id, Box::new(move |v| { let _ = tx.send(v); }));
+    state.pending_requests.lock().insert(
+        id,
+        Box::new(move |v| {
+            let _ = tx.send(v);
+        }),
+    );
 
     let root_uri = path_to_uri(workspace_root);
     let params = json!({
@@ -597,7 +638,7 @@ fn initialize(
         out,
         &json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }),
     )
-        .map_err(|e| format!("write initialized: {e}"))?;
+    .map_err(|e| format!("write initialized: {e}"))?;
 
     tracing::debug!("dart language-server initialized");
     Ok(())
@@ -890,13 +931,13 @@ mod tests {
 
     #[test]
     fn parse_definition_handles_all_shapes() {
-        use lsp_types::{Location, Position, Range, Url};
+        use lsp_types::Url;
 
         // Scalar
         let scalar = json!({
-        "uri": "file:///a.dart",
-        "range": { "start": {"line":0,"character":0}, "end": {"line":0,"character":5} }
-    });
+            "uri": "file:///a.dart",
+            "range": { "start": {"line":0,"character":0}, "end": {"line":0,"character":5} }
+        });
         let scalar_clone = scalar.clone();
         assert_eq!(parse_definition_response(scalar_clone).len(), 1);
 
@@ -906,10 +947,10 @@ mod tests {
 
         // LocationLink
         let link = json!({
-        "targetUri": "file:///b.dart",
-        "targetRange": { "start": {"line":0,"character":0}, "end": {"line":0,"character":5} },
-        "targetSelectionRange": { "start": {"line":0,"character":0}, "end": {"line":0,"character":5} }
-    });
+            "targetUri": "file:///b.dart",
+            "targetRange": { "start": {"line":0,"character":0}, "end": {"line":0,"character":5} },
+            "targetSelectionRange": { "start": {"line":0,"character":0}, "end": {"line":0,"character":5} }
+        });
         let links = parse_definition_response(json!([link]));
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].uri, Url::parse("file:///b.dart").unwrap());
@@ -917,5 +958,32 @@ mod tests {
         // Null / unknown
         assert!(parse_definition_response(Value::Null).is_empty());
         assert!(parse_definition_response(json!({})).is_empty());
+    }
+
+    #[test]
+    fn parse_completion_handles_both_shapes() {
+        use lsp_types::CompletionResponse;
+
+        let array: CompletionResponse = serde_json::from_value(json!([
+            { "label": "print" },
+            { "label": "printf" }
+        ]))
+        .unwrap();
+        let items = match array {
+            CompletionResponse::Array(v) => v,
+            _ => panic!("expected array"),
+        };
+        assert_eq!(items.len(), 2);
+
+        let list: CompletionResponse = serde_json::from_value(json!({
+            "isIncomplete": false,
+            "items": [{ "label": "print" }]
+        }))
+        .unwrap();
+        let items = match list {
+            CompletionResponse::List(l) => l.items,
+            _ => panic!("expected list"),
+        };
+        assert_eq!(items.len(), 1);
     }
 }

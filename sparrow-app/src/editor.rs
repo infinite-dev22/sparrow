@@ -1,11 +1,3 @@
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
-};
-
 use floem::{
     ViewId,
     action::{TimerToken, exec_after, show_context_menu},
@@ -57,6 +49,14 @@ use sparrow_core::{
     selection::{InsertDrift, SelRegion, Selection},
 };
 use sparrow_rpc::{buffer::BufferId, plugin::PluginId, proxy::ProxyResponse};
+use std::path::PathBuf;
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 use view::StickyHeaderInfo;
 
 use self::{
@@ -1786,6 +1786,14 @@ impl EditorData {
         self.cancel_completion();
         let doc = self.doc();
         if let Some(item) = item {
+            // Dart fast path — no proxy resolve possible, apply directly.
+            if item.plugin_id == PluginId(0) {
+                if let Err(err) = self.apply_completion_item(&item.item) {
+                    tracing::error!("{:?}", err);
+                }
+                return;
+            }
+
             if item.item.data.is_some() {
                 let editor = self.clone();
                 let rev = doc.buffer.with_untracked(|buffer| buffer.rev());
@@ -1881,6 +1889,12 @@ impl EditorData {
             return;
         }
 
+        // ── Dart fast path ─────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            self.update_completion_dart(path, start_offset, input, offset);
+            return;
+        }
+
         if self.common.completion.with_untracked(|completion| {
             completion.status != CompletionStatus::Inactive
                 && completion.offset == start_offset
@@ -1956,6 +1970,98 @@ impl EditorData {
                 );
             }
         });
+    }
+
+    /// Completion via the direct Dart LSP. One request per call — the server
+    /// handles prefix matching server-side, so we don't build an
+    /// input→items cache. Subsequent keystrokes bump `request_id`, which
+    /// makes any in-flight response a no-op.
+    fn update_completion_dart(
+        &self,
+        path: PathBuf,
+        start_offset: usize,
+        input: String,
+        cursor_offset: usize,
+    ) {
+        use floem::ext_event::create_ext_action;
+        use sparrow_rpc::plugin::PluginId;
+
+        let position = self
+            .doc()
+            .buffer
+            .with_untracked(|b| b.offset_to_position(cursor_offset));
+
+        // Reset completion state synchronously so the popup opens (empty for
+        // one round-trip) instead of staying hidden until the response lands.
+        let request_id = self
+            .common
+            .completion
+            .with_untracked(|c| c.request_id)
+            + 1;
+
+        self.common.completion.update(|c| {
+            c.request_id = request_id;
+            c.status = CompletionStatus::Started;
+            c.offset = start_offset;
+            c.path = path.clone();
+            c.input = input;
+            c.filtered_items.clear();
+            c.input_items.clear();
+            c.active.set(0);
+            c.latest_editor_id = Some(self.id());
+        });
+
+        let editor = self.clone();
+        let common = self.common.clone();
+
+        // `create_ext_action`'s trigger is `Send`; the closure it wraps runs
+        // on the UI thread with full access to `!Send` signals.
+        let trigger = create_ext_action(
+            self.scope,
+            move |items: Option<Vec<lsp_types::CompletionItem>>| {
+                let mut completion_data = common.completion.get_untracked();
+                match items {
+                    Some(items) => {
+                        // Strip `data` so `select_completion` applies the item
+                        // directly instead of trying to resolve it via the
+                        // proxy (which knows nothing about this request).
+                        let items = items
+                            .into_iter()
+                            .map(|mut item| {
+                                item.data = None;
+                                item
+                            })
+                            .collect();
+                        completion_data.receive_direct(
+                            request_id,
+                            items,
+                            PluginId(0),
+                        );
+                        common.completion.set(completion_data);
+                        common
+                            .completion
+                            .get_untracked()
+                            .update_document_completion(&editor, cursor_offset);
+                    }
+                    None => {
+                        // Server returned null (no completions) — reset to
+                        // Inactive so the popup hides.
+                        if completion_data.request_id == request_id {
+                            completion_data.status = CompletionStatus::Inactive;
+                            completion_data.filtered_items.clear();
+                            common.completion.set(completion_data);
+                        }
+                    }
+                }
+            },
+        );
+
+        self.common.dart_lsp.completion(
+            &path,
+            position.line,
+            position.character,
+            move |resp| trigger(resp),
+        );
     }
 
     /// Check if there are completions that are being rendered

@@ -120,6 +120,38 @@ impl CompletionData {
         self.filter_items();
     }
 
+    /// Feed a completion response that came from a source which has
+    /// already ranked and filtered the items (e.g. a language server).
+    ///
+    /// Unlike [`Self::receive`], this doesn't go through the input cache or
+    /// local fuzzy match. The server returned items for the position we asked
+    /// about; trust its order and display them as-is.
+    ///
+    /// Stale responses (from an older `request_id`) are dropped without
+    /// touching the current state.
+    pub fn receive_direct(
+        &mut self,
+        request_id: usize,
+        items: Vec<CompletionItem>,
+        plugin_id: PluginId,
+    ) {
+        if self.status == CompletionStatus::Inactive || self.request_id != request_id {
+            return;
+        }
+        self.filtered_items = items
+            .into_iter()
+            .map(|item| ScoredCompletionItem {
+                item,
+                plugin_id,
+                score: 0,
+                label_score: 0,
+                indices: Vec::new(),
+            })
+            .collect();
+        self.active.set(0);
+        self.status = CompletionStatus::Done;
+    }
+
     /// Request for completion items wit the current request id.
     pub fn request(
         &mut self,
