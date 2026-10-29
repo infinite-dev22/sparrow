@@ -8,7 +8,7 @@ use floem::{
     reactive::{
         Memo, ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo,
     },
-    style::{AlignItems, CursorStyle, JustifyContent},
+    style::CursorStyle,
     views::{Decorators, container, drag_window_area, empty, label, stack, svg},
 };
 use sparrow_core::meta;
@@ -51,7 +51,7 @@ fn left(
                     .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
             },
         ))
-        .style(move |s| s.margin_horiz(10.0).apply_if(is_macos, |s| s.hide())),
+            .style(move |s| s.margin_horiz(10.0).apply_if(is_macos, |s| s.hide())),
         not_clickable_icon(
             || SparrowIcons::MENU,
             || false,
@@ -59,12 +59,12 @@ fn left(
             || "Menu",
             config,
         )
-        .popout_menu(move || window_menu(sparrow_command, workbench_command))
-        .style(move |s| {
-            s.margin_left(4.0)
-                .margin_right(6.0)
-                .apply_if(is_macos, |s| s.hide())
-        }),
+            .popout_menu(move || window_menu(sparrow_command, workbench_command))
+            .style(move |s| {
+                s.margin_left(4.0)
+                    .margin_right(6.0)
+                    .apply_if(is_macos, |s| s.hide())
+            }),
         tooltip_label(
             config,
             container(
@@ -87,85 +87,79 @@ fn left(
             ),
             || "Connect to Remote",
         )
-        .popout_menu(move || {
-            #[allow(unused_mut)]
-            let mut menu = Menu::new("").entry(
-                MenuItem::new("Connect to SSH Host").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::ConnectSshHost);
-                }),
-            );
-            if !is_local
-                && proxy_status.get().is_some_and(|p| {
+            .popout_menu(move || {
+                #[allow(unused_mut)]
+                let mut menu = Menu::new("").entry(
+                    MenuItem::new("Connect to SSH Host").action(move || {
+                        workbench_command.send(SparrowWorkbenchCommand::ConnectSshHost);
+                    }),
+                );
+                if !is_local
+                    && proxy_status.get().is_some_and(|p| {
                     matches!(p, ProxyStatus::Connecting | ProxyStatus::Connected)
                 })
-            {
-                menu = menu.entry(MenuItem::new("Disconnect remote").action(
-                    move || {
-                        workbench_command
-                            .send(SparrowWorkbenchCommand::DisconnectRemote);
-                    },
-                ));
-            }
-            #[cfg(windows)]
-            {
-                menu = menu.entry(MenuItem::new("Connect to WSL Host").action(
-                    move || {
-                        workbench_command
-                            .send(SparrowWorkbenchCommand::ConnectWslHost);
-                    },
-                ));
-            }
-            menu
-        })
-        .style(move |s| {
-            let config = config.get();
-            let color = if is_local {
-                Color::TRANSPARENT
-            } else {
-                match proxy_status.get() {
-                    Some(ProxyStatus::Connected) => {
-                        config.color(SparrowColor::SPARROW_REMOTE_CONNECTED)
-                    }
-                    Some(ProxyStatus::Connecting) => {
-                        config.color(SparrowColor::SPARROW_REMOTE_CONNECTING)
-                    }
-                    Some(ProxyStatus::Disconnected) => {
-                        config.color(SparrowColor::SPARROW_REMOTE_DISCONNECTED)
-                    }
-                    None => Color::TRANSPARENT,
+                {
+                    menu = menu.entry(MenuItem::new("Disconnect remote").action(
+                        move || {
+                            workbench_command
+                                .send(SparrowWorkbenchCommand::DisconnectRemote);
+                        },
+                    ));
                 }
-            };
-            s.height_pct(100.0)
-                .padding_horiz(10.0)
-                .items_center()
-                .background(color)
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer).background(
-                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-                .active(|s| {
-                    s.cursor(CursorStyle::Pointer).background(
-                        config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
-                    )
-                })
-        }),
-        drag_window_area(empty())
-            .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0f32)),
+                #[cfg(windows)]
+                {
+                    menu = menu.entry(MenuItem::new("Connect to WSL Host").action(
+                        move || {
+                            workbench_command
+                                .send(SparrowWorkbenchCommand::ConnectWslHost);
+                        },
+                    ));
+                }
+                menu
+            })
+            .style(move |s| {
+                let config = config.get();
+                let color = if is_local {
+                    Color::TRANSPARENT
+                } else {
+                    match proxy_status.get() {
+                        Some(ProxyStatus::Connected) => {
+                            config.color(SparrowColor::SPARROW_REMOTE_CONNECTED)
+                        }
+                        Some(ProxyStatus::Connecting) => {
+                            config.color(SparrowColor::SPARROW_REMOTE_CONNECTING)
+                        }
+                        Some(ProxyStatus::Disconnected) => {
+                            config.color(SparrowColor::SPARROW_REMOTE_DISCONNECTED)
+                        }
+                        None => Color::TRANSPARENT,
+                    }
+                };
+                s.height_pct(100.0)
+                    .padding_horiz(10.0)
+                    .items_center()
+                    .background(color)
+                    .hover(|s| {
+                        s.cursor(CursorStyle::Pointer).background(
+                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                    })
+                    .active(|s| {
+                        s.cursor(CursorStyle::Pointer).background(
+                            config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
+                        )
+                    })
+            }),
     ))
-    .style(move |s| {
-        s.height_pct(100.0)
-            .flex_basis(0.0)
-            .flex_grow(1.0f32)
-            .items_center()
-    })
-    .debug_name("Left Side of Top Bar")
+        .style(move |s| s.height_pct(100.0).items_center())
+        .debug_name("Left Side of Top Bar")
 }
 
 fn middle(
     workspace: Arc<SparrowWorkspace>,
     main_split: MainSplitData,
     workbench_command: Listener<SparrowWorkbenchCommand>,
+    branch: impl Fn() -> String + Copy + 'static,
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> impl View {
     let local_workspace = workspace.clone();
@@ -188,7 +182,7 @@ fn middle(
             || "Jump Backward",
             config,
         )
-        .style(move |s| s.margin_horiz(6.0))
+            .style(move |s| s.margin_horiz(6.0))
     };
     let jump_forward = move || {
         clickable_icon(
@@ -201,63 +195,65 @@ fn middle(
             || "Jump Forward",
             config,
         )
-        .style(move |s| s.margin_right(6.0))
+            .style(move |s| s.margin_right(6.0))
     };
 
     let open_folder = move || {
         not_clickable_icon(
-            || SparrowIcons::PALETTE_MENU,
+            || SparrowIcons::DROPDOWN_ARROW,
             || false,
             || false,
             || "Open Folder / Recent Workspace",
             config,
         )
-        .popout_menu(move || {
-            Menu::new("")
-                .entry(MenuItem::new("Open Folder").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::OpenFolder);
-                }))
-                .entry(MenuItem::new("Open Recent Workspace").action(move || {
-                    workbench_command
-                        .send(SparrowWorkbenchCommand::PaletteWorkspace);
-                }))
-        })
+            .popout_menu(move || {
+                Menu::new("")
+                    .entry(MenuItem::new("Open Folder").action(move || {
+                        workbench_command.send(SparrowWorkbenchCommand::OpenFolder);
+                    }))
+                    .entry(MenuItem::new("Open Recent Workspace").action(move || {
+                        workbench_command
+                            .send(SparrowWorkbenchCommand::PaletteWorkspace);
+                    }))
+            })
     };
 
-    stack((
-        stack((
-            drag_window_area(empty())
-                .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0f32)),
-            jump_backward(),
-            jump_forward(),
-        ))
+    // Islands style project widget: coloured initial + name + dropdown.
+    let initial_workspace = local_workspace.clone();
+    let project_avatar = container(
+        label(move || {
+            initial_workspace
+                .display()
+                .and_then(|n| n.chars().next())
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_else(|| "S".to_string())
+        })
+            .style(|s| s.font_size(10.0).font_bold().selectable(false)),
+    )
         .style(|s| {
-            s.flex_basis(0)
-                .flex_grow(1.0f32)
-                .justify_content(Some(JustifyContent::FlexEnd))
-        }),
-        container(
-            stack((
-                svg(move || config.get().ui_svg(SparrowIcons::SEARCH)).style(
-                    move |s| {
-                        let config = config.get();
-                        let icon_size = config.ui.icon_size() as f32;
-                        s.size(icon_size, icon_size)
-                            .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
-                    },
-                ),
-                label(move || {
-                    if let Some(s) = local_workspace.display() {
-                        s
-                    } else {
-                        "Open Folder".to_string()
-                    }
-                })
-                .style(|s| s.padding_left(10).padding_right(5).selectable(false)),
-                open_folder(),
-            ))
-            .style(|s| s.align_items(Some(AlignItems::Center))),
-        )
+            s.size(18.0, 18.0)
+                .items_center()
+                .justify_center()
+                .border_radius(5.0)
+                .margin_right(7.0)
+                .color(Color::WHITE)
+                .background(Color::from_rgba8(0x35, 0x74, 0xF0, 0xFF))
+        });
+    let project_chip = container(
+        stack((
+            project_avatar,
+            label(move || {
+                if let Some(s) = local_workspace.display() {
+                    s
+                } else {
+                    "Open Folder".to_string()
+                }
+            })
+                .style(|s| s.selectable(false)),
+            open_folder(),
+        ))
+            .style(|s| s.items_center()),
+    )
         .on_event_stop(EventListener::PointerDown, |_| {})
         .on_click_stop(move |_| {
             if workspace.clone().path.is_some() {
@@ -268,47 +264,67 @@ fn middle(
         })
         .style(move |s| {
             let config = config.get();
-            s.flex_basis(0)
-                .flex_grow(10.0f32)
-                .min_width(200.0)
-                .max_width(500.0)
-                .height(26.0)
-                .justify_content(Some(JustifyContent::Center))
-                .align_items(Some(AlignItems::Center))
-                .border(1.0)
-                .border_color(config.color(SparrowColor::SPARROW_BORDER))
+            s.height(28.0)
+                .padding_horiz(10.0)
+                .items_center()
                 .border_radius(6.0)
-                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer)
+                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                })
+        });
+
+    // Android Studio style VCS widget: branch icon + branch name.
+    let branch_chip = stack((
+        svg(move || config.get().ui_svg(SparrowIcons::SCM)).style(move |s| {
+            let config = config.get();
+            let size = config.ui.icon_size() as f32;
+            s.size(size, size)
+                .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
         }),
-        stack((
-            clickable_icon(
-                || SparrowIcons::START,
-                move || {
-                    workbench_command
-                        .send(SparrowWorkbenchCommand::PaletteRunAndDebug)
-                },
-                || false,
-                || false,
-                || "Run and Debug",
-                config,
-            )
-            .style(move |s| s.margin_horiz(6.0)),
-            drag_window_area(empty())
-                .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0f32)),
-        ))
+        label(branch).style(|s| s.margin_left(6.0).selectable(false)),
+        svg(move || config.get().ui_svg(SparrowIcons::DROPDOWN_ARROW)).style(
+            move |s| {
+                let config = config.get();
+                let size = config.ui.icon_size() as f32;
+                s.size(size, size)
+                    .margin_left(4.0)
+                    .color(config.color(SparrowColor::SPARROW_ICON_INACTIVE))
+            },
+        ),
+    ))
+        .on_click_stop(move |_| {
+            workbench_command.send(SparrowWorkbenchCommand::PaletteSCMReferences);
+        })
         .style(move |s| {
+            let config = config.get();
+            s.height(28.0)
+                .padding_horiz(10.0)
+                .margin_left(4.0)
+                .items_center()
+                .border_radius(6.0)
+                .apply_if(branch().is_empty(), |s| s.hide())
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer)
+                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                })
+        });
+
+    stack((
+        project_chip,
+        branch_chip,
+        jump_backward(),
+        jump_forward(),
+        drag_window_area(empty())
+            .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0f32)),
+    ))
+        .style(|s| {
             s.flex_basis(0)
                 .flex_grow(1.0f32)
-                .justify_content(Some(JustifyContent::FlexStart))
-        }),
-    ))
-    .style(|s| {
-        s.flex_basis(0)
-            .flex_grow(2.0f32)
-            .align_items(Some(AlignItems::Center))
-            .justify_content(Some(JustifyContent::Center))
-    })
-    .debug_name("Middle of Top Bar")
+                .height_pct(100.0)
+                .items_center()
+        })
+        .debug_name("Middle of Top Bar")
 }
 
 fn right(
@@ -335,9 +351,72 @@ fn right(
 
     let has_update = move || latest_version.with(|v| v.is_some());
 
+    // Android Studio style green "Run" button.
+    let run_button = tooltip_label(
+        config,
+        container(svg(move || config.get().ui_svg(SparrowIcons::START)).style(
+            move |s| {
+                let config = config.get();
+                let size = config.ui.icon_size() as f32;
+                s.size(size, size)
+                    .color(config.color(SparrowColor::SPARROW_RUN_ICON))
+            },
+        ))
+            .on_click_stop(move |_| {
+                workbench_command.send(SparrowWorkbenchCommand::PaletteRunAndDebug);
+            })
+            .style(move |s| {
+                let config = config.get();
+                s.padding(4.0)
+                    .margin_horiz(6.0)
+                    .border_radius(6.0)
+                    .hover(|s| {
+                        s.cursor(CursorStyle::Pointer).background(
+                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                    })
+            }),
+        || "Run and Debug",
+    );
+
+    // Green bug button next to Run (opens the same Run and Debug palette).
+    let debug_button = tooltip_label(
+        config,
+        container(svg(move || config.get().ui_svg(SparrowIcons::DEBUG)).style(
+            move |s| {
+                let config = config.get();
+                let size = config.ui.icon_size() as f32;
+                s.size(size, size)
+                    .color(config.color(SparrowColor::SPARROW_RUN_ICON))
+            },
+        ))
+            .on_click_stop(move |_| {
+                workbench_command.send(SparrowWorkbenchCommand::PaletteRunAndDebug);
+            })
+            .style(move |s| {
+                let config = config.get();
+                s.padding(4.0).border_radius(6.0).hover(|s| {
+                    s.cursor(CursorStyle::Pointer).background(
+                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
+            }),
+        || "Debug",
+    );
+
     stack((
-        drag_window_area(empty())
-            .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0f32)),
+        run_button,
+        debug_button,
+        clickable_icon(
+            || SparrowIcons::SEARCH,
+            move || {
+                workbench_command.send(SparrowWorkbenchCommand::PaletteHelpAndFile);
+            },
+            || false,
+            || false,
+            || "Search Everywhere",
+            config,
+        ),
         stack((
             not_clickable_icon(
                 || SparrowIcons::SETTINGS,
@@ -346,51 +425,51 @@ fn right(
                 || "Settings",
                 config,
             )
-            .popout_menu(move || {
-                Menu::new("")
-                    .entry(MenuItem::new("Command Palette").action(move || {
-                        workbench_command
-                            .send(SparrowWorkbenchCommand::PaletteCommand)
-                    }))
-                    .separator()
-                    .entry(MenuItem::new("Open Settings").action(move || {
-                        workbench_command.send(SparrowWorkbenchCommand::OpenSettings)
-                    }))
-                    .entry(MenuItem::new("Open Keyboard Shortcuts").action(
-                        move || {
+                .popout_menu(move || {
+                    Menu::new("")
+                        .entry(MenuItem::new("Command Palette").action(move || {
                             workbench_command
-                                .send(SparrowWorkbenchCommand::OpenKeyboardShortcuts)
-                        },
-                    ))
-                    .entry(MenuItem::new("Open Theme Color Settings").action(
-                        move || {
-                            workbench_command.send(
-                                SparrowWorkbenchCommand::OpenThemeColorSettings,
-                            )
-                        },
-                    ))
-                    .separator()
-                    .entry(if let Some(v) = latest_version.get_untracked() {
-                        if update_in_progress.get_untracked() {
-                            MenuItem::new(format!("Update in progress ({v})"))
-                                .enabled(false)
+                                .send(SparrowWorkbenchCommand::PaletteCommand)
+                        }))
+                        .separator()
+                        .entry(MenuItem::new("Open Settings").action(move || {
+                            workbench_command.send(SparrowWorkbenchCommand::OpenSettings)
+                        }))
+                        .entry(MenuItem::new("Open Keyboard Shortcuts").action(
+                            move || {
+                                workbench_command
+                                    .send(SparrowWorkbenchCommand::OpenKeyboardShortcuts)
+                            },
+                        ))
+                        .entry(MenuItem::new("Open Theme Color Settings").action(
+                            move || {
+                                workbench_command.send(
+                                    SparrowWorkbenchCommand::OpenThemeColorSettings,
+                                )
+                            },
+                        ))
+                        .separator()
+                        .entry(if let Some(v) = latest_version.get_untracked() {
+                            if update_in_progress.get_untracked() {
+                                MenuItem::new(format!("Update in progress ({v})"))
+                                    .enabled(false)
+                            } else {
+                                MenuItem::new(format!("Restart to update ({v})")).action(
+                                    move || {
+                                        workbench_command.send(
+                                            SparrowWorkbenchCommand::RestartToUpdate,
+                                        )
+                                    },
+                                )
+                            }
                         } else {
-                            MenuItem::new(format!("Restart to update ({v})")).action(
-                                move || {
-                                    workbench_command.send(
-                                        SparrowWorkbenchCommand::RestartToUpdate,
-                                    )
-                                },
-                            )
-                        }
-                    } else {
-                        MenuItem::new("No update available").enabled(false)
-                    })
-                    .separator()
-                    .entry(MenuItem::new("About Sparrow").action(move || {
-                        workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
-                    }))
-            }),
+                            MenuItem::new("No update available").enabled(false)
+                        })
+                        .separator()
+                        .entry(MenuItem::new("About Sparrow").action(move || {
+                            workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
+                        }))
+                }),
             container(label(|| "1".to_string()).style(move |s| {
                 let config = config.get();
                 s.font_size(10.0)
@@ -400,17 +479,17 @@ fn right(
                     .margin_top(10.0)
                     .background(config.color(SparrowColor::EDITOR_CARET))
             }))
-            .style(move |s| {
-                let has_update = has_update();
-                s.absolute()
-                    .size_pct(100.0, 100.0)
-                    .justify_end()
-                    .items_end()
-                    .pointer_events_none()
-                    .apply_if(!has_update, |s| s.hide())
-            }),
+                .style(move |s| {
+                    let has_update = has_update();
+                    s.absolute()
+                        .size_pct(100.0, 100.0)
+                        .justify_end()
+                        .items_end()
+                        .pointer_events_none()
+                        .apply_if(!has_update, |s| s.hide())
+                }),
         ))
-        .style(move |s| s.margin_horiz(6.0)),
+            .style(move |s| s.margin_horiz(6.0)),
         window_controls_view(
             window_command,
             true,
@@ -419,12 +498,8 @@ fn right(
             config,
         ),
     ))
-    .style(|s| {
-        s.flex_basis(0)
-            .flex_grow(1.0f32)
-            .justify_content(Some(JustifyContent::FlexEnd))
-    })
-    .debug_name("Right of top bar")
+        .style(|s| s.items_center().height_pct(100.0))
+        .debug_name("Right of top bar")
 }
 
 pub fn title(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -439,6 +514,8 @@ pub fn title(window_tab_data: Rc<WindowTabData>) -> impl View {
     let title_height = window_tab_data.title_height;
     let update_in_progress = window_tab_data.update_in_progress;
     let config = window_tab_data.common.config;
+    let branch = window_tab_data.source_control.branch;
+    let branch_text = move || branch.get();
     stack((
         left(
             workspace.clone(),
@@ -452,6 +529,7 @@ pub fn title(window_tab_data: Rc<WindowTabData>) -> impl View {
             workspace,
             window_tab_data.main_split.clone(),
             workbench_command,
+            branch_text,
             config,
         ),
         right(
@@ -464,22 +542,20 @@ pub fn title(window_tab_data: Rc<WindowTabData>) -> impl View {
             config,
         ),
     ))
-    .on_resize(move |rect| {
-        let height = rect.height();
-        if height != title_height.get_untracked() {
-            title_height.set(height);
-        }
-    })
-    .style(move |s| {
-        let config = config.get();
-        s.width_pct(100.0)
-            .height(37.0)
-            .items_center()
-            .background(config.color(SparrowColor::PANEL_BACKGROUND))
-            .border_bottom(1.0)
-            .border_color(config.color(SparrowColor::SPARROW_BORDER))
-    })
-    .debug_name("Title / Top Bar")
+        .on_resize(move |rect| {
+            let height = rect.height();
+            if height != title_height.get_untracked() {
+                title_height.set(height);
+            }
+        })
+        .style(move |s| {
+            let config = config.get();
+            s.width_pct(100.0)
+                .height(34.0)
+                .items_center()
+                .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
+        })
+        .debug_name("Title / Top Bar")
 }
 
 pub fn window_controls_view(
@@ -500,7 +576,7 @@ pub fn window_controls_view(
             || "Minimize",
             config,
         )
-        .style(|s| s.margin_right(16.0).margin_left(10.0)),
+            .style(|s| s.margin_right(16.0).margin_left(10.0)),
         clickable_icon(
             move || {
                 if window_maximized.get() {
@@ -519,7 +595,7 @@ pub fn window_controls_view(
             || "Maximize",
             config,
         )
-        .style(|s| s.margin_right(16.0)),
+            .style(|s| s.margin_right(16.0)),
         clickable_icon(
             || SparrowIcons::WINDOW_CLOSE,
             move || {
@@ -530,14 +606,14 @@ pub fn window_controls_view(
             || "Close Window",
             config,
         )
-        .style(|s| s.margin_right(6.0)),
+            .style(|s| s.margin_right(6.0)),
     ))
-    .style(move |s| {
-        s.apply_if(
-            cfg!(target_os = "macos")
-                || !config.get_untracked().core.custom_titlebar
-                || (is_title && num_window_tabs.get() > 1),
-            |s| s.hide(),
-        )
-    })
+        .style(move |s| {
+            s.apply_if(
+                cfg!(target_os = "macos")
+                    || !config.get_untracked().core.custom_titlebar
+                    || (is_title && num_window_tabs.get() > 1),
+                |s| s.hide(),
+            )
+        })
 }

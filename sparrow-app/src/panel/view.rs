@@ -12,7 +12,7 @@ use floem::{
     unit::PxPctAuto,
     views::{
         Decorators, container, dyn_stack, empty, h_stack, label, stack,
-        stack_from_iter, tab, text,
+        stack_from_iter, svg, tab, text,
     },
 };
 
@@ -38,6 +38,43 @@ use crate::{
     window_tab::{DragContent, WindowTabData},
 };
 
+/// Radius of the rounded "islands" (tool windows and editor area).
+pub const ISLAND_RADIUS: f32 = 10.0;
+
+fn island_corner(
+    config: ReadSignal<Arc<SparrowConfig>>,
+    path: &'static str,
+    top: bool,
+    left: bool,
+) -> impl View {
+    let svg_str = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10"><path d="{path}" fill="currentColor"/></svg>"#
+    );
+    svg(move || svg_str.clone()).style(move |s| {
+        let color = config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND);
+        s.absolute()
+            .size(ISLAND_RADIUS, ISLAND_RADIUS)
+            .color(color)
+            .apply_if(top, |s| s.inset_top(0.0))
+            .apply_if(!top, |s| s.inset_bottom(0.0))
+            .apply_if(left, |s| s.inset_left(0.0))
+            .apply_if(!left, |s| s.inset_right(0.0))
+    })
+}
+
+/// floem does not clip children to a rounded parent, so rounded corners are
+/// faked by painting four quarter-circle masks in the window-frame colour on
+/// top of the island's corners.
+pub fn island_corners(config: ReadSignal<Arc<SparrowConfig>>) -> impl View {
+    stack((
+        island_corner(config, "M0 0H10A10 10 0 0 0 0 10Z", true, true),
+        island_corner(config, "M0 0H10V10A10 10 0 0 0 0 0Z", true, false),
+        island_corner(config, "M0 0V10H10A10 10 0 0 1 0 0Z", false, true),
+        island_corner(config, "M10 0V10H0A10 10 0 0 0 10 0Z", false, false),
+    ))
+        .style(|s| s.absolute().size_pct(100.0, 100.0).z_index(40).pointer_events_none())
+}
+
 pub fn foldable_panel_section(
     header: impl View + 'static,
     child: impl View + 'static,
@@ -61,16 +98,17 @@ pub fn foldable_panel_section(
             ),
             header.style(|s| s.align_items(AlignItems::Center).padding_left(3.0)),
         ))
-        .style(move |s| {
-            s.padding_horiz(10.0)
-                .padding_vert(6.0)
-                .width_pct(100.0)
-                .cursor(CursorStyle::Pointer)
-                .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
-        })
-        .on_click_stop(move |_| {
-            open.update(|open| *open = !*open);
-        }),
+            .style(move |s| {
+                s.padding_horiz(10.0)
+                    .padding_vert(6.0)
+                    .width_pct(100.0)
+                    .items_center()
+                    .cursor(CursorStyle::Pointer)
+                    .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
+            })
+            .on_click_stop(move |_| {
+                open.update(|open| *open = !*open);
+            }),
         child.style(move |s| s.apply_if(!open.get(), |s| s.hide())),
     ))
 }
@@ -108,24 +146,24 @@ impl PanelBuilder {
             open,
             self.config,
         )
-        .style(move |s| {
-            let s = s.width_full().flex_col();
-            // Use the manual height if given, otherwise if we're open behave flex,
-            // otherwise, do nothing so that there's no height
-            let s = if open.get() {
-                if let Some(height) = height {
-                    s.height(height)
+            .style(move |s| {
+                let s = s.width_full().flex_col();
+                // Use the manual height if given, otherwise if we're open behave flex,
+                // otherwise, do nothing so that there's no height
+                let s = if open.get() {
+                    if let Some(height) = height {
+                        s.height(height)
+                    } else {
+                        s.flex_grow(1.0f32).flex_basis(0.0)
+                    }
+                } else if position.is_bottom() {
+                    s.flex_grow(0.3f32).flex_basis(0.0)
                 } else {
-                    s.flex_grow(1.0f32).flex_basis(0.0)
-                }
-            } else if position.is_bottom() {
-                s.flex_grow(0.3f32).flex_basis(0.0)
-            } else {
-                s
-            };
+                    s
+                };
 
-            style(s)
-        });
+                style(s)
+            });
         self.views.push(view.into_any());
         self
     }
@@ -279,126 +317,125 @@ pub fn panel_container_view(
                     drag_start.set(Some(pointer_event.pos));
                 }
             })
-            .on_event_stop(EventListener::PointerMove, move |event| {
-                if let Event::PointerMove(pointer_event) = event {
-                    if let Some(drag_start_point) = drag_start.get_untracked() {
-                        let current_size = current_size.get_untracked();
-                        let available_size = available_size.get_untracked();
-                        match position {
-                            PanelContainerPosition::Left => {
-                                let new_size = current_size.width
-                                    + pointer_event.pos.x
-                                    - drag_start_point.x;
-                                let current_panel_size = panel_size.get_untracked();
-                                let new_size = new_size
-                                    .max(150.0)
-                                    .min(available_size.width - 150.0 - 150.0);
-                                if new_size != current_panel_size.left {
-                                    panel_size.update(|size| {
-                                        size.left = new_size;
-                                        size.right = size.right.min(
-                                            available_size.width - new_size - 150.0,
-                                        )
-                                    })
+                .on_event_stop(EventListener::PointerMove, move |event| {
+                    if let Event::PointerMove(pointer_event) = event {
+                        if let Some(drag_start_point) = drag_start.get_untracked() {
+                            let current_size = current_size.get_untracked();
+                            let available_size = available_size.get_untracked();
+                            match position {
+                                PanelContainerPosition::Left => {
+                                    let new_size = current_size.width
+                                        + pointer_event.pos.x
+                                        - drag_start_point.x;
+                                    let current_panel_size = panel_size.get_untracked();
+                                    let new_size = new_size
+                                        .max(150.0)
+                                        .min(available_size.width - 150.0 - 150.0);
+                                    if new_size != current_panel_size.left {
+                                        panel_size.update(|size| {
+                                            size.left = new_size;
+                                            size.right = size.right.min(
+                                                available_size.width - new_size - 150.0,
+                                            )
+                                        })
+                                    }
                                 }
-                            }
-                            PanelContainerPosition::Bottom => {
-                                let new_size = current_size.height
-                                    - (pointer_event.pos.y - drag_start_point.y);
-                                let maximized = panel.panel_bottom_maximized(false);
-                                if (maximized
-                                    && new_size < available_size.height - 50.0)
-                                    || (!maximized
+                                PanelContainerPosition::Bottom => {
+                                    let new_size = current_size.height
+                                        - (pointer_event.pos.y - drag_start_point.y);
+                                    let maximized = panel.panel_bottom_maximized(false);
+                                    if (maximized
+                                        && new_size < available_size.height - 50.0)
+                                        || (!maximized
                                         && new_size > available_size.height - 50.0)
-                                {
-                                    panel.toggle_bottom_maximize();
-                                }
+                                    {
+                                        panel.toggle_bottom_maximize();
+                                    }
 
-                                let new_size = new_size
-                                    .max(100.0)
-                                    .min(available_size.height - 100.0);
-                                let current_size =
-                                    panel_size.with_untracked(|s| s.bottom);
-                                if current_size != new_size {
-                                    panel_size.update(|size| {
-                                        size.bottom = new_size;
-                                    })
+                                    let new_size = new_size
+                                        .max(100.0)
+                                        .min(available_size.height - 100.0);
+                                    let current_size =
+                                        panel_size.with_untracked(|s| s.bottom);
+                                    if current_size != new_size {
+                                        panel_size.update(|size| {
+                                            size.bottom = new_size;
+                                        })
+                                    }
                                 }
-                            }
-                            PanelContainerPosition::Right => {
-                                let new_size = current_size.width
-                                    - (pointer_event.pos.x - drag_start_point.x);
-                                let current_panel_size = panel_size.get_untracked();
-                                let new_size = new_size
-                                    .max(150.0)
-                                    .min(available_size.width - 150.0 - 150.0);
-                                if new_size != current_panel_size.right {
-                                    panel_size.update(|size| {
-                                        size.right = new_size;
-                                        size.left = size.left.min(
-                                            available_size.width - new_size - 150.0,
-                                        )
-                                    })
+                                PanelContainerPosition::Right => {
+                                    let new_size = current_size.width
+                                        - (pointer_event.pos.x - drag_start_point.x);
+                                    let current_panel_size = panel_size.get_untracked();
+                                    let new_size = new_size
+                                        .max(150.0)
+                                        .min(available_size.width - 150.0 - 150.0);
+                                    if new_size != current_panel_size.right {
+                                        panel_size.update(|size| {
+                                            size.right = new_size;
+                                            size.left = size.left.min(
+                                                available_size.width - new_size - 150.0,
+                                            )
+                                        })
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            })
-            .on_event_stop(EventListener::PointerUp, move |_| {
-                drag_start.set(None);
-            })
-            .style(move |s| {
-                let is_dragging = drag_start.get().is_some();
-                let current_size = current_size.get();
-                let config = config.get();
-                s.absolute()
-                    .apply_if(position == PanelContainerPosition::Bottom, |s| {
-                        s.width_pct(100.0).height(4.0).margin_top(-2.0)
-                    })
-                    .apply_if(position == PanelContainerPosition::Left, |s| {
-                        s.width(4.0)
-                            .margin_left(current_size.width as f32 - 2.0)
-                            .height_pct(100.0)
-                    })
-                    .apply_if(position == PanelContainerPosition::Right, |s| {
-                        s.width(4.0).margin_left(-2.0).height_pct(100.0)
-                    })
-                    .apply_if(is_dragging, |s| {
-                        s.background(config.color(SparrowColor::EDITOR_CARET))
-                            .apply_if(
-                                position == PanelContainerPosition::Bottom,
-                                |s| s.cursor(CursorStyle::RowResize),
-                            )
-                            .apply_if(
-                                position != PanelContainerPosition::Bottom,
-                                |s| s.cursor(CursorStyle::ColResize),
-                            )
-                            .z_index(2)
-                    })
-                    .hover(|s| {
-                        s.background(config.color(SparrowColor::EDITOR_CARET))
-                            .apply_if(
-                                position == PanelContainerPosition::Bottom,
-                                |s| s.cursor(CursorStyle::RowResize),
-                            )
-                            .apply_if(
-                                position != PanelContainerPosition::Bottom,
-                                |s| s.cursor(CursorStyle::ColResize),
-                            )
-                            .z_index(2)
-                    })
-            })
+                })
+                .on_event_stop(EventListener::PointerUp, move |_| {
+                    drag_start.set(None);
+                })
+                .style(move |s| {
+                    let is_dragging = drag_start.get().is_some();
+                    let current_size = current_size.get();
+                    let config = config.get();
+                    s.absolute()
+                        .apply_if(position == PanelContainerPosition::Bottom, |s| {
+                            s.width_pct(100.0).height(4.0).margin_top(-2.0)
+                        })
+                        .apply_if(position == PanelContainerPosition::Left, |s| {
+                            s.width(4.0)
+                                .margin_left(current_size.width as f32 - 2.0)
+                                .height_pct(100.0)
+                        })
+                        .apply_if(position == PanelContainerPosition::Right, |s| {
+                            s.width(4.0).margin_left(-2.0).height_pct(100.0)
+                        })
+                        .apply_if(is_dragging, |s| {
+                            s.background(config.color(SparrowColor::EDITOR_CARET))
+                                .apply_if(
+                                    position == PanelContainerPosition::Bottom,
+                                    |s| s.cursor(CursorStyle::RowResize),
+                                )
+                                .apply_if(
+                                    position != PanelContainerPosition::Bottom,
+                                    |s| s.cursor(CursorStyle::ColResize),
+                                )
+                                .z_index(2)
+                        })
+                        .hover(|s| {
+                            s.background(config.color(SparrowColor::EDITOR_CARET))
+                                .apply_if(
+                                    position == PanelContainerPosition::Bottom,
+                                    |s| s.cursor(CursorStyle::RowResize),
+                                )
+                                .apply_if(
+                                    position != PanelContainerPosition::Bottom,
+                                    |s| s.cursor(CursorStyle::ColResize),
+                                )
+                                .z_index(2)
+                        })
+                })
         }
     };
 
     let is_bottom = position.is_bottom();
     stack((
-        panel_picker(window_tab_data.clone(), position.first()),
         panel_view(window_tab_data.clone(), position.first()),
         panel_view(window_tab_data.clone(), position.second()),
-        panel_picker(window_tab_data.clone(), position.second()),
         resize_drag_view(position),
+        island_corners(config),
         stack((drop_view(position.first()), drop_view(position.second()))).style(
             move |s| {
                 let is_dragging_panel = is_dragging_panel();
@@ -409,45 +446,42 @@ pub fn panel_container_view(
             },
         ),
     ))
-    .on_resize(move |rect| {
-        let size = rect.size();
-        if size != current_size.get_untracked() {
-            current_size.set(size);
-        }
-    })
-    .style(move |s| {
-        let size = panel.size.with(|s| match position {
-            PanelContainerPosition::Left => s.left,
-            PanelContainerPosition::Bottom => s.bottom,
-            PanelContainerPosition::Right => s.right,
-        });
-        let is_maximized = panel.panel_bottom_maximized(true);
-        let config = config.get();
-        s.apply_if(!panel.is_container_shown(&position, true), |s| s.hide())
-            .apply_if(position == PanelContainerPosition::Bottom, |s| {
-                s.width_pct(100.0)
-                    .apply_if(!is_maximized, |s| {
-                        s.border_top(1.0).height(size as f32)
-                    })
-                    .apply_if(is_maximized, |s| s.flex_grow(1.0f32))
-            })
-            .apply_if(position == PanelContainerPosition::Left, |s| {
-                s.border_right(1.0)
-                    .width(size as f32)
-                    .height_pct(100.0)
-                    .background(config.color(SparrowColor::PANEL_BACKGROUND))
-            })
-            .apply_if(position == PanelContainerPosition::Right, |s| {
-                s.border_left(1.0)
-                    .width(size as f32)
-                    .height_pct(100.0)
-                    .background(config.color(SparrowColor::PANEL_BACKGROUND))
-            })
-            .apply_if(!is_bottom, |s| s.flex_col())
-            .border_color(config.color(SparrowColor::SPARROW_BORDER))
-            .color(config.color(SparrowColor::PANEL_FOREGROUND))
-    })
-    .debug_name(format!("{:?} Panel Container View", position))
+        .on_resize(move |rect| {
+            let size = rect.size();
+            if size != current_size.get_untracked() {
+                current_size.set(size);
+            }
+        })
+        .style(move |s| {
+            let size = panel.size.with(|s| match position {
+                PanelContainerPosition::Left => s.left,
+                PanelContainerPosition::Bottom => s.bottom,
+                PanelContainerPosition::Right => s.right,
+            });
+            let is_maximized = panel.panel_bottom_maximized(true);
+            let config = config.get();
+            s.apply_if(!panel.is_container_shown(&position, true), |s| s.hide())
+                .apply_if(position == PanelContainerPosition::Bottom, |s| {
+                    s.width_pct(100.0)
+                        .apply_if(!is_maximized, |s| s.height(size as f32))
+                        .apply_if(is_maximized, |s| s.flex_grow(1.0f32))
+                        .background(config.color(SparrowColor::PANEL_BACKGROUND))
+                })
+                .apply_if(position == PanelContainerPosition::Left, |s| {
+                    s.width(size as f32)
+                        .height_pct(100.0)
+                        .background(config.color(SparrowColor::PANEL_BACKGROUND))
+                })
+                .apply_if(position == PanelContainerPosition::Right, |s| {
+                    s.width(size as f32)
+                        .height_pct(100.0)
+                        .background(config.color(SparrowColor::PANEL_BACKGROUND))
+                })
+                .apply_if(!is_bottom, |s| s.flex_col())
+                .border_radius(ISLAND_RADIUS)
+                .color(config.color(SparrowColor::PANEL_FOREGROUND))
+        })
+        .debug_name(format!("{:?} Panel Container View", position))
 }
 
 fn panel_view(
@@ -511,13 +545,13 @@ fn panel_view(
             view.style(|s| s.size_pct(100.0, 100.0))
         },
     )
-    .style(move |s| {
-        s.size_pct(100.0, 100.0).apply_if(
-            !panel.is_position_shown(&position, true)
-                || panel.is_position_empty(&position, true),
-            |s| s.hide(),
-        )
-    })
+        .style(move |s| {
+            s.size_pct(100.0, 100.0).apply_if(
+                !panel.is_position_shown(&position, true)
+                    || panel.is_position_empty(&position, true),
+                |s| s.hide(),
+            )
+        })
 }
 
 pub fn panel_header(
@@ -532,7 +566,50 @@ pub fn panel_header(
     })
 }
 
-fn panel_picker(
+/// Android Studio style tool window stripe: a narrow vertical icon bar on the
+/// outer edge of the window. The top of the stripe holds the side's first
+/// position, the bottom holds its second position plus the bottom-panel
+/// position on the same side, so every panel icon keeps a home.
+pub fn tool_window_stripe(
+    window_tab_data: Rc<WindowTabData>,
+    is_left: bool,
+) -> impl View {
+    let config = window_tab_data.common.config;
+    let (top, lower, bottom) = if is_left {
+        (
+            PanelPosition::LeftTop,
+            PanelPosition::LeftBottom,
+            PanelPosition::BottomLeft,
+        )
+    } else {
+        (
+            PanelPosition::RightTop,
+            PanelPosition::RightBottom,
+            PanelPosition::BottomRight,
+        )
+    };
+    stack((
+        stripe_picker(window_tab_data.clone(), top),
+        empty().style(|s| s.flex_grow(1.0f32)),
+        stripe_picker(window_tab_data.clone(), lower),
+        stripe_picker(window_tab_data, bottom),
+    ))
+        .style(move |s| {
+            let config = config.get();
+            s.flex_col()
+                .items_center()
+                .width(34.0)
+                .height_pct(100.0)
+                .flex_shrink(0.0f32)
+                .padding_vert(4.0)
+                .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
+                .apply_if(is_left, |s| s.margin_right(-3.0))
+                .apply_if(!is_left, |s| s.margin_left(-3.0))
+        })
+        .debug_name("Tool Window Stripe")
+}
+
+fn stripe_picker(
     window_tab_data: Rc<WindowTabData>,
     position: PanelPosition,
 ) -> impl View {
@@ -540,8 +617,6 @@ fn panel_picker(
     let panels = panel.panels;
     let config = window_tab_data.common.config;
     let dragging = window_tab_data.common.dragging;
-    let is_bottom = position.is_bottom();
-    let is_first = position.is_first();
     dyn_stack(
         move || {
             panel
@@ -578,7 +653,7 @@ fn panel_picker(
                     }
                 }
             };
-            container(stack((
+            container(
                 clickable_icon(
                     || icon,
                     move || {
@@ -589,67 +664,39 @@ fn panel_picker(
                     move || tooltip,
                     config,
                 )
-                .draggable()
-                .on_event_stop(EventListener::DragStart, move |_| {
-                    dragging.set(Some(DragContent::Panel(p)));
-                })
-                .on_event_stop(EventListener::DragEnd, move |_| {
-                    dragging.set(None);
-                })
-                .dragging_style(move |s| {
+                    .draggable()
+                    .on_event_stop(EventListener::DragStart, move |_| {
+                        dragging.set(Some(DragContent::Panel(p)));
+                    })
+                    .on_event_stop(EventListener::DragEnd, move |_| {
+                        dragging.set(None);
+                    })
+                    .dragging_style(move |s| {
+                        let config = config.get();
+                        s.border(1.0)
+                            .border_radius(6.0)
+                            .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                            .padding(6.0)
+                            .background(
+                                config
+                                    .color(SparrowColor::PANEL_BACKGROUND)
+                                    .multiply_alpha(0.7),
+                            )
+                    }),
+            )
+                .style(move |s| {
                     let config = config.get();
-                    s.border(1.0)
-                        .border_radius(6.0)
-                        .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                        .padding(6.0)
-                        .background(
-                            config
-                                .color(SparrowColor::PANEL_BACKGROUND)
-                                .multiply_alpha(0.7),
-                        )
+                    s.padding(1.0).margin_vert(2.0).border_radius(6.0).apply_if(
+                        is_active(),
+                        |s| s.background(config.color(SparrowColor::ACTIVITY_CURRENT)),
+                    )
                 })
-                .style(|s| s.padding(1.0)),
-                label(|| "".to_string()).style(move |s| {
-                    s.selectable(false)
-                        .pointer_events_none()
-                        .absolute()
-                        .size_pct(100.0, 100.0)
-                        .apply_if(!is_bottom && is_first, |s| s.margin_top(2.0))
-                        .apply_if(!is_bottom && !is_first, |s| s.margin_top(-2.0))
-                        .apply_if(is_bottom && is_first, |s| s.margin_left(-2.0))
-                        .apply_if(is_bottom && !is_first, |s| s.margin_left(2.0))
-                        .apply_if(is_active(), |s| {
-                            s.apply_if(!is_bottom && is_first, |s| {
-                                s.border_bottom(2.0)
-                            })
-                            .apply_if(!is_bottom && !is_first, |s| s.border_top(2.0))
-                            .apply_if(is_bottom && is_first, |s| s.border_left(2.0))
-                            .apply_if(is_bottom && !is_first, |s| {
-                                s.border_right(2.0)
-                            })
-                        })
-                        .border_color(
-                            config
-                                .get()
-                                .color(SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE),
-                        )
-                }),
-            )))
-            .style(|s| s.padding(6.0))
         },
     )
-    .style(move |s| {
-        s.border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-            .apply_if(
-                panels.with(|p| {
-                    p.get(&position).map(|p| p.is_empty()).unwrap_or(true)
-                }),
+        .style(move |s| {
+            s.flex_col().items_center().apply_if(
+                panels.with(|p| p.get(&position).map(|p| p.is_empty()).unwrap_or(true)),
                 |s| s.hide(),
             )
-            .apply_if(is_bottom, |s| s.flex_col())
-            .apply_if(is_bottom && is_first, |s| s.border_right(1.0))
-            .apply_if(is_bottom && !is_first, |s| s.border_left(1.0))
-            .apply_if(!is_bottom && is_first, |s| s.border_bottom(1.0))
-            .apply_if(!is_bottom && !is_first, |s| s.border_top(1.0))
-    })
+        })
 }

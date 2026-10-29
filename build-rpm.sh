@@ -50,7 +50,7 @@ export OPENSSL_NO_VENDOR=1            # link system openssl-devel, no Perl build
 export ZSTD_SYS_USE_PKG_CONFIG=1
 export CC=clang CXX=clang++
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
-export RUSTFLAGS="${RUSTFLAGS:--C linker=clang -C link-arg=-fuse-ld=lld}"
+export RUSTFLAGS="${RUSTFLAGS:--C linker=clang -C link-arg=-fuse-ld=mold}"
 
 cargo fetch --locked
 

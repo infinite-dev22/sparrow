@@ -5,7 +5,6 @@ use std::{
 
 use floem::{
     View,
-    event::EventPropagation,
     reactive::{
         Memo, ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo,
     },
@@ -28,6 +27,7 @@ use crate::{
     window_tab::{WindowTabData, WorkProgress},
 };
 
+#[allow(unused_variables)]
 pub fn status(
     window_tab_data: Rc<WindowTabData>,
     source_control: SourceControlData,
@@ -71,7 +71,8 @@ pub fn status(
     };
 
     let progresses = window_tab_data.progresses;
-    let mode = create_memo(move |_| window_tab_data.mode());
+    let tab_data = window_tab_data.mode().clone();
+    let mode = create_memo(move |_| tab_data);
     let pointer_down = floem::reactive::create_rw_signal(false);
 
     stack((
@@ -124,50 +125,7 @@ pub fn status(
                     .align_items(Some(AlignItems::Center))
                     .selectable(false)
             }),
-            stack((
-                svg(move || config.get().ui_svg(SparrowIcons::SCM)).style(
-                    move |s| {
-                        let config = config.get();
-                        let icon_size = config.ui.icon_size() as f32;
-                        s.size(icon_size, icon_size)
-                            .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
-                    },
-                ),
-                label(branch).style(move |s| {
-                    s.margin_left(10.0)
-                        .color(config.get().color(SparrowColor::STATUS_FOREGROUND))
-                        .selectable(false)
-                }),
-            ))
-            .style(move |s| {
-                s.display(if branch().is_empty() {
-                    Display::None
-                } else {
-                    Display::Flex
-                })
-                .height_pct(100.0)
-                .padding_horiz(10.0)
-                .align_items(Some(AlignItems::Center))
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer).background(
-                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-            })
-            .on_event_cont(floem::event::EventListener::PointerDown, move |_| {
-                pointer_down.set(true);
-            })
-            .on_event(
-                floem::event::EventListener::PointerUp,
-                move |_| {
-                    if pointer_down.get() {
-                        workbench_command
-                            .send(SparrowWorkbenchCommand::PaletteSCMReferences);
-                    }
-                    pointer_down.set(false);
-                    EventPropagation::Continue
-                },
-            ),
+            status_breadcrumbs(window_tab_data.workspace.clone(), editor, config),
             {
                 let panel = panel.clone();
                 stack((
@@ -317,7 +275,9 @@ pub fn status(
             },
         ))
         .style(move |s| {
-            s.height_pct(100.0)
+            // Islands look: panel toggles live on the tool-window stripes.
+            s.hide()
+                .height_pct(100.0)
                 .items_center()
                 .color(config.get().color(SparrowColor::STATUS_FOREGROUND))
         }),
@@ -327,25 +287,19 @@ pub fn status(
                 if let Some(editor) = editor.get() {
                     let mut status = String::new();
                     let cursor = editor.cursor().get();
-                    if let Some((line, column, character)) = editor
+                    if let Some((line, column, _)) = editor
                         .doc_signal()
                         .get()
                         .buffer
                         .with(|buffer| cursor.get_line_col_char(buffer))
                     {
-                        status = format!(
-                            "Ln {}, Col {}, Char {}",
-                            line + 1,
-                            column + 1,
-                            character,
-                        );
+                        status = format!("{}:{}", line + 1, column + 1);
                     }
                     if let Some(selection) = cursor.get_selection() {
                         let selection_range = selection.0.abs_diff(selection.1);
 
                         if selection.0 != selection.1 {
-                            status =
-                                format!("{status} ({selection_range} selected)");
+                            status = format!("{status} ({selection_range} chars)");
                         }
                     }
                     let selection_count = cursor.get_selection_count();
@@ -383,7 +337,8 @@ pub fn status(
             .on_click_stop(move |_| {
                 palette_clone.run(PaletteKind::Language);
             });
-            (cursor_info, line_ending_info, language_info)
+            let encoding_info = status_text(config, editor, || "UTF-8");
+            (cursor_info, line_ending_info, encoding_info, language_info)
         })
         .style(|s| {
             s.height_pct(100.0)
@@ -400,15 +355,73 @@ pub fn status(
     })
     .style(move |s| {
         let config = config.get();
-        s.border_top(1.0)
-            .border_color(config.color(SparrowColor::SPARROW_BORDER))
-            .background(config.color(SparrowColor::STATUS_BACKGROUND))
+        s.background(config.color(SparrowColor::STATUS_BACKGROUND))
             .flex_basis(config.ui.status_height() as f32)
             .flex_grow(0.0f32)
             .flex_shrink(0.0f32)
             .items_center()
     })
     .debug_name("Status/Bottom Bar")
+}
+
+/// Islands style breadcrumb trail: `project > dir > dir > file`.
+fn status_breadcrumbs(
+    workspace: Arc<crate::workspace::SparrowWorkspace>,
+    editor: Memo<Option<EditorData>>,
+    config: ReadSignal<Arc<SparrowConfig>>,
+) -> impl View {
+    use crate::doc::DocContent;
+    dyn_stack(
+        move || {
+            let mut sections: Vec<String> = Vec::new();
+            let Some(editor) = editor.get() else {
+                return Vec::new().into_iter().enumerate();
+            };
+            let doc = editor.doc_signal().get();
+            let content = doc.content.get();
+            let full_path = if let DocContent::History(history) = &content {
+                Some(history.path.clone())
+            } else {
+                content.path().cloned()
+            };
+            let Some(full_path) = full_path else {
+                return Vec::new().into_iter().enumerate();
+            };
+            let mut path = full_path.clone();
+            if let Some(workspace_path) = workspace.path.as_ref() {
+                if let Ok(stripped) = full_path.strip_prefix(workspace_path) {
+                    path = stripped.to_path_buf();
+                    if let Some(root) = workspace_path.file_name() {
+                        sections.push(root.to_string_lossy().into_owned());
+                    }
+                }
+            }
+            let mut parts: Vec<String> = path
+                .ancestors()
+                .filter_map(|p| Some(p.file_name()?.to_string_lossy().into_owned()))
+                .collect();
+            parts.reverse();
+            sections.extend(parts);
+            sections.into_iter().enumerate()
+        },
+        |(i, section)| (*i, section.clone()),
+        move |(i, section)| {
+            stack((
+                svg(move || config.get().ui_svg(SparrowIcons::BREADCRUMB_SEPARATOR))
+                    .style(move |s| {
+                        let config = config.get();
+                        let size = config.ui.icon_size() as f32;
+                        s.apply_if(i == 0, |s| s.hide())
+                            .size(size, size)
+                            .color(config.color(SparrowColor::SPARROW_ICON_INACTIVE))
+                    }),
+                label(move || section.clone())
+                    .style(|s| s.selectable(false).margin_horiz(2.0)),
+            ))
+            .style(|s| s.items_center())
+        },
+    )
+    .style(|s| s.padding_left(10.0).items_center())
 }
 
 fn progress_view(

@@ -53,9 +53,9 @@ fn blend_colors(background: Color, foreground: Color) -> Color {
         [background.g, foreground.g],
         [background.b, foreground.b],
     ]
-    .map(|x| x.map(u16::from))
-    .map(|[b, f]| (a * f + (255 - a) * b) / 255)
-    .map(|x| x as u8);
+        .map(|x| x.map(u16::from))
+        .map(|[b, f]| (a * f + (255 - a) * b) / 255)
+        .map(|x| x as u8);
 
     Color::from_rgba8(r, g, b, 255)
 }
@@ -173,16 +173,16 @@ fn file_node_text_view(
                             .map(|f| f.to_string_lossy().to_string())
                             .unwrap_or_default()
                     })
-                    .style(move |s| {
-                        s.height(ui_line_height.get())
-                            .color(file_node_text_color(
-                                config,
-                                node.clone(),
-                                source_control.clone(),
-                            ))
-                            .padding_right(5.0)
-                            .selectable(false)
-                    }),
+                        .style(move |s| {
+                            s.height(ui_line_height.get())
+                                .color(file_node_text_color(
+                                    config,
+                                    node.clone(),
+                                    source_control.clone(),
+                                ))
+                                .padding_right(5.0)
+                                .selectable(false)
+                        }),
                     label(move || path.to_string_lossy().to_string()).style(
                         move |s| {
                             s.height(ui_line_height.get())
@@ -202,15 +202,15 @@ fn file_node_text_view(
                             .map(|f| f.to_string_lossy().to_string())
                             .unwrap_or_default()
                     })
-                    .style(move |s| {
-                        s.height(ui_line_height.get())
-                            .color(file_node_text_color(
-                                config,
-                                node.clone(),
-                                source_control.clone(),
-                            ))
-                            .selectable(false)
-                    }),
+                        .style(move |s| {
+                            s.height(ui_line_height.get())
+                                .color(file_node_text_color(
+                                    config,
+                                    node.clone(),
+                                    source_control.clone(),
+                                ))
+                                .selectable(false)
+                        }),
                 )
             }
         }
@@ -298,12 +298,12 @@ fn file_node_input_view(data: FileExplorerData, err: Option<String>) -> Containe
                         .z_index(100)
                 }),
             ))
-            .style(|s| s.flex_grow(1.0f32)),
+                .style(|s| s.flex_grow(1.0f32)),
         )
     } else {
         container(text_input_view)
     }
-    .style(move |s| s.width_full())
+        .style(move |s| s.width_full())
 }
 
 fn file_explorer_view(
@@ -344,20 +344,20 @@ fn file_explorer_view(
                         };
                         config.ui_svg(svg_str)
                     })
-                    .style(move |s| {
-                        let config = config.get();
-                        let size = config.ui.icon_size() as f32;
+                        .style(move |s| {
+                            let config = config.get();
+                            let size = config.ui.icon_size() as f32;
 
-                        let color = if is_dir {
-                            config.color(SparrowColor::SPARROW_ICON_ACTIVE)
-                        } else {
-                            Color::TRANSPARENT
-                        };
-                        s.size(size, size)
-                            .flex_shrink(0.0f32)
-                            .margin_left(10.0)
-                            .color(color)
-                    }),
+                            let color = if is_dir {
+                                config.color(SparrowColor::SPARROW_ICON_ACTIVE)
+                            } else {
+                                Color::TRANSPARENT
+                            };
+                            s.size(size, size)
+                                .flex_shrink(0.0f32)
+                                .margin_left(10.0)
+                                .color(color)
+                        }),
                     {
                         let kind = kind.clone();
                         let kind_for_style = kind.clone();
@@ -376,58 +376,59 @@ fn file_explorer_view(
                                 config.ui_svg(SparrowIcons::FILE)
                             }
                         })
-                        .style(move |s| {
-                            let config = config.get();
-                            let size = config.ui.icon_size() as f32;
+                            .style(move |s| {
+                                let config = config.get();
+                                let size = config.ui.icon_size() as f32;
 
-                            s.size(size, size)
-                                .flex_shrink(0.0f32)
-                                .margin_horiz(6.0)
-                                .apply_if(is_dir, |s| {
-                                    s.color(
-                                        config.color(
-                                            SparrowColor::SPARROW_ICON_ACTIVE,
-                                        ),
-                                    )
-                                })
-                                .apply_if(!is_dir, |s| {
-                                    s.apply_opt(
-                                        kind_for_style
-                                            .path()
-                                            .and_then(|p| config.file_svg(p).1),
-                                        Style::color,
-                                    )
-                                })
-                        })
+                                s.size(size, size)
+                                    .flex_shrink(0.0f32)
+                                    .margin_horiz(6.0)
+                                    .apply_if(is_dir, |s| {
+                                        s.color(
+                                            config.color(
+                                                SparrowColor::SPARROW_ICON_ACTIVE,
+                                            ),
+                                        )
+                                    })
+                                    .apply_if(!is_dir, |s| {
+                                        s.apply_opt(
+                                            kind_for_style
+                                                .path()
+                                                .and_then(|p| config.file_svg(p).1),
+                                            Style::color,
+                                        )
+                                    })
+                            })
                     },
                     file_node_text_view(data, node, source_control.clone()),
                 ))
-                .style({
-                    let kind = kind.clone();
-                    move |s| {
-                        s.padding_right(15.0)
-                            .min_width_full()
-                            .padding_left((level * 10) as f32)
-                            .align_items(AlignItems::Center)
-                            .hover(|s| {
-                                s.background(
-                                    config.get().color(
-                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                    ),
+                    .style({
+                        let kind = kind.clone();
+                        move |s| {
+                            s.padding_right(15.0)
+                                .border_radius(6.0)
+                                .min_width_full()
+                                .padding_left((level * 10) as f32)
+                                .align_items(AlignItems::Center)
+                                .hover(|s| {
+                                    s.background(
+                                        config.get().color(
+                                            SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                        ),
+                                    )
+                                        .cursor(CursorStyle::Pointer)
+                                })
+                                .apply_if(
+                                    select.get().map(|x| x == kind).unwrap_or_default(),
+                                    |x| {
+                                        x.background(config.get().color(
+                                            SparrowColor::PANEL_CURRENT_BACKGROUND,
+                                        ))
+                                    },
                                 )
-                                .cursor(CursorStyle::Pointer)
-                            })
-                            .apply_if(
-                                select.get().map(|x| x == kind).unwrap_or_default(),
-                                |x| {
-                                    x.background(config.get().color(
-                                        SparrowColor::PANEL_CURRENT_BACKGROUND,
-                                    ))
-                                },
-                            )
-                    }
-                })
-                .debug_name("file item");
+                        }
+                    })
+                    .debug_name("file item");
 
                 // Only handle click events if we are not naming the file node
                 if let FileNodeViewKind::Path(path) = &kind {
@@ -443,58 +444,58 @@ fn file_explorer_view(
                             focus.set(Focus::Panel(PanelKind::FileExplorer));
                         }
                     })
-                    .on_double_click({
-                        move |_| {
-                            double_click_data
-                                .double_click(&double_click_path, config)
-                        }
-                    })
-                    .on_secondary_click_stop(move |_| {
-                        secondary_click_data.secondary_click(&secondary_click_path);
-                    })
-                    .on_event_stop(
-                        EventListener::PointerDown,
-                        move |event| {
-                            if let Event::PointerDown(pointer_event) = event {
-                                if pointer_event.button.is_auxiliary() {
-                                    aux_click_data.middle_click(&aux_click_path);
-                                }
+                        .on_double_click({
+                            move |_| {
+                                double_click_data
+                                    .double_click(&double_click_path, config)
                             }
-                        },
-                    )
+                        })
+                        .on_secondary_click_stop(move |_| {
+                            secondary_click_data.secondary_click(&secondary_click_path);
+                        })
+                        .on_event_stop(
+                            EventListener::PointerDown,
+                            move |event| {
+                                if let Event::PointerDown(pointer_event) = event {
+                                    if pointer_event.button.is_auxiliary() {
+                                        aux_click_data.middle_click(&aux_click_path);
+                                    }
+                                }
+                            },
+                        )
                 } else {
                     view
                 }
             },
         )
-        .item_size_fixed(move || ui_line_height.get())
-        .style(|s| s.absolute().flex_col().min_width_full()),
+            .item_size_fixed(move || ui_line_height.get())
+            .style(|s| s.absolute().flex_col().min_width_full()),
     )
-    .style(|s| s.absolute().size_full().line_height(1.8))
-    .on_secondary_click_stop(move |_| {
-        if let Naming::None = naming.get_untracked() {
-            if let Some(path) = &secondary_click_data.common.workspace.path {
-                secondary_click_data.secondary_click(path);
+        .style(|s| s.absolute().size_full().line_height(1.8))
+        .on_secondary_click_stop(move |_| {
+            if let Naming::None = naming.get_untracked() {
+                if let Some(path) = &secondary_click_data.common.workspace.path {
+                    secondary_click_data.secondary_click(path);
+                }
             }
-        }
-    })
-    .on_resize(move |rect| {
-        scroll_rect.set(rect);
-    })
-    .scroll_to(move || {
-        if let Some(line) = scroll_to_line.get() {
-            let line_height = ui_line_height.get_untracked();
-            Some(
-                (
-                    0.0,
-                    line * line_height - scroll_rect.get_untracked().height() / 2.0,
+        })
+        .on_resize(move |rect| {
+            scroll_rect.set(rect);
+        })
+        .scroll_to(move || {
+            if let Some(line) = scroll_to_line.get() {
+                let line_height = ui_line_height.get_untracked();
+                Some(
+                    (
+                        0.0,
+                        line * line_height - scroll_rect.get_untracked().height() / 2.0,
+                    )
+                        .into(),
                 )
-                    .into(),
-            )
-        } else {
-            None
-        }
-    })
+            } else {
+                None
+            }
+        })
 }
 
 fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -538,14 +539,14 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                 || "Close",
                 config,
             )
-            .on_event_stop(EventListener::PointerEnter, move |_| {
-                hovered.set(true);
-            })
-            .on_event_stop(EventListener::PointerLeave, move |_| {
-                hovered.set(false);
-            })
-            .on_event_stop(EventListener::PointerDown, |_| {})
-            .style(|s| s.margin_left(10.0)),
+                .on_event_stop(EventListener::PointerEnter, move |_| {
+                    hovered.set(true);
+                })
+                .on_event_stop(EventListener::PointerLeave, move |_| {
+                    hovered.set(false);
+                })
+                .on_event_stop(EventListener::PointerDown, |_| {})
+                .style(|s| s.margin_left(10.0)),
             container(svg(move || info.with(|info| info.icon.clone())).style(
                 move |s| {
                     let size = config.get().ui.icon_size() as f32;
@@ -553,7 +554,7 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                         .apply_opt(info.with(|info| info.color), |s, c| s.color(c))
                 },
             ))
-            .style(|s| s.padding_horiz(6.0)),
+                .style(|s| s.padding_horiz(6.0)),
             label(move || info.with(|info| info.name.clone())).style(move |s| {
                 s.apply_if(
                     !info
@@ -564,33 +565,33 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                 )
             }),
         ))
-        .style(move |s| {
-            let config = config.get();
-            s.items_center()
-                .width_pct(100.0)
-                .cursor(CursorStyle::Pointer)
-                .apply_if(
-                    active_editor_tab.get() == Some(editor_tab_id)
-                        && editor_tab.with(|editor_tab| editor_tab.active)
+            .style(move |s| {
+                let config = config.get();
+                s.items_center()
+                    .width_pct(100.0)
+                    .cursor(CursorStyle::Pointer)
+                    .apply_if(
+                        active_editor_tab.get() == Some(editor_tab_id)
+                            && editor_tab.with(|editor_tab| editor_tab.active)
                             == child_index.get(),
-                    |s| {
-                        s.background(
-                            config.color(SparrowColor::PANEL_CURRENT_BACKGROUND),
-                        )
-                    },
-                )
-                .hover(|s| {
-                    s.background(
-                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        |s| {
+                            s.background(
+                                config.color(SparrowColor::PANEL_CURRENT_BACKGROUND),
+                            )
+                        },
                     )
-                })
-        })
-        .on_event_cont(EventListener::PointerDown, move |_| {
-            editor_tab.update(|editor_tab| {
-                editor_tab.active = child_index.get_untracked();
-            });
-            active_editor_tab.set(Some(editor_tab_id));
-        })
+                    .hover(|s| {
+                        s.background(
+                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                    })
+            })
+            .on_event_cont(EventListener::PointerDown, move |_| {
+                editor_tab.update(|editor_tab| {
+                    editor_tab.active = child_index.get_untracked();
+                });
+                active_editor_tab.set(Some(editor_tab_id));
+            })
     };
 
     scroll(
@@ -614,13 +615,13 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                             )
                         },
                     )
-                    .style(|s| s.flex_col().width_pct(100.0)),
+                        .style(|s| s.flex_col().width_pct(100.0)),
                 ))
-                .style(|s| s.flex_col())
+                    .style(|s| s.flex_col())
             },
         )
-        .style(|s| s.flex_col().width_pct(100.0)),
+            .style(|s| s.flex_col().width_pct(100.0)),
     )
-    .style(|s| s.absolute().size_full().line_height(1.8))
-    .debug_name("Open Editors")
+        .style(|s| s.absolute().size_full().line_height(1.8))
+        .debug_name("Open Editors")
 }

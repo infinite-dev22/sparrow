@@ -62,6 +62,12 @@ pub struct UIConfig {
 
     #[field_names(desc = "Display the Open Editors section in the explorer")]
     pub open_editors_visible: bool,
+    
+    #[field_names(desc = "Enable rounded corners for tabs and panels (IntelliJ style)")]
+    pub rounded_corners: bool,
+
+    #[field_names(desc = "Tool window stripe width")]
+    pub tool_window_stripe_width: usize,
 }
 
 #[derive(
@@ -139,6 +145,14 @@ impl UIConfig {
             500
         } else {
             self.palette_width.max(100)
+        }
+    }
+
+    pub fn tool_window_stripe_width(&self) -> usize {
+        if self.tool_window_stripe_width == 0 {
+            48
+        } else {
+            self.tool_window_stripe_width
         }
     }
 }

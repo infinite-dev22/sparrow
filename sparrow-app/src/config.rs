@@ -45,6 +45,8 @@ pub const LOGO: &str = include_str!("../../extra/images/logo.svg");
 const DEFAULT_SETTINGS: &str = include_str!("../../defaults/settings.toml");
 const DEFAULT_LIGHT_THEME: &str = include_str!("../../defaults/light-theme.toml");
 const DEFAULT_DARK_THEME: &str = include_str!("../../defaults/dark-theme.toml");
+const DEFAULT_ISLANDS_DARK_THEME: &str =
+    include_str!("../../defaults/islands-dark-theme.toml");
 const DEFAULT_ICON_THEME: &str = include_str!("../../defaults/icon-theme.toml");
 
 static DEFAULT_CONFIG: Lazy<config::Config> =
@@ -321,6 +323,9 @@ impl SparrowConfig {
         let (name, theme) =
             Self::load_color_theme_from_str(DEFAULT_DARK_THEME).unwrap();
         themes.insert(name.to_lowercase(), (name, theme));
+        let (name, theme) =
+            Self::load_color_theme_from_str(DEFAULT_ISLANDS_DARK_THEME).unwrap();
+        themes.insert(name.to_lowercase(), (name, theme));
 
         themes
     }
@@ -336,7 +341,7 @@ impl SparrowConfig {
         self.resolve_theme(workspace);
     }
 
-    /// Set the active icon theme.  
+    /// Set the active icon theme.
     /// Note that this does not save the config.
     pub fn set_icon_theme(&mut self, workspace: &SparrowWorkspace, theme: &str) {
         self.core.icon_theme = theme.to_string();
@@ -446,7 +451,7 @@ impl SparrowConfig {
         Some((name.to_lowercase(), (name, config)))
     }
 
-    /// Load the given theme by its contents.  
+    /// Load the given theme by its contents.
     /// Returns `(name, theme fields)`
     fn load_color_theme_from_str(s: &str) -> Option<(String, config::Config)> {
         let config = config::Config::builder()
@@ -978,7 +983,7 @@ impl SparrowConfig {
         Some(())
     }
 
-    /// Update the config file with the given edit.  
+    /// Update the config file with the given edit.
     /// This should be called whenever the configuration is changed, so that it is persisted.
     pub fn update_file(
         parent: &str,
