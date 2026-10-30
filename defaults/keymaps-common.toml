@@ -121,6 +121,27 @@ mode = "i"
 key = "Ctrl+`"
 command = "toggle_terminal_focus"
 
+# --------------------------------- Flutter -------------------------------------------
+
+[[keymaps]]
+key = "F5"
+command = "flutter_run"
+
+[[keymaps]]
+key = "ctrl+F5"
+command = "flutter_hot_reload"
+when = "!file_explorer_focus"
+
+[[keymaps]]
+key = "ctrl+shift+F5"
+command = "flutter_hot_restart"
+when = "!file_explorer_focus"
+
+[[keymaps]]
+key = "shift+F5"
+command = "flutter_stop"
+when = "!file_explorer_focus"
+
 # ------------------------------------ File Explorer ---------------------------------
 
 [[keymaps]]

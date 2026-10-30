@@ -548,6 +548,13 @@ fn panel_view(
                     )
                         .into_any()
                 }
+                PanelKind::DartOutline => {
+                    crate::panel::dart_outline::dart_outline_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
             };
             view.style(|s| s.size_pct(100.0, 100.0))
         },
@@ -646,6 +653,7 @@ fn stripe_picker(
                 PanelKind::References => "References",
                 PanelKind::Implementation => "Implementation",
                 PanelKind::WidgetTree => "Widget Tree",
+                PanelKind::DartOutline => "Outline",
             };
             let icon = p.svg_name();
             let is_active = {

@@ -95,6 +95,35 @@ impl WidgetTreeData {
         }
     }
 
+    /// Runs on the UI thread after `DEBOUNCE` of no edits. Matches
+    /// `OutlineData::schedule_refresh` — same pattern, same constants.
+    pub(crate) fn schedule_refresh(
+        &self,
+        timer: RwSignal<Option<floem::action::TimerToken>>,
+        main_split: crate::main_split::MainSplitData,
+        lsp: crate::dart::DartLspService,
+    ) {
+        use std::time::Duration;
+        const DEBOUNCE: Duration = Duration::from_millis(300);
+
+        if timer.with_untracked(|t| t.is_some()) {
+            return;
+        }
+        let tree = self.clone();
+        let token = floem::action::exec_after(DEBOUNCE, move |_| {
+            timer.set(None);
+            let Some(editor) = main_split
+                .active_editor
+                .try_get_untracked()
+                .flatten()
+            else {
+                return;
+            };
+            tree.analyze(&editor, &lsp);
+        });
+        timer.set(Some(token));
+    }
+
     /// Push the results of a completed analysis into the tree signal.
     /// Ignores results whose source no longer matches `source_path`.
     pub fn apply_update(&self, for_path: PathBuf, widgets: Vec<FlutterWidgetInfo>) {

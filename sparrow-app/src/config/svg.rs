@@ -49,7 +49,11 @@ impl SvgStore {
             // is done in icon-theme.toml.
             let dir = if name.starts_with("sparrow_") {
                 &SPARROW_ICONS_DIR
-            } else if name.starts_with("dart_")
+            } else if let Some(_) = LUCIDE_ICONS_DIR.get_file(name) {
+                &LUCIDE_ICONS_DIR
+            } else if let Some(_) = TABLER_ICONS_DIR.get_file(name) {
+                &TABLER_ICONS_DIR
+            }  else if name.starts_with("dart_")
                 || name.starts_with("flutter_")
                 || name.starts_with("material_")
                 || name.starts_with("cupertino_")
@@ -57,10 +61,6 @@ impl SvgStore {
                 || name.starts_with("widget_")
             {
                 &DART_ICONS_DIR
-            } else if let Some(_) = LUCIDE_ICONS_DIR.get_file(name) {
-                &LUCIDE_ICONS_DIR
-            } else if let Some(_) = TABLER_ICONS_DIR.get_file(name) {
-                &TABLER_ICONS_DIR
             } else {
                 &CODICONS_ICONS_DIR
             };

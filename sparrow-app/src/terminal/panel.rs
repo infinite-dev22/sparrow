@@ -27,6 +27,7 @@ use crate::{
     workspace::SparrowWorkspace,
 };
 
+#[derive(Clone)]
 pub struct TerminalTabInfo {
     pub active: usize,
     pub tabs: im::Vector<(RwSignal<usize>, TerminalTabData)>,

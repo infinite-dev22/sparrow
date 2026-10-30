@@ -45,8 +45,9 @@ pub fn default_panel_order() -> PanelOrder {
     order.insert(
         PanelPosition::RightTop,
         im::vector![
+            PanelKind::DartOutline,
             PanelKind::DocumentSymbol,
-            PanelKind::WidgetTree
+            PanelKind::WidgetTree,
         ],
     );
 

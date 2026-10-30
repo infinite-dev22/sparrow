@@ -48,6 +48,7 @@ pub mod workspace;
 pub mod widget_kind;
 pub mod widget_tree;
 pub mod dart;
+pub mod outline;
 
 #[cfg(windows)]
 extern crate windows_sys as windows;

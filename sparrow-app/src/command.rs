@@ -616,6 +616,22 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "jump_highlight_prev")]
     #[strum(message = "Jump to previous document highlight")]
     JumpHighlightPrev,
+    
+    #[strum(serialize = "flutter_run")]
+    #[strum(message = "Flutter: Run")]
+    FlutterRun,
+
+    #[strum(serialize = "flutter_hot_reload")]
+    #[strum(message = "Flutter: Hot Reload")]
+    FlutterHotReload,
+
+    #[strum(serialize = "flutter_hot_restart")]
+    #[strum(message = "Flutter: Hot Restart")]
+    FlutterHotRestart,
+
+    #[strum(serialize = "flutter_stop")]
+    #[strum(message = "Flutter: Stop")]
+    FlutterStop,
 }
 
 #[derive(Clone, Debug)]

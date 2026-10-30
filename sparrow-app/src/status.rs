@@ -338,7 +338,14 @@ pub fn status(
                 palette_clone.run(PaletteKind::Language);
             });
             let encoding_info = status_text(config, editor, || "UTF-8");
-            (cursor_info, line_ending_info, encoding_info, language_info)
+            let flutter_button = flutter_run_button(window_tab_data, config);
+            (
+                flutter_button,
+                cursor_info,
+                line_ending_info,
+                encoding_info,
+                language_info,
+            )
         })
         .style(|s| {
             s.height_pct(100.0)
@@ -486,4 +493,110 @@ fn status_text<S: std::fmt::Display + 'static>(
             })
             .selectable(false)
     })
+}
+
+/// Flutter run / reload / restart status button.
+///
+/// Hidden entirely if the workspace is not a Flutter project (no
+/// `pubspec.yaml` at the root). Otherwise shows the current state:
+/// Idle → "Run Flutter", Running → "Reload", Error → "Retry".
+fn flutter_run_button(
+    window_tab_data: Rc<WindowTabData>,
+    config: ReadSignal<Arc<SparrowConfig>>,
+) -> impl View {
+    use crate::{command::SparrowWorkbenchCommand, dart::FlutterRunState};
+    use floem::{
+        menu::{Menu, MenuItem},
+        views::{container, label, svg},
+    };
+
+    let hot_reload = window_tab_data.flutter_hot_reload.clone();
+    let workbench_command = window_tab_data.common.workbench_command;
+    let is_flutter = hot_reload.is_flutter_project();
+
+    let label_text = move || match hot_reload.state.get() {
+        FlutterRunState::Idle => "Run Flutter",
+        FlutterRunState::Running => "Reload",
+        FlutterRunState::Error => "Retry",
+    };
+    let icon_name = move || match hot_reload.state.get() {
+        FlutterRunState::Idle | FlutterRunState::Running => SparrowIcons::START,
+        FlutterRunState::Error => SparrowIcons::RUN_ERRORS,
+    };
+    let icon_color = move || {
+        let c = config.get();
+        match hot_reload.state.get() {
+            FlutterRunState::Idle | FlutterRunState::Running => {
+                c.color(SparrowColor::SPARROW_RUN_ICON)
+            }
+            FlutterRunState::Error => c.color(SparrowColor::SPARROW_ERROR),
+        }
+    };
+
+    container(
+        stack((
+            svg(move || config.get().ui_svg(icon_name())).style(move |s| {
+                let c = config.get();
+                let size = c.ui.icon_size() as f32;
+                s.size(size, size).margin_right(5.0).color(icon_color())
+            }),
+            label(label_text).style(move |s| {
+                s.color(config.get().color(SparrowColor::STATUS_FOREGROUND))
+                    .selectable(false)
+            }),
+        ))
+        .on_click_stop(move |_| match hot_reload.state.get_untracked() {
+            FlutterRunState::Idle => {
+                workbench_command.send(SparrowWorkbenchCommand::FlutterRun);
+            }
+            FlutterRunState::Running => {
+                workbench_command.send(SparrowWorkbenchCommand::FlutterHotReload);
+            }
+            FlutterRunState::Error => {
+                workbench_command.send(SparrowWorkbenchCommand::FlutterRun);
+            }
+        })
+        .popout_menu(move || {
+            let mut menu = Menu::new("");
+            match hot_reload.state.get_untracked() {
+                FlutterRunState::Idle | FlutterRunState::Error => {
+                    menu =
+                        menu.entry(MenuItem::new("Run Flutter").action(move || {
+                            workbench_command
+                                .send(SparrowWorkbenchCommand::FlutterRun);
+                        }));
+                }
+                FlutterRunState::Running => {
+                    menu = menu
+                        .entry(MenuItem::new("Hot Reload").action(move || {
+                            workbench_command
+                                .send(SparrowWorkbenchCommand::FlutterHotReload);
+                        }))
+                        .entry(MenuItem::new("Hot Restart").action(move || {
+                            workbench_command
+                                .send(SparrowWorkbenchCommand::FlutterHotRestart);
+                        }))
+                        .separator()
+                        .entry(MenuItem::new("Stop").action(move || {
+                            workbench_command
+                                .send(SparrowWorkbenchCommand::FlutterStop);
+                        }));
+                }
+            }
+            menu
+        })
+        .style(move |s| {
+            let c = config.get();
+            s.padding_horiz(10.0)
+                .height_pct(100.0)
+                .items_center()
+                .cursor(CursorStyle::Pointer)
+                .apply_if(!is_flutter, |s| s.hide())
+                .hover(|s| {
+                    s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                })
+        })
+        .debug_name("Flutter Run Button"),
+    )
+    .style(|s| s.height_pct(100.0))
 }

@@ -98,7 +98,8 @@ use crate::{
     window::WindowCommonData,
     workspace::{SparrowWorkspace, SparrowWorkspaceType, WorkspaceInfo},
 };
-use crate::dart::DartLspService;
+use crate::dart::{DartLspService, FlutterHotReloadData};
+use crate::outline::OutlineData;
 use crate::widget_tree::WidgetTreeData;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +186,7 @@ pub struct WindowTabData {
     pub code_action: RwSignal<CodeActionData>,
     pub code_lens: RwSignal<Option<ViewId>>,
     pub dart_lsp: DartLspService,
+    pub flutter_hot_reload: FlutterHotReloadData,
     pub source_control: SourceControlData,
     pub rename: RenameData,
     pub global_search: GlobalSearchData,
@@ -201,6 +203,7 @@ pub struct WindowTabData {
     pub messages: RwSignal<Vec<(String, ShowMessageParams)>>,
     pub common: Rc<CommonData>,
     pub widget_tree: WidgetTreeData,
+    pub outline: OutlineData,
 }
 
 impl std::fmt::Debug for WindowTabData {
@@ -418,6 +421,7 @@ impl WindowTabData {
         let source_control =
             SourceControlData::new(cx, main_split.editors, common.clone());
         let widget_tree = WidgetTreeData::new(cx, common.clone());
+        let outline = OutlineData::new(cx, common.clone());
         let file_explorer =
             FileExplorerData::new(cx, main_split.editors, common.clone());
 
@@ -531,6 +535,12 @@ impl WindowTabData {
             );
         }
 
+        let flutter_hot_reload = FlutterHotReloadData::new(
+            cx,
+            common.clone(),
+            terminal.clone(),
+        );
+
         let rename = RenameData::new(cx, main_split.editors, common.clone());
         let global_search = GlobalSearchData::new(cx, main_split.clone());
 
@@ -572,6 +582,7 @@ impl WindowTabData {
             palette,
             main_split: main_split.clone(),
             terminal,
+            flutter_hot_reload: flutter_hot_reload.clone(),
             panel,
             file_explorer,
             code_action,
@@ -579,6 +590,7 @@ impl WindowTabData {
             source_control,
             dart_lsp: dart_lsp.clone(),
             widget_tree:widget_tree.clone(),
+            outline: outline.clone(),
             plugin,
             rename,
             global_search,
@@ -650,15 +662,37 @@ impl WindowTabData {
             });
         }
 
+        // ── Widget tree: debounced refresh on editor/rev change ─────
         {
-            let dart_lsp_effect = dart_lsp.clone();
             let widget_tree = widget_tree.clone();
+            let main_split_wt = main_split.clone();
+            let dart_lsp_wt = dart_lsp.clone();
+            let timer: RwSignal<Option<floem::action::TimerToken>> =
+                cx.create_rw_signal(None);
+
             cx.create_effect(move |_| {
-                let Some(editor) = main_split.active_editor.get() else {
+                let Some(editor) = main_split_wt.active_editor.get() else {
                     widget_tree.clear();
                     return;
                 };
-                widget_tree.analyze(&editor, &dart_lsp_effect);
+                let doc = editor.doc_signal().get();
+                let path = doc.content.with_untracked(|c| c.path().cloned());
+                let Some(path) = path else {
+                    widget_tree.clear();
+                    return;
+                };
+                if !crate::dart::is_dart_path(&path) {
+                    widget_tree.clear();
+                    return;
+                }
+                // Track loaded + rev so both async-load and edits trigger.
+                let _ = doc.loaded.get();
+                let _ = doc.buffer.with(|b| b.rev());
+                widget_tree.schedule_refresh(
+                    timer,
+                    main_split_wt.clone(),
+                    dart_lsp_wt.clone(),
+                );
             });
         }
 
@@ -741,6 +775,82 @@ impl WindowTabData {
                         }
                     }
                 });
+            });
+        }
+
+        // ── Dart outline: debounced refresh on editor/rev change ──────
+        {
+            let outline = outline.clone();
+            let main_split_outline = main_split.clone();
+            let dart_lsp_outline = dart_lsp.clone();
+            let timer: RwSignal<Option<floem::action::TimerToken>> =
+                cx.create_rw_signal(None);
+
+            cx.create_effect(move |_| {
+                let Some(editor) = main_split_outline.active_editor.get() else {
+                    outline.clear();
+                    return;
+                };
+                let doc = editor.doc_signal().get();
+                let path = doc.content.with_untracked(|c| c.path().cloned());
+                let Some(path) = path else {
+                    outline.clear();
+                    return;
+                };
+                if !crate::dart::is_dart_path(&path) {
+                    outline.clear();
+                    return;
+                }
+                // Track loaded + rev so both async-load and edits trigger.
+                let _ = doc.loaded.get();
+                let _ = doc.buffer.with(|b| b.rev());
+                outline.schedule_refresh(timer, main_split_outline.clone(), dart_lsp_outline.clone());
+            });
+        }
+
+        // ── Dart outline: apply completed analyses ───────────────────
+        {
+            let outline = outline.clone();
+            cx.create_effect(move |_| {
+                outline.updates.with(|notif| {
+                    let Some((path, symbols)) = notif.as_ref() else { return };
+                    outline.apply_update(path.clone(), symbols.clone());
+                });
+            });
+        }
+
+        // ── Flutter hot reload: keep state in sync with the terminal ──
+        {
+            let hr = flutter_hot_reload.clone();
+            cx.create_effect(move |_| {
+                // Track tab_info so this fires when tabs are added / removed /
+                // re-indexed.
+                let _ = hr.terminal.tab_info.get();
+
+                let Some(term_id) = hr.active_term.get() else {
+                    return;
+                };
+
+                match hr.terminal.get_terminal(&term_id) {
+                    None => {
+                        // Terminal was closed entirely — back to idle.
+                        hr.active_term.set(None);
+                        hr.state.set(crate::dart::FlutterRunState::Idle);
+                    }
+                    Some(terminal) => {
+                        // `.with` (not `_untracked`) so we re-fire when the
+                        // run_debug.stopped flag flips.
+                        let stopped = terminal.run_debug.with(|r| {
+                            r.as_ref().map(|p| p.stopped).unwrap_or(false)
+                        });
+                        if stopped
+                            && hr.state.get_untracked()
+                            != crate::dart::FlutterRunState::Error
+                        {
+                            hr.state.set(crate::dart::FlutterRunState::Error);
+                        }
+                    }
+                }
             });
         }
 
@@ -1733,6 +1843,18 @@ impl WindowTabData {
                 {
                     editor_data.jump_highlight(InlineFindDirection::Left);
                 }
+            }
+            FlutterRun => {
+                self.flutter_hot_reload.launch();
+            }
+            FlutterHotReload => {
+                self.flutter_hot_reload.hot_reload();
+            }
+            FlutterHotRestart => {
+                self.flutter_hot_reload.hot_restart();
+            }
+            FlutterStop => {
+                self.flutter_hot_reload.stop();
             }
         }
     }
@@ -2788,6 +2910,7 @@ impl WindowTabData {
             | PanelKind::Debug
             | PanelKind::CallHierarchy
             | PanelKind::WidgetTree
+            | PanelKind::DartOutline
             | PanelKind::DocumentSymbol
             | PanelKind::References
             | PanelKind::Implementation => {
