@@ -29,6 +29,7 @@ use self::{
     ui::UIConfig,
 };
 use crate::workspace::{SparrowWorkspace, SparrowWorkspaceType};
+use self::svg::missing_icon_svg;
 
 pub mod color;
 pub mod color_theme;
@@ -607,8 +608,19 @@ impl SparrowConfig {
         });
 
         svg.unwrap_or_else(|| {
-            let name = DEFAULT_ICON_THEME_ICON_CONFIG.ui.get(icon).unwrap();
-            self.svg_store.write().get_default_svg(name)
+            let name = match DEFAULT_ICON_THEME_ICON_CONFIG.ui.get(icon) {
+                Some(name) => name.clone(),
+                None => {
+                    tracing::warn!(
+                        "ui_svg: `{icon}` not found in the active icon theme or \
+                         defaults/icon-theme.toml. Add this line under \
+                         [icon-theme.ui] in defaults/icon-theme.toml:\n    \
+                         \"{icon}\" = \"<file>.svg\""
+                    );
+                    return missing_icon_svg();
+                }
+            };
+            self.svg_store.write().get_default_svg(&name)
         })
     }
 

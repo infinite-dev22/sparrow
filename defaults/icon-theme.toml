@@ -108,6 +108,23 @@ name = "sparrow Modern"
 "document_symbol"   = "file-text.svg"            # Lucide
 "references"        = "link.svg"                 # Lucide
 "implementation"    = "combine.svg"              # Lucide
+"symbol_kind.class"    = "symbol-class.svg"
+"symbol_kind.field"    = "symbol-field.svg"
+"symbol_kind.function" = "symbol-method.svg"
+"symbol_kind.method"   = "symbol-method.svg"
+# ── Widget kinds (fallbacks to codicons until fetch-icons.sh runs) ──
+"widget"            = "symbol-class.svg"
+"widget_stateful"   = "symbol-class.svg"
+"widget_stateless"  = "symbol-interface.svg"
+"widget_inherited"  = "symbol-namespace.svg"
+"widget_builder"    = "symbol-method.svg"
+"widget_layout"     = "symbol-structure.svg"
+"widget_list"       = "symbol-array.svg"
+"widget_grid"       = "symbol-array.svg"
+"flutter_logo"      = "symbol-namespace.svg"
+"material_logo"     = "symbol-color.svg"
+"cupertino_logo"    = "symbol-color.svg"
+"dart_future"       = "symbol-event.svg"
 
 [icon-theme.filename]
 "pubspec.yaml"   = "pub_logo.svg"

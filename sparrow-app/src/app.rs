@@ -4,7 +4,6 @@ use std::{
     io::{BufReader, IsTerminal, Read, Write},
     ops::Range,
     path::PathBuf,
-    process::Stdio,
     rc::Rc,
     sync::{
         Arc,
@@ -3851,47 +3850,47 @@ pub fn launch() {
 
     // small hack to unblock terminal if launched from it
     // launch it as a separate process that waits
-    if !cli.wait {
-        let mut args = std::env::args().collect::<Vec<_>>();
-        args.push("--wait".to_string());
-        let mut cmd = std::process::Command::new(&args[0]);
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW);
-
-        let stderr_file_path =
-            Directory::logs_directory().unwrap().join("stderr.log");
-        let stderr_file = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .read(true)
-            .open(stderr_file_path)
-            .unwrap();
-        let stderr = Stdio::from(stderr_file);
-
-        let stdout_file_path =
-            Directory::logs_directory().unwrap().join("stdout.log");
-        let stdout_file = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .read(true)
-            .open(stdout_file_path)
-            .unwrap();
-        let stdout = Stdio::from(stdout_file);
-
-        if let Err(why) = cmd
-            .args(&args[1..])
-            .stderr(stderr)
-            .stdout(stdout)
-            .env("SPARROW_LOG", "sparrow_app::app=error,off")
-            .spawn()
-        {
-            eprintln!("Failed to launch Sparrow: {why}");
-            std::process::exit(1);
-        };
-        return;
-    }
+    // if !cli.wait {
+    //     let mut args = std::env::args().collect::<Vec<_>>();
+    //     args.push("--wait".to_string());
+    //     let mut cmd = std::process::Command::new(&args[0]);
+    //     #[cfg(target_os = "windows")]
+    //     cmd.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW);
+    //
+    //     let stderr_file_path =
+    //         Directory::logs_directory().unwrap().join("stderr.log");
+    //     let stderr_file = std::fs::OpenOptions::new()
+    //         .write(true)
+    //         .truncate(true)
+    //         .create(true)
+    //         .read(true)
+    //         .open(stderr_file_path)
+    //         .unwrap();
+    //     let stderr = Stdio::from(stderr_file);
+    //
+    //     let stdout_file_path =
+    //         Directory::logs_directory().unwrap().join("stdout.log");
+    //     let stdout_file = std::fs::OpenOptions::new()
+    //         .write(true)
+    //         .truncate(true)
+    //         .create(true)
+    //         .read(true)
+    //         .open(stdout_file_path)
+    //         .unwrap();
+    //     let stdout = Stdio::from(stdout_file);
+    //
+    //     if let Err(why) = cmd
+    //         .args(&args[1..])
+    //         .stderr(stderr)
+    //         .stdout(stdout)
+    //         .env("SPARROW_LOG", "sparrow_app::app=error,off")
+    //         .spawn()
+    //     {
+    //         eprintln!("Failed to launch Sparrow: {why}");
+    //         std::process::exit(1);
+    //     };
+    //     return;
+    // }
 
     // If the cli is not requesting a new window, and we're not developing a plugin, we try to open
     // in the existing Sparrow process
@@ -3904,7 +3903,36 @@ pub fn launch() {
                 return;
             }
             Err(err) => {
-                tracing::error!("{:?}", err);
+                // Cold start on a fresh install, or a stale socket left
+                // behind by a previous crash. Both mean "start a new
+                // instance" — not an error. A stale `.sock` file is
+                // cleaned up here so the next startup is quiet.
+                let kind = err.downcast_ref::<std::io::Error>().map(|e| e.kind());
+                match kind {
+                    Some(
+                        std::io::ErrorKind::NotFound
+                        | std::io::ErrorKind::ConnectionRefused,
+                    ) => {
+                        trace!(
+                        TraceLevel::TRACE,
+                        "no existing Sparrow instance ({err:#})"
+                    );
+                        if let Some(path) = Directory::local_socket() {
+                            if path.exists() {
+                                if let Err(rm) = std::fs::remove_file(&path) {
+                                    tracing::warn!(
+                                    "could not remove stale socket {path:?}: {rm}"
+                                );
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Genuinely unexpected — permission denied, disk
+                        // full, filesystem error. Worth logging loudly.
+                        tracing::error!("{err:?}");
+                    }
+                }
             }
         }
     }

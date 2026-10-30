@@ -90,7 +90,11 @@ pub struct DartLspService {
     tx: Sender<LspCommand>,
     state: Arc<SharedState>,
     last_sent: Arc<Mutex<HashMap<PathBuf, i64>>>,
-    available: Arc<AtomicBool>,
+    /// Refcount guard. `Command::Shutdown` is only sent when the *last*
+    /// clone of this handle drops. Transient clones (e.g. the ones
+    /// captured into `schedule_refresh` timer closures) would otherwise
+    /// kill the language server ~300 ms after every edit.
+    alive: Arc<()>,
 }
 
 impl DartLspService {
@@ -102,8 +106,7 @@ impl DartLspService {
     /// state and every method is a no-op — the caller never needs to check.
     pub fn spawn(workspace_root: PathBuf) -> (Self, NotifReceiver) {
         let (cmd_tx, cmd_rx) = unbounded();
-        let (notif_tx, notif_rx) = std::sync::mpsc::channel(); // ← was unbounded()
-        let available = Arc::new(AtomicBool::new(false));
+        let (notif_tx, notif_rx) = std::sync::mpsc::channel();
         let last_sent = Arc::new(Mutex::new(HashMap::new()));
         let state = Arc::new(SharedState {
             next_id: AtomicI64::new(1),
@@ -111,21 +114,20 @@ impl DartLspService {
             open_files: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false),
             semantic_tokens_legend: Mutex::new(None),
+            is_running: AtomicBool::new(false),
         });
 
         if !dart_available() {
             tracing::warn!(
-                "`dart` not on PATH — Dart diagnostics disabled. \
-                 Install the Dart SDK to enable them."
-            );
-            // `notif_tx` dropped here → the receiver closes → the UI
-            // effect fires once with `None` and then never again. Clean.
+            "`dart` not on PATH — Dart diagnostics disabled. \
+             Install the Dart SDK to enable them."
+        );
             return (
                 Self {
                     tx: cmd_tx,
                     state: state.clone(),
                     last_sent,
-                    available,
+                    alive: Arc::new(()),
                 },
                 notif_rx,
             );
@@ -148,7 +150,7 @@ impl DartLspService {
                         tx: cmd_tx,
                         state: state.clone(),
                         last_sent,
-                        available,
+                        alive: Arc::new(()),
                     },
                     notif_rx,
                 );
@@ -159,38 +161,28 @@ impl DartLspService {
         let stdout = child.stdout.take().expect("child stdout");
         let stderr = child.stderr.take().expect("child stderr");
 
-        let state = Arc::new(SharedState {
-            next_id: AtomicI64::new(1),
-            pending_requests: Mutex::new(HashMap::new()),
-            open_files: Mutex::new(HashMap::new()),
-            shutting_down: AtomicBool::new(false),
-            semantic_tokens_legend: Mutex::new(None),
-        });
-
-        // ── Writer thread ────────────────────────────────────────────
+        // Writer
         {
-            {
-                let state = state.clone();
-                let notif_tx = notif_tx.clone();
-                let root = workspace_root.clone();
-                thread::Builder::new()
-                    .name("DartLspWriter".into())
-                    .spawn(move || {
-                        if let Err(e) = run_writer(
-                            state,
-                            BufWriter::new(stdin),
-                            cmd_rx,
-                            &root,
-                            notif_tx.clone(),
-                        ) {
-                            let _ = notif_tx.send(Notification::Error(e));
-                        }
-                    })
-                    .expect("spawn DartLspWriter");
-            }
+            let state = state.clone();
+            let notif_tx = notif_tx.clone();
+            let root = workspace_root.clone();
+            thread::Builder::new()
+                .name("DartLspWriter".into())
+                .spawn(move || {
+                    if let Err(e) = run_writer(
+                        state,
+                        BufWriter::new(stdin),
+                        cmd_rx,
+                        &root,
+                        notif_tx.clone(),
+                    ) {
+                        let _ = notif_tx.send(Notification::Error(e));
+                    }
+                })
+                .expect("spawn DartLspWriter");
         }
 
-        // ── Reader thread ────────────────────────────────────────────
+        // Reader
         {
             let state = state.clone();
             thread::Builder::new()
@@ -201,7 +193,7 @@ impl DartLspService {
                 .expect("spawn DartLspReader");
         }
 
-        // ── Stderr drain (prevents pipe-buffer stall) ────────────────
+        // Stderr drain
         thread::Builder::new()
             .name("DartLspStderr".into())
             .spawn(move || {
@@ -216,7 +208,7 @@ impl DartLspService {
             })
             .expect("spawn DartLspStderr");
 
-        // ── Reaper (blocks until server exits; frees OS resources) ───
+        // Reaper
         thread::Builder::new()
             .name("DartLspReaper".into())
             .spawn(move || {
@@ -225,13 +217,13 @@ impl DartLspService {
             })
             .expect("spawn DartLspReaper");
 
-        available.store(true, Ordering::Relaxed);
+        state.is_running.store(true, Ordering::Relaxed);
         (
             Self {
                 tx: cmd_tx,
-                state: state.clone(), // ← NEW
+                state: state.clone(),
                 last_sent,
-                available,
+                alive: Arc::new(()),
             },
             notif_rx,
         )
@@ -252,16 +244,17 @@ impl DartLspService {
                     open_files: Mutex::new(HashMap::new()),
                     shutting_down: AtomicBool::new(false),
                     semantic_tokens_legend: Mutex::new(None),
+                    is_running: AtomicBool::new(false),
                 }),
                 last_sent: Arc::new(Mutex::new(HashMap::new())),
-                available: Arc::new(AtomicBool::new(false)),
+                alive: Arc::new(()),
             },
             notif_rx,
         )
     }
 
     pub fn send_change(&self, path: PathBuf, content: String, version: i64) {
-        if !self.available.load(Ordering::Relaxed) {
+        if !self.state.is_running.load(Ordering::Relaxed) {
             return;
         }
         let mut last = self.last_sent.lock();
@@ -281,13 +274,13 @@ impl DartLspService {
 
     pub fn send_close(&self, path: PathBuf) {
         self.last_sent.lock().remove(&path);
-        if self.available.load(Ordering::Relaxed) {
+        if self.state.is_running.load(Ordering::Relaxed) {
             let _ = self.tx.send(LspCommand::Close { path });
         }
     }
 
     pub fn is_available(&self) -> bool {
-        self.available.load(Ordering::Relaxed)
+        self.state.is_running.load(Ordering::Relaxed)
     }
 
     // ── generic request plumbing ──────────────────────────────────
@@ -622,11 +615,55 @@ impl DartLspService {
     pub fn semantic_tokens_legend(&self) -> Option<lsp_types::SemanticTokensLegend> {
         self.state.semantic_tokens_legend.lock().clone()
     }
+
+    /// `textDocument/formatting`. Returns the edits that apply the Dart
+    /// formatter. Returns an empty vec if the file is already formatted
+    /// or the server declines (e.g. syntax errors present).
+    pub fn formatting<F>(
+        &self,
+        path: &Path,
+        tab_size: u32,
+        insert_spaces: bool,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::TextEdit>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/formatting",
+            json!({
+                "textDocument": { "uri": uri },
+                "options": {
+                    "tabSize": tab_size,
+                    "insertSpaces": insert_spaces
+                }
+            }),
+            move |resp| {
+                let edits = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<Vec<lsp_types::TextEdit>>(
+                            v.clone(),
+                        )
+                        .ok()
+                    })
+                    .unwrap_or_default();
+                cb(edits);
+            },
+        )
+    }
 }
 
 impl Drop for DartLspService {
     fn drop(&mut self) {
-        let _ = self.tx.send(LspCommand::Shutdown);
+        // Only the *last* clone fires Shutdown. Every transient clone
+        // (e.g. inside `schedule_refresh` timer closures) would otherwise
+        // kill the server after the timer fires.
+        if Arc::strong_count(&self.alive) == 1 {
+            let _ = self.tx.send(LspCommand::Shutdown);
+        }
     }
 }
 
@@ -688,6 +725,9 @@ struct SharedState {
     open_files: Mutex<HashMap<PathBuf, i64>>,
     shutting_down: AtomicBool,
     semantic_tokens_legend: Mutex<Option<lsp_types::SemanticTokensLegend>>,
+    /// True while the server process is alive. Set true after successful
+    /// spawn; cleared by the writer and reader threads on exit.
+    is_running: AtomicBool,
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -701,6 +741,15 @@ fn run_writer(
     workspace_root: &Path,
     notif_tx: NotifSender,
 ) -> Result<(), String> {
+    // Clear is_running when this function exits, whatever the reason.
+    struct ClearOnDrop(Arc<SharedState>);
+    impl Drop for ClearOnDrop {
+        fn drop(&mut self) {
+            self.0.is_running.store(false, Ordering::Relaxed);
+        }
+    }
+    let _clear = ClearOnDrop(state.clone());
+
     initialize(&state, &mut out, workspace_root)?;
     let _ = notif_tx.send(Notification::Ready);
 
@@ -976,8 +1025,16 @@ fn shutdown(state: &SharedState, out: &mut impl Write) {
 fn run_reader(
     state: Arc<SharedState>,
     mut input: impl BufRead,
-    notif_tx: NotifSender, // ← was Sender<Notification>
+    notif_tx: NotifSender,
 ) {
+    struct ClearOnDrop(Arc<SharedState>);
+    impl Drop for ClearOnDrop {
+        fn drop(&mut self) {
+            self.0.is_running.store(false, Ordering::Relaxed);
+        }
+    }
+    let _clear = ClearOnDrop(state.clone());
+
     loop {
         let msg = match read_lsp_message(&mut input) {
             Ok(m) => m,
@@ -1152,9 +1209,10 @@ mod tests {
                 open_files: Mutex::new(HashMap::new()),
                 shutting_down: AtomicBool::new(false),
                 semantic_tokens_legend: Mutex::new(None),
+                is_running: AtomicBool::new(false),
             }),
             last_sent: Arc::new(Mutex::new(HashMap::new())),
-            available: Arc::new(AtomicBool::new(false)),
+            alive: Arc::new(()),
         };
         svc.send_change(PathBuf::from("/x.dart"), String::new(), 1);
         svc.send_close(PathBuf::from("/x.dart"));
@@ -1170,12 +1228,13 @@ mod tests {
             open_files: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false),
             semantic_tokens_legend: Mutex::new(None),
+            is_running: AtomicBool::new(true),
         });
         let svc = DartLspService {
             tx,
             state: state.clone(),
             last_sent: Arc::new(Mutex::new(HashMap::new())),
-            available: Arc::new(AtomicBool::new(true)),
+            alive: Arc::new(()),
         };
         let a = svc.request_async("a", Value::Null, |_| {});
         let b = svc.request_async("b", Value::Null, |_| {});

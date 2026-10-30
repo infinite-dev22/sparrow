@@ -15,6 +15,14 @@ const LUCIDE_ICONS_DIR:   Dir  = include_dir!("$CARGO_MANIFEST_DIR/../icons/luci
 const TABLER_ICONS_DIR:   Dir  = include_dir!("$CARGO_MANIFEST_DIR/../icons/tabler");
 const DART_ICONS_DIR:     Dir  = include_dir!("$CARGO_MANIFEST_DIR/../icons/dart-flutter");
 
+/// Rendered when an icon key or file is missing. A visible dashed red
+/// box, better than a panic and easy to spot.
+pub const MISSING_ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 16 16" fill="none" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="2 2"><rect x="1" y="1" width="14" height="14" rx="2"/></svg>"##;
+
+pub fn missing_icon_svg() -> String {
+    MISSING_ICON_SVG.to_owned()
+}
+
 #[derive(Debug, Clone)]
 pub struct SvgStore {
     svgs: HashMap<String, String>,
