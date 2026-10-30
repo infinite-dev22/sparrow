@@ -818,11 +818,18 @@ fn run_writer(
         let mut pending: HashMap<PathBuf, (String, i64)> = HashMap::new();
         match first {
             LspCommand::Request { id, method, params } => {
+                // Flush any queued didChanges BEFORE the request. Otherwise
+                // the server processes completion at position (line, char)
+                // against stale content — positions don't line up, and Dart
+                // returns empty/no-op for parameter completions.
+                for (path, (content, version)) in pending.drain() {
+                    apply_change(&state, &mut out, &path, content, version);
+                }
+
                 let msg = json!({
                     "jsonrpc": "2.0", "id": id, "method": method, "params": params
                 });
                 if write_lsp_message(&mut out, &msg).is_err() {
-                    // Wake the callback with an error-shaped response.
                     if let Some(cb) = state.pending_requests.lock().remove(&id) {
                         cb(
                             json!({"error": {"code": -1, "message": "write failed"}}),
@@ -858,11 +865,15 @@ fn run_writer(
         loop {
             match rx.recv_timeout(DEBOUNCE) {
                 Ok(LspCommand::Request { id, method, params }) => {
+                    // Flush pending changes first — same reason as above.
+                    for (path, (content, version)) in pending.drain() {
+                        apply_change(&state, &mut out, &path, content, version);
+                    }
+
                     let msg = json!({
                         "jsonrpc": "2.0", "id": id, "method": method, "params": params
                     });
                     if write_lsp_message(&mut out, &msg).is_err() {
-                        // Wake the callback with an error-shaped response.
                         if let Some(cb) = state.pending_requests.lock().remove(&id) {
                             cb(
                                 json!({"error": {"code": -1, "message": "write failed"}}),

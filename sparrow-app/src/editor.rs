@@ -2087,8 +2087,15 @@ impl EditorData {
             None
         };
 
-        // 1 = manual invoke (Ctrl+Space), 2 = typed (regular or trigger char).
-        let trigger_kind = if invoked { 1 } else { 2 };
+        // LSP spec:
+        //   kind 1 (Invoked)          — typing an identifier character,
+        //                               Ctrl+Space, or programmatic
+        //   kind 2 (TriggerCharacter) — ONLY when a trigger char was typed
+        //                               (requires `triggerCharacter` field)
+        //
+        // We used to send kind=2 for every character, which violates the
+        // spec and makes Dart return empty/no-op for parameter positions.
+        let trigger_kind = if trigger_character.is_some() { 2 } else { 1 };
 
         let request_id = self.common.completion.with_untracked(|c| c.request_id) + 1;
         self.common.completion.update(|c| {
@@ -2110,6 +2117,18 @@ impl EditorData {
             self.scope,
             move |result: (Option<Vec<lsp_types::CompletionItem>>, bool)| {
                 let (items, _is_incomplete) = result;
+                if let Some(ref items) = items {
+                    let labels: Vec<&str> =
+                        items.iter().take(8).map(|i| i.label.as_str()).collect();
+                    tracing::debug!(
+                    "dart completion: {} items, first 8: {:?}",
+                    items.len(),
+                    labels
+                );
+                } else {
+                    tracing::debug!("dart completion: null result (server returned nothing)");
+                }
+                
                 let mut completion_data = common.completion.get_untracked();
                 match items {
                     Some(items) if !items.is_empty() => {
