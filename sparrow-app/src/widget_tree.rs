@@ -175,7 +175,7 @@ fn build_tree(
     roots
 }
 
-fn is_dart_path(path: &std::path::Path) -> bool {
+fn _is_dart_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| e.eq_ignore_ascii_case("dart"))

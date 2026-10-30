@@ -9,24 +9,36 @@ pub struct DartTestLocation {
 
 /// Find the innermost `test(...)` / `testWidgets(...)` whose body contains
 /// `offset`. Returns `None` if the cursor isn't inside a test.
-pub fn find_test_at_offset(source: &str, offset: usize) -> Option<DartTestLocation> {
-    // Match test declarations. Group name in capture 2.
+pub fn find_test_at_offset(
+    source: &str,
+    offset: usize,
+) -> Option<DartTestLocation> {
+    // Rust's `regex` crate does not support backreferences, so we can't
+    // express "same quote opens and closes" with `\1`. Use two alternates
+    // instead — one for single-quoted, one for double-quoted names.
     let re = Regex::new(
-        r#"(?m)^[ \t]*(?:testWidgets|test)\s*\(\s*(['"])(.*?)\1"#,
+        r#"(?m)^[ \t]*(?:testWidgets|test)\s*\(\s*(?:'([^']*)'|"([^"]*)")"#,
     )
         .ok()?;
 
     let mut best: Option<DartTestLocation> = None;
     for cap in re.captures_iter(source) {
         let m = cap.get(0).unwrap();
-        let name = cap.get(2)?.as_str().to_string();
+        // Group 1 is single-quoted, group 2 is double-quoted.
+        let Some(name_match) = cap.get(1).or_else(|| cap.get(2)) else {
+            continue;
+        };
+        let name = name_match.as_str().to_string();
 
-        // Find opening `(` of the call and matching `)`.
-        let paren = source[m.start()..].find('(').map(|o| m.start() + o)?;
-        let end = matching_paren(source, paren)?;
+        let Some(paren) = source[m.start()..].find('(').map(|o| m.start() + o)
+        else {
+            continue;
+        };
+        let Some(end) = matching_paren(source, paren) else {
+            continue;
+        };
 
         if offset >= paren && offset < end {
-            // Keep the innermost (largest start, smallest span).
             let byte_range = (paren, end);
             let is_better = match &best {
                 None => true,
@@ -125,7 +137,11 @@ void main() {
 
     #[test]
     fn finds_plain_test() {
-        let src = "void main() { test('plain', () { expect(1, 1); }); }";
+        let src = r#"
+            void main() {
+              test('plain', () { expect(1, 1); });
+            }
+            "#;
         let offset = src.find("expect").unwrap();
         assert_eq!(find_test_at_offset(src, offset).unwrap().name, "plain");
     }

@@ -52,7 +52,6 @@ use sparrow_core::{
     line_ending::LineEnding, mode::Mode, movement::Movement, selection::Selection,
     syntax::Syntax,
 };
-use sparrow_rpc::dap_types::{ConfigSource, RunDebugConfig};
 use sparrow_rpc::proxy::{PathRequest, ProxyResponse};
 use strum::{EnumMessage, IntoEnumIterator};
 use tracing::error;
@@ -1243,9 +1242,8 @@ impl PaletteData {
         if let Some(item) = items.get(index) {
             match &item.content {
                 PaletteItemContent::PubPackage { name, .. } => {
-                    self.common
-                        .internal_command
-                        .send(InternalCommand::RunProcessInTerminal {
+                    self.common.internal_command.send(
+                        InternalCommand::RunProcessInTerminal {
                             program: "flutter".to_string(),
                             args: vec![
                                 "pub".to_string(),
@@ -1253,7 +1251,8 @@ impl PaletteData {
                                 name.clone(),
                             ],
                             name: format!("pub add {name}"),
-                        });
+                        },
+                    );
                 }
                 PaletteItemContent::PaletteHelp { cmd } => {
                     let cmd = SparrowCommand {
@@ -1623,9 +1622,8 @@ impl PaletteData {
                 PaletteItemContent::SCMReference { .. } => {}
                 PaletteItemContent::TerminalProfile { .. } => {}
                 PaletteItemContent::PubPackage { name, .. } => {
-                    self.common
-                        .internal_command
-                        .send(InternalCommand::RunProcessInTerminal {
+                    self.common.internal_command.send(
+                        InternalCommand::RunProcessInTerminal {
                             program: "flutter".to_string(),
                             args: vec![
                                 "pub".to_string(),
@@ -1633,7 +1631,8 @@ impl PaletteData {
                                 name.clone(),
                             ],
                             name: format!("pub add {name}"),
-                        });
+                        },
+                    );
                 }
             }
         }

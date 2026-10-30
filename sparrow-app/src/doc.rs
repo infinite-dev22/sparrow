@@ -920,17 +920,56 @@ impl Doc {
         if !self.loaded() {
             return;
         }
-
         let path =
             if let DocContent::File { path, .. } = self.content.get_untracked() {
                 path
             } else {
                 return;
             };
-
         let (atomic_rev, rev, len) = self
             .buffer
             .with_untracked(|b| (b.atomic_rev(), b.rev(), b.len()));
+
+        // ── Dart fast path ─────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            // Legend might not be captured yet — Ready notification will
+            // trigger a re-request once it is.
+            if self.common.dart_lsp.semantic_tokens_legend().is_none() {
+                return;
+            }
+            let doc = self.clone();
+            let trigger = create_ext_action(
+                self.scope,
+                move |tokens: Option<lsp_types::SemanticTokens>| {
+                    let Some(tokens) = tokens else { return };
+                    if doc.buffer.with_untracked(|b| b.rev()) != rev {
+                        return;
+                    }
+                    let Some(legend) = doc.common.dart_lsp.semantic_tokens_legend()
+                    else {
+                        return;
+                    };
+                    let source = doc.buffer.with_untracked(|b| b.text().clone());
+                    let line_styles =
+                        crate::dart::semantic_tokens::decode(&tokens, &source, &legend);
+                    let mut styles_span = SpansBuilder::new(len);
+                    for style in line_styles {
+                        styles_span.add_span(
+                            Interval::new(style.start, style.end),
+                            style.style,
+                        );
+                    }
+                    let spans = styles_span.build();
+                    doc.semantic_styles.set(Some(spans));
+                    doc.clear_style_cache();
+                },
+            );
+            let path_clone = path.clone();
+            self.common
+                .dart_lsp
+                .semantic_tokens(&path_clone, move |t| trigger(t));
+            return;
+        }
 
         let doc = self.clone();
         let send = create_ext_action(self.scope, move |styles| {

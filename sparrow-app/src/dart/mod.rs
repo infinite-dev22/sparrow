@@ -9,6 +9,7 @@ pub mod regex;
 pub mod widget_lsp;
 pub mod hot_reload;
 pub mod test_runner;
+pub mod semantic_tokens;
 
 pub use hot_reload::{FlutterHotReloadData, FlutterRunState};
 pub use lsp::{DartLspService, Notification as DartNotification};

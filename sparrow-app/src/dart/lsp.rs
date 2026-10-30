@@ -66,6 +66,11 @@ const INIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Events emitted from the server to the UI.
 #[derive(Debug, Clone)]
 pub enum Notification {
+    /// Fired exactly once, shortly after the server's `initialize`
+    /// handshake completes. Consumers use it to kick off requests that
+    /// would fail if sent before the server is initialized (e.g.
+    /// semantic tokens for open files).
+    Ready,
     /// Diagnostics for a single file. `version` is the LSP document version
     /// we sent, or `-1` if the server didn't include one.
     Diagnostics {
@@ -105,6 +110,7 @@ impl DartLspService {
             pending_requests: Mutex::new(HashMap::new()),
             open_files: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false),
+            semantic_tokens_legend: Mutex::new(None),
         });
 
         if !dart_available() {
@@ -158,23 +164,30 @@ impl DartLspService {
             pending_requests: Mutex::new(HashMap::new()),
             open_files: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false),
+            semantic_tokens_legend: Mutex::new(None),
         });
 
         // ── Writer thread ────────────────────────────────────────────
         {
-            let state = state.clone();
-            let notif_tx = notif_tx.clone();
-            let root = workspace_root.clone();
-            thread::Builder::new()
-                .name("DartLspWriter".into())
-                .spawn(move || {
-                    if let Err(e) =
-                        run_writer(state, BufWriter::new(stdin), cmd_rx, &root)
-                    {
-                        let _ = notif_tx.send(Notification::Error(e));
-                    }
-                })
-                .expect("spawn DartLspWriter");
+            {
+                let state = state.clone();
+                let notif_tx = notif_tx.clone();
+                let root = workspace_root.clone();
+                thread::Builder::new()
+                    .name("DartLspWriter".into())
+                    .spawn(move || {
+                        if let Err(e) = run_writer(
+                            state,
+                            BufWriter::new(stdin),
+                            cmd_rx,
+                            &root,
+                            notif_tx.clone(),
+                        ) {
+                            let _ = notif_tx.send(Notification::Error(e));
+                        }
+                    })
+                    .expect("spawn DartLspWriter");
+            }
         }
 
         // ── Reader thread ────────────────────────────────────────────
@@ -238,6 +251,7 @@ impl DartLspService {
                     pending_requests: Mutex::new(HashMap::new()),
                     open_files: Mutex::new(HashMap::new()),
                     shutting_down: AtomicBool::new(false),
+                    semantic_tokens_legend: Mutex::new(None),
                 }),
                 last_sent: Arc::new(Mutex::new(HashMap::new())),
                 available: Arc::new(AtomicBool::new(false)),
@@ -389,16 +403,17 @@ impl DartLspService {
         self.request_async(
             "textDocument/references",
             json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character },
-            "context": { "includeDeclaration": include_declaration }
-        }),
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "context": { "includeDeclaration": include_declaration }
+            }),
             move |resp| {
                 let locations = resp
                     .get("result")
                     .filter(|v| !v.is_null())
                     .and_then(|v| {
-                        serde_json::from_value::<Vec<lsp_types::Location>>(v.clone()).ok()
+                        serde_json::from_value::<Vec<lsp_types::Location>>(v.clone())
+                            .ok()
                     })
                     .unwrap_or_default();
                 cb(locations);
@@ -423,18 +438,16 @@ impl DartLspService {
         self.request_async(
             "textDocument/prepareRename",
             json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character }
-        }),
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character }
+            }),
             move |resp| {
-                let parsed = resp
-                    .get("result")
-                    .filter(|v| !v.is_null())
-                    .and_then(|v| {
+                let parsed =
+                    resp.get("result").filter(|v| !v.is_null()).and_then(|v| {
                         serde_json::from_value::<lsp_types::PrepareRenameResponse>(
                             v.clone(),
                         )
-                            .ok()
+                        .ok()
                     });
                 cb(parsed);
             },
@@ -459,15 +472,13 @@ impl DartLspService {
         self.request_async(
             "textDocument/rename",
             json!({
-            "textDocument": { "uri": uri },
-            "position": { "line": line, "character": character },
-            "newName": new_name
-        }),
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "newName": new_name
+            }),
             move |resp| {
-                let edit = resp
-                    .get("result")
-                    .filter(|v| !v.is_null())
-                    .and_then(|v| {
+                let edit =
+                    resp.get("result").filter(|v| !v.is_null()).and_then(|v| {
                         serde_json::from_value::<lsp_types::WorkspaceEdit>(v.clone())
                             .ok()
                     });
@@ -533,27 +544,27 @@ impl DartLspService {
         self.request_async(
             "textDocument/codeAction",
             json!({
-            "textDocument": { "uri": uri },
-            "range": {
-                "start": { "line": line, "character": character },
-                "end": { "line": line, "character": character }
-            },
-            "context": {
-                "diagnostics": diagnostics,
-                "triggerKind": 1
-            }
-        }),
+                "textDocument": { "uri": uri },
+                "range": {
+                    "start": { "line": line, "character": character },
+                    "end": { "line": line, "character": character }
+                },
+                "context": {
+                    "diagnostics": diagnostics,
+                    "triggerKind": 1
+                }
+            }),
             move |resp| {
-                let actions = resp
-                    .get("result")
-                    .filter(|v| !v.is_null())
-                    .and_then(|v| {
-                        serde_json::from_value::<Vec<lsp_types::CodeActionOrCommand>>(
-                            v.clone(),
-                        )
+                let actions =
+                    resp.get("result")
+                        .filter(|v| !v.is_null())
+                        .and_then(|v| {
+                            serde_json::from_value::<
+                                Vec<lsp_types::CodeActionOrCommand>,
+                            >(v.clone())
                             .ok()
-                    })
-                    .unwrap_or_default();
+                        })
+                        .unwrap_or_default();
                 cb(actions);
             },
         )
@@ -561,11 +572,7 @@ impl DartLspService {
 
     /// `codeAction/resolve`. Some actions only provide their `edit` after
     /// explicit resolution.
-    pub fn resolve_code_action<F>(
-        &self,
-        action: lsp_types::CodeAction,
-        cb: F,
-    ) -> i64
+    pub fn resolve_code_action<F>(&self, action: lsp_types::CodeAction, cb: F) -> i64
     where
         F: FnOnce(Option<lsp_types::WorkspaceEdit>) + Send + 'static,
     {
@@ -577,12 +584,43 @@ impl DartLspService {
                     .get("result")
                     .filter(|v| !v.is_null())
                     .and_then(|v| {
-                        serde_json::from_value::<lsp_types::CodeAction>(v.clone()).ok()
+                        serde_json::from_value::<lsp_types::CodeAction>(v.clone())
+                            .ok()
                     })
                     .and_then(|a| a.edit);
                 cb(edit);
             },
         )
+    }
+
+    /// `textDocument/semanticTokens/full`. Returns the raw token array;
+    /// use [`crate::dart::semantic_tokens::decode`] to convert it into
+    /// byte-range spans.
+    pub fn semantic_tokens<F>(&self, path: &Path, cb: F) -> i64
+    where
+        F: FnOnce(Option<lsp_types::SemanticTokens>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/semanticTokens/full",
+            json!({ "textDocument": { "uri": uri } }),
+            move |resp| {
+                let tokens = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<lsp_types::SemanticTokens>(v.clone())
+                            .ok()
+                    });
+                cb(tokens);
+            },
+        )
+    }
+
+    /// The legend captured from `initialize`. `None` until the handshake
+    /// completes or if the server doesn't support semantic tokens.
+    pub fn semantic_tokens_legend(&self) -> Option<lsp_types::SemanticTokensLegend> {
+        self.state.semantic_tokens_legend.lock().clone()
     }
 }
 
@@ -649,6 +687,7 @@ struct SharedState {
     pending_requests: Mutex<HashMap<i64, ResponseCallback>>,
     open_files: Mutex<HashMap<PathBuf, i64>>,
     shutting_down: AtomicBool,
+    semantic_tokens_legend: Mutex<Option<lsp_types::SemanticTokensLegend>>,
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -660,8 +699,10 @@ fn run_writer(
     mut out: impl Write,
     rx: Receiver<LspCommand>,
     workspace_root: &Path,
+    notif_tx: NotifSender,
 ) -> Result<(), String> {
     initialize(&state, &mut out, workspace_root)?;
+    let _ = notif_tx.send(Notification::Ready);
 
     loop {
         // First command of a burst
@@ -766,33 +807,51 @@ fn initialize(
 
     let root_uri = path_to_uri(workspace_root);
     let params = json!({
-        "processId": std::process::id(),
-        "clientInfo": { "name": "sparrow", "version": env!("CARGO_PKG_VERSION") },
-        "rootUri": root_uri,
-        "workspaceFolders": [{ "uri": root_uri, "name": workspace_root
-            .file_name().and_then(|s| s.to_str()).unwrap_or("workspace") }],
-        "capabilities": {
-            "textDocument": {
-                "synchronization": {
-                    "dynamicRegistration": false,
-                    "didSave": false, "willSave": false, "willSaveWaitUntil": false
+            "processId": std::process::id(),
+            "clientInfo": { "name": "sparrow", "version": env!("CARGO_PKG_VERSION") },
+            "rootUri": root_uri,
+            "workspaceFolders": [{ "uri": root_uri, "name": workspace_root
+                .file_name().and_then(|s| s.to_str()).unwrap_or("workspace") }],
+            "capabilities": {
+                "textDocument": {
+                    "synchronization": {
+                        "dynamicRegistration": false,
+                        "didSave": false, "willSave": false, "willSaveWaitUntil": false
+                    },
+                    "publishDiagnostics": {
+                        "relatedInformation": true, "versionSupport": true,
+                        "tagSupport": { "valueSet": [1, 2] }
+                    },
+                    "documentSymbol": {
+                        "hierarchicalDocumentSymbolSupport": true,
+                        "symbolKind": { "valueSet": [1,2,3,4,5,6,7,8,9,10,11,12,
+                            13,14,15,16,17,18,19,20,21,22,23,24,25,26] }
+                    },
+                    "hover": { "contentFormat": ["markdown", "plaintext"] },
+                    "definition": { "linkSupport": true },
+                    "semanticTokens": {
+                        "dynamicRegistration": false,
+                        "requests": { "full": true, "range": false },
+                        "tokenTypes": [
+                            "namespace", "type", "class", "enum", "interface", "struct",
+                            "typeParameter", "parameter", "variable", "property", "enumMember",
+                            "event", "function", "method", "macro", "keyword", "modifier",
+                            "comment", "string", "number", "regexp", "operator", "decorator"
+                        ],
+                        "tokenModifiers": [
+                            "declaration", "definition", "readonly", "static", "deprecated",
+                            "abstract", "async", "modification", "documentation",
+                            "defaultLibrary"
+                        ],
+                        "formats": ["relative"],
+                        "overlappingTokenSupport": false,
+                        "multilineTokenSupport": false
+                    }
                 },
-                "publishDiagnostics": {
-                    "relatedInformation": true, "versionSupport": true,
-                    "tagSupport": { "valueSet": [1, 2] }
-                },
-                "documentSymbol": {
-                    "hierarchicalDocumentSymbolSupport": true,
-                    "symbolKind": { "valueSet": [1,2,3,4,5,6,7,8,9,10,11,12,
-                        13,14,15,16,17,18,19,20,21,22,23,24,25,26] }
-                },
-                "hover": { "contentFormat": ["markdown", "plaintext"] },
-                "definition": { "linkSupport": true }
-            },
-            "workspace": { "workspaceFolders": true, "configuration": false },
-            "window": { "workDoneProgress": true }
-        }
-    });
+                "workspace": { "workspaceFolders": true, "configuration": false },
+                "window": { "workDoneProgress": true }
+            }
+        });
 
     write_lsp_message(
         out,
@@ -804,6 +863,23 @@ fn initialize(
         Ok(resp) => {
             if let Some(err) = resp.get("error") {
                 return Err(format!("initialize error: {err}"));
+            }
+            // Capture the semantic-tokens legend if the server advertises
+            // support. Also handles the rare case where the legend lives in
+            // the `capabilities` object of the response's `result`.
+            if let Some(legend) = resp
+                .get("result")
+                .and_then(|v| v.get("capabilities"))
+                .and_then(|v| v.get("semanticTokensProvider"))
+                .and_then(|v| v.get("legend"))
+                .and_then(|v| {
+                    serde_json::from_value::<lsp_types::SemanticTokensLegend>(
+                        v.clone(),
+                    )
+                    .ok()
+                })
+            {
+                *state.semantic_tokens_legend.lock() = Some(legend);
             }
         }
         Err(_) => return Err("initialize timed out".into()),
@@ -1075,6 +1151,7 @@ mod tests {
                 pending_requests: Mutex::new(HashMap::new()),
                 open_files: Mutex::new(HashMap::new()),
                 shutting_down: AtomicBool::new(false),
+                semantic_tokens_legend: Mutex::new(None),
             }),
             last_sent: Arc::new(Mutex::new(HashMap::new())),
             available: Arc::new(AtomicBool::new(false)),
@@ -1092,6 +1169,7 @@ mod tests {
             pending_requests: Mutex::new(HashMap::new()),
             open_files: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false),
+            semantic_tokens_legend: Mutex::new(None),
         });
         let svc = DartLspService {
             tx,
@@ -1165,11 +1243,12 @@ mod tests {
     #[test]
     fn references_parses_location_array() {
         let locations: Vec<lsp_types::Location> = serde_json::from_value(json!([
-        { "uri": "file:///a.dart", "range": { "start": {"line":0,"character":0},
-            "end": {"line":0,"character":5} } },
-        { "uri": "file:///b.dart", "range": { "start": {"line":2,"character":3},
-            "end": {"line":2,"character":8} } }
-    ])).unwrap();
+            { "uri": "file:///a.dart", "range": { "start": {"line":0,"character":0},
+                "end": {"line":0,"character":5} } },
+            { "uri": "file:///b.dart", "range": { "start": {"line":2,"character":3},
+                "end": {"line":2,"character":8} } }
+        ]))
+        .unwrap();
         assert_eq!(locations.len(), 2);
         assert_eq!(locations[1].range.start.line, 2);
     }
@@ -1180,36 +1259,43 @@ mod tests {
 
         // Range
         let r: PrepareRenameResponse = serde_json::from_value(json!({
-        "start": {"line":0,"character":0}, "end": {"line":0,"character":5}
-    })).unwrap();
+            "start": {"line":0,"character":0}, "end": {"line":0,"character":5}
+        }))
+        .unwrap();
         assert!(matches!(r, PrepareRenameResponse::Range(_)));
 
         // Range with placeholder
         let r: PrepareRenameResponse = serde_json::from_value(json!({
-        "range": { "start": {"line":0,"character":0},
-            "end": {"line":0,"character":5} },
-        "placeholder": "foo"
-    })).unwrap();
-        assert!(matches!(r, PrepareRenameResponse::RangeWithPlaceholder { .. }));
+            "range": { "start": {"line":0,"character":0},
+                "end": {"line":0,"character":5} },
+            "placeholder": "foo"
+        }))
+        .unwrap();
+        assert!(matches!(
+            r,
+            PrepareRenameResponse::RangeWithPlaceholder { .. }
+        ));
 
         // Default behavior
         let r: PrepareRenameResponse = serde_json::from_value(json!({
-        "defaultBehavior": true
-    })).unwrap();
+            "defaultBehavior": true
+        }))
+        .unwrap();
         assert!(matches!(r, PrepareRenameResponse::DefaultBehavior { .. }));
     }
 
     #[test]
     fn rename_parses_workspace_edit() {
         let edit: lsp_types::WorkspaceEdit = serde_json::from_value(json!({
-        "changes": {
-            "file:///a.dart": [{
-                "range": { "start": {"line":0,"character":0},
-                    "end": {"line":0,"character":5} },
-                "newText": "bar"
-            }]
-        }
-    })).unwrap();
+            "changes": {
+                "file:///a.dart": [{
+                    "range": { "start": {"line":0,"character":0},
+                        "end": {"line":0,"character":5} },
+                    "newText": "bar"
+                }]
+            }
+        }))
+        .unwrap();
         assert!(edit.changes.is_some());
     }
 }

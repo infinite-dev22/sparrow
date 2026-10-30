@@ -780,6 +780,16 @@ impl WindowTabData {
                         DartNotification::Error(e) => {
                             tracing::warn!("dart lsp: {e}");
                         }
+                        DartNotification::Ready => {
+                            // LSP handshake done — request semantic tokens for every open Dart doc.
+                            main_split_apply.docs.with_untracked(|docs| {
+                                for (path, doc) in docs.iter() {
+                                    if crate::dart::is_dart_path(path) {
+                                        doc.get_semantic_styles();
+                                    }
+                                }
+                            });
+                        }
                     }
                 });
             });
@@ -2412,7 +2422,7 @@ impl WindowTabData {
             InternalCommand::CallHierarchyIncoming { item_id } => {
                 self.call_hierarchy_incoming(item_id);
             }
-            InternalCommand::FlutterRunTestAtCursor { term_id } => {
+            InternalCommand::FlutterRunTestAtCursor { term_id: _ } => {
                 self.run_test_at_cursor();
             }
         }
