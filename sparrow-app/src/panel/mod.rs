@@ -15,3 +15,4 @@ pub mod terminal_view;
 pub mod view;
 pub mod widget_tree;
 pub mod dart_outline;
+pub mod flutter_inspector;

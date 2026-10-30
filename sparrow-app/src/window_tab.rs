@@ -51,7 +51,7 @@ use sparrow_rpc::{
 };
 use tracing::{Level, debug, error, event};
 
-use crate::dart::{DartLspService, FlutterHotReloadData};
+use crate::dart::{DartLspService, FlutterHotReloadData, FlutterInspectorData};
 use crate::outline::OutlineData;
 use crate::widget_tree::WidgetTreeData;
 use crate::{
@@ -187,6 +187,7 @@ pub struct WindowTabData {
     pub code_lens: RwSignal<Option<ViewId>>,
     pub dart_lsp: DartLspService,
     pub flutter_hot_reload: FlutterHotReloadData,
+    pub flutter_inspector: FlutterInspectorData,
     pub source_control: SourceControlData,
     pub rename: RenameData,
     pub global_search: GlobalSearchData,
@@ -415,6 +416,8 @@ impl WindowTabData {
             window_common: window_common.clone(),
         });
 
+        let flutter_inspector =
+            FlutterInspectorData::new(cx, common.clone());
         let main_split = MainSplitData::new(cx, common.clone());
         let code_action =
             cx.create_rw_signal(CodeActionData::new(cx, common.clone()));
@@ -553,6 +556,7 @@ impl WindowTabData {
         {
             let notification = create_signal_from_channel(term_notification_rx);
             let terminal = terminal.clone();
+            let flutter_inspector = flutter_inspector.clone();
             cx.create_effect(move |_| {
                 notification.with(|notification| {
                     if let Some(notification) = notification.as_ref() {
@@ -562,6 +566,16 @@ impl WindowTabData {
                             }
                             TermNotification::RequestPaint => {
                                 view_id.get_untracked().request_paint();
+                            }
+                            TermNotification::VmServiceUrl { term_id, url } => {
+                                // Only connect for the terminal that flutter_hot_reload tracks,
+                                // and only if the tab is actually in the Running state.
+                                let tracked = flutter_hot_reload.active_term.get_untracked();
+                                let running = flutter_hot_reload.state.get_untracked()
+                                    == crate::dart::FlutterRunState::Running;
+                                if running && tracked == Some(*term_id) {
+                                    flutter_inspector.on_vm_url(*term_id, url.to_string());
+                                }
                             }
                         }
                     }
@@ -580,6 +594,7 @@ impl WindowTabData {
             main_split: main_split.clone(),
             terminal,
             flutter_hot_reload: flutter_hot_reload.clone(),
+            flutter_inspector: flutter_inspector.clone(),
             panel,
             file_explorer,
             code_action,
@@ -873,6 +888,30 @@ impl WindowTabData {
                             hr.state.set(crate::dart::FlutterRunState::Error);
                         }
                     }
+                }
+            });
+        }
+
+        // ── Flutter inspector: apply VM service notifications ───────
+        {
+            let inspector = flutter_inspector.clone();
+            cx.create_effect(move |_| {
+                inspector.updates.with(|notif| {
+                    let Some(notif) = notif.as_ref() else { return };
+                    inspector.apply(notif);
+                });
+            });
+        }
+
+        // ── Flutter inspector: disconnect when the run stops ───────
+        {
+            let inspector = flutter_inspector.clone();
+            let hot_reload = flutter_hot_reload.clone();
+            cx.create_effect(move |_| {
+                if hot_reload.state.get() == crate::dart::FlutterRunState::Idle
+                    && inspector.state.get_untracked() != crate::dart::InspectorState::Disconnected
+                {
+                    inspector.disconnect();
                 }
             });
         }
@@ -2982,9 +3021,6 @@ impl WindowTabData {
             | PanelKind::Problem
             | PanelKind::Debug
             | PanelKind::CallHierarchy
-            | PanelKind::WidgetTree
-            | PanelKind::DartOutline
-            | PanelKind::DocumentSymbol
             | PanelKind::References
             | PanelKind::Implementation => {
                 // Some panels don't accept focus (yet). Fall back to visibility check
@@ -2994,6 +3030,10 @@ impl WindowTabData {
             PanelKind::Terminal
             | PanelKind::SourceControl
             | PanelKind::Search
+            | PanelKind::WidgetTree
+            | PanelKind::DartOutline
+            | PanelKind::DocumentSymbol
+            | PanelKind::FlutterInspector
             | PanelKind::FileExplorer => self.is_panel_focused(kind),
         };
         if should_hide {

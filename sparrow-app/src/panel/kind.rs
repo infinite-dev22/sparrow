@@ -21,6 +21,7 @@ pub enum PanelKind {
     Implementation,
     WidgetTree,
     DartOutline,
+    FlutterInspector,
 }
 
 impl PanelKind {
@@ -39,6 +40,7 @@ impl PanelKind {
             PanelKind::Implementation => SparrowIcons::IMPLEMENTATION,
             PanelKind::WidgetTree => SparrowIcons::TYPE_HIERARCHY,
             PanelKind::DartOutline => SparrowIcons::DOCUMENT_SYMBOL,
+            PanelKind::FlutterInspector => SparrowIcons::DEBUG,
         }
     }
 
@@ -67,6 +69,7 @@ impl PanelKind {
             PanelKind::Implementation => PanelPosition::BottomLeft,
             PanelKind::WidgetTree => PanelPosition::RightTop,
             PanelKind::DartOutline => PanelPosition::RightTop,
+            PanelKind::FlutterInspector => PanelPosition::RightBottom,
         }
     }
 }

@@ -1,19 +1,18 @@
-//! Dart-specific tooling.
-//!
-//! - [`lsp`] — persistent `dart language-server`, source of all diagnostics.
-//! - [`regex`] — best-effort widget-tree analyzer used until the LSP's
-//!   `documentSymbol` is wired in. Sub-millisecond; not the bottleneck.
-
+pub mod hot_reload;
 pub mod lsp;
 pub mod regex;
-pub mod widget_lsp;
-pub mod hot_reload;
-pub mod test_runner;
 pub mod semantic_tokens;
+pub mod test_runner;
+pub mod vm_service;
+pub mod widget_lsp;
 
 pub use hot_reload::{FlutterHotReloadData, FlutterRunState};
 pub use lsp::{DartLspService, Notification as DartNotification};
 pub use regex::{analyze_dart_file, ClassInfo, DartAnalysis};
+pub use vm_service::{
+    FlutterInspectorData, InspectorNode, InspectorState,
+    Notification as VmServiceNotification,
+};
 
 pub(crate) fn is_dart_path(path: &std::path::Path) -> bool {
     path.extension()

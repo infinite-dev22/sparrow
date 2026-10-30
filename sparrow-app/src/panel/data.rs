@@ -51,6 +51,11 @@ pub fn default_panel_order() -> PanelOrder {
         ],
     );
 
+    order.insert(
+        PanelPosition::RightBottom,
+        im::vector![PanelKind::FlutterInspector],
+    );
+
     order
 }
 

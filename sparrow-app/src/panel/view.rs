@@ -555,6 +555,13 @@ fn panel_view(
                     )
                         .into_any()
                 }
+                PanelKind::FlutterInspector => {
+                    crate::panel::flutter_inspector::flutter_inspector_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
             };
             view.style(|s| s.size_pct(100.0, 100.0))
         },
@@ -654,6 +661,7 @@ fn stripe_picker(
                 PanelKind::Implementation => "Implementation",
                 PanelKind::WidgetTree => "Widget Tree",
                 PanelKind::DartOutline => "Outline",
+                PanelKind::FlutterInspector => "Flutter Inspector",
             };
             let icon = p.svg_name();
             let is_active = {
