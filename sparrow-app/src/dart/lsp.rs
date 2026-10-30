@@ -514,6 +514,76 @@ impl DartLspService {
             },
         )
     }
+
+    /// `textDocument/codeAction`. Returns refactorings, quick-fixes, etc.
+    /// for the given position + diagnostics.
+    pub fn code_actions<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        diagnostics: &[lsp_types::Diagnostic],
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::CodeActionOrCommand>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        let diagnostics = diagnostics.to_vec();
+        self.request_async(
+            "textDocument/codeAction",
+            json!({
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": line, "character": character },
+                "end": { "line": line, "character": character }
+            },
+            "context": {
+                "diagnostics": diagnostics,
+                "triggerKind": 1
+            }
+        }),
+            move |resp| {
+                let actions = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<Vec<lsp_types::CodeActionOrCommand>>(
+                            v.clone(),
+                        )
+                            .ok()
+                    })
+                    .unwrap_or_default();
+                cb(actions);
+            },
+        )
+    }
+
+    /// `codeAction/resolve`. Some actions only provide their `edit` after
+    /// explicit resolution.
+    pub fn resolve_code_action<F>(
+        &self,
+        action: lsp_types::CodeAction,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Option<lsp_types::WorkspaceEdit>) + Send + 'static,
+    {
+        self.request_async(
+            "codeAction/resolve",
+            serde_json::to_value(&action).unwrap_or(Value::Null),
+            move |resp| {
+                let edit = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<lsp_types::CodeAction>(v.clone()).ok()
+                    })
+                    .and_then(|a| a.edit);
+                cb(edit);
+            },
+        )
+    }
 }
 
 impl Drop for DartLspService {

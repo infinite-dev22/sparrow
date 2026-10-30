@@ -2645,6 +2645,36 @@ fn palette_item(
                     .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
+        PaletteItemContent::PubPackage { description, version, .. } => {
+            let text = item.filter_text;
+            let indices = item.indices;
+            // Clone the borrowed fields so the closures can be `'static`.
+            let description = description.clone();
+            let version = version.clone();
+            container(
+                stack((
+                    focus_text(
+                        move || text.clone(),
+                        move || indices.clone(),
+                        move || config.get().color(SparrowColor::EDITOR_FOCUS),
+                    )
+                        .style(|s| s.margin_right(6.0).max_width_full()),
+                    label(move || description.clone()).style(move |s| {
+                        s.color(config.get().color(SparrowColor::EDITOR_DIM))
+                            .min_width(0.0)
+                            .flex_grow(1.0f32)
+                            .flex_basis(0.0)
+                            .text_ellipsis()
+                    }),
+                    label(move || version.clone()).style(move |s| {
+                        s.color(config.get().color(SparrowColor::EDITOR_DIM))
+                            .margin_left(6.0)
+                            .selectable(false)
+                    }),
+                ))
+                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+            )
+        }
     }
         .style(move |s| {
             s.width_full()

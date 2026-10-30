@@ -770,3 +770,8 @@ mode = "v"
 key = "shift+c"
 command = "delete_to_end_and_insert"
 mode = "n"
+
+[[keymaps]]
+key = "ctrl+t"
+command = "flutter_run_test_at_cursor"
+when = "editor_focus"

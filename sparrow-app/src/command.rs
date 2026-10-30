@@ -616,7 +616,7 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "jump_highlight_prev")]
     #[strum(message = "Jump to previous document highlight")]
     JumpHighlightPrev,
-    
+
     #[strum(serialize = "flutter_run")]
     #[strum(message = "Flutter: Run")]
     FlutterRun,
@@ -632,6 +632,14 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "flutter_stop")]
     #[strum(message = "Flutter: Stop")]
     FlutterStop,
+
+    #[strum(serialize = "flutter_run_test_at_cursor")]
+    #[strum(message = "Flutter: Run Test at Cursor")]
+    FlutterRunTestAtCursor,
+
+    #[strum(serialize = "pub_add")]
+    #[strum(message = "Flutter: Add Package")]
+    PubAdd,
 }
 
 #[derive(Clone, Debug)]
@@ -736,6 +744,11 @@ pub enum InternalCommand {
         mode: RunDebugMode,
         config: RunDebugConfig,
     },
+    RunProcessInTerminal {
+        program: String,
+        args: Vec<String>,
+        name: String,
+    },
     StartRename {
         path: PathBuf,
         placeholder: String,
@@ -829,6 +842,9 @@ pub enum InternalCommand {
     RestartTerminal {
         term_id: TermId,
     },
+    FlutterRunTestAtCursor {
+        term_id: TermId,
+    }
 }
 
 #[derive(Clone)]

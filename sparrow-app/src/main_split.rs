@@ -2206,6 +2206,24 @@ impl MainSplitData {
 
     /// Resolve a code action and apply its held workspace edit
     fn resolve_code_action(&self, plugin_id: PluginId, action: CodeAction) {
+        // ── Dart fast path ─────────────────────────────────────────
+        if plugin_id == PluginId(0) && self.common.dart_lsp.is_available() {
+            let main_split = self.clone();
+            let trigger = floem::ext_event::create_ext_action(
+                self.scope,
+                move |edit: Option<WorkspaceEdit>| {
+                    if let Some(edit) = edit {
+                        main_split.apply_workspace_edit(&edit);
+                    }
+                },
+            );
+            self.common
+                .dart_lsp
+                .resolve_code_action(action, move |edit| trigger(edit));
+            return;
+        }
+
+        // ── Existing proxy path ────────────────────────────────────
         let main_split = self.clone();
         let send = create_ext_action(self.scope, move |edit| {
             main_split.apply_workspace_edit(&edit);
@@ -2213,8 +2231,7 @@ impl MainSplitData {
         self.common
             .proxy
             .code_action_resolve(action, plugin_id, move |result| {
-                if let Ok(ProxyResponse::CodeActionResolveResponse { item }) = result
-                {
+                if let Ok(ProxyResponse::CodeActionResolveResponse { item }) = result {
                     if let Some(edit) = item.edit {
                         send(edit);
                     }

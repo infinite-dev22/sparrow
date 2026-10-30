@@ -92,4 +92,9 @@ pub enum PaletteItemContent {
         name: String,
         profile: sparrow_rpc::terminal::TerminalProfile,
     },
+    PubPackage {
+        name: String,
+        description: String,
+        version: String,
+    },
 }

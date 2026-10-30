@@ -2476,7 +2476,7 @@ impl EditorData {
 
             // Get the diagnostics for the current line, which the LSP might use to inform
             // what code actions are available (such as fixes for the diagnostics).
-            let diagnostics = doc
+            let diagnostics: Vec<lsp_types::Diagnostic> = doc
                 .diagnostics()
                 .diagnostics_span
                 .get_untracked()
@@ -2488,6 +2488,40 @@ impl EditorData {
 
             (position, rev, diagnostics)
         });
+
+        // ── Dart fast path ─────────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            use floem::ext_event::create_ext_action;
+            use sparrow_rpc::plugin::PluginId;
+
+            // Seed with empty so `show_code_actions` can find the entry while
+            // the request is in flight.
+            doc.code_actions().update(|c| {
+                c.insert(offset, (PluginId(0), im::Vector::new()));
+            });
+
+            let editor = self.clone();
+            let trigger = create_ext_action(
+                self.scope,
+                move |actions: Vec<lsp_types::CodeActionOrCommand>| {
+                    let doc = editor.doc();
+                    doc.code_actions().update(|c| {
+                        c.insert(
+                            offset,
+                            (PluginId(0), actions.into_iter().collect()),
+                        );
+                    });
+                },
+            );
+            self.common.dart_lsp.code_actions(
+                &path,
+                position.line,
+                position.character,
+                &diagnostics,
+                move |actions| trigger(actions),
+            );
+            return;
+        }
 
         let send = create_ext_action(
             self.scope,

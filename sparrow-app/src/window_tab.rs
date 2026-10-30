@@ -51,6 +51,9 @@ use sparrow_rpc::{
 };
 use tracing::{Level, debug, error, event};
 
+use crate::dart::{DartLspService, FlutterHotReloadData};
+use crate::outline::OutlineData;
+use crate::widget_tree::WidgetTreeData;
 use crate::{
     about::AboutData,
     alert::{AlertBoxData, AlertButton},
@@ -98,9 +101,6 @@ use crate::{
     window::WindowCommonData,
     workspace::{SparrowWorkspace, SparrowWorkspaceType, WorkspaceInfo},
 };
-use crate::dart::{DartLspService, FlutterHotReloadData};
-use crate::outline::OutlineData;
-use crate::widget_tree::WidgetTreeData;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Focus {
@@ -535,11 +535,8 @@ impl WindowTabData {
             );
         }
 
-        let flutter_hot_reload = FlutterHotReloadData::new(
-            cx,
-            common.clone(),
-            terminal.clone(),
-        );
+        let flutter_hot_reload =
+            FlutterHotReloadData::new(cx, common.clone(), terminal.clone());
 
         let rename = RenameData::new(cx, main_split.editors, common.clone());
         let global_search = GlobalSearchData::new(cx, main_split.clone());
@@ -589,7 +586,7 @@ impl WindowTabData {
             code_lens: cx.create_rw_signal(None),
             source_control,
             dart_lsp: dart_lsp.clone(),
-            widget_tree:widget_tree.clone(),
+            widget_tree: widget_tree.clone(),
             outline: outline.clone(),
             plugin,
             rename,
@@ -700,7 +697,9 @@ impl WindowTabData {
             let widget_tree = widget_tree.clone();
             cx.create_effect(move |_| {
                 widget_tree.updates.with(|notif| {
-                    let Some((path, widgets)) = notif.as_ref() else { return };
+                    let Some((path, widgets)) = notif.as_ref() else {
+                        return;
+                    };
                     widget_tree.apply_update(path.clone(), widgets.clone());
                 });
             });
@@ -744,13 +743,18 @@ impl WindowTabData {
                 notification.with(|notif| {
                     let Some(notif) = notif.as_ref() else { return };
                     match notif {
-                        DartNotification::Diagnostics { path, version, diagnostics } => {
+                        DartNotification::Diagnostics {
+                            path,
+                            version,
+                            diagnostics,
+                        } => {
                             // Version discipline: skip anything older than what we
                             // already applied. `-1` means "server didn't tell us",
                             // so we apply unconditionally in that case.
                             if *version >= 0 {
                                 let mut guard = last_applied.lock();
-                                if guard.get(path).copied().unwrap_or(-1) >= *version {
+                                if guard.get(path).copied().unwrap_or(-1) >= *version
+                                {
                                     return;
                                 }
                                 guard.insert(path.clone(), *version);
@@ -763,7 +767,10 @@ impl WindowTabData {
                             };
                             let data = main_split_apply.get_diagnostic_data(path);
                             data.diagnostics.set(
-                                diagnostics.iter().cloned().collect::<im::Vector<_>>(),
+                                diagnostics
+                                    .iter()
+                                    .cloned()
+                                    .collect::<im::Vector<_>>(),
                             );
                             doc.init_diagnostics();
                         }
@@ -804,7 +811,11 @@ impl WindowTabData {
                 // Track loaded + rev so both async-load and edits trigger.
                 let _ = doc.loaded.get();
                 let _ = doc.buffer.with(|b| b.rev());
-                outline.schedule_refresh(timer, main_split_outline.clone(), dart_lsp_outline.clone());
+                outline.schedule_refresh(
+                    timer,
+                    main_split_outline.clone(),
+                    dart_lsp_outline.clone(),
+                );
             });
         }
 
@@ -813,7 +824,9 @@ impl WindowTabData {
             let outline = outline.clone();
             cx.create_effect(move |_| {
                 outline.updates.with(|notif| {
-                    let Some((path, symbols)) = notif.as_ref() else { return };
+                    let Some((path, symbols)) = notif.as_ref() else {
+                        return;
+                    };
                     outline.apply_update(path.clone(), symbols.clone());
                 });
             });
@@ -845,7 +858,7 @@ impl WindowTabData {
                         });
                         if stopped
                             && hr.state.get_untracked()
-                            != crate::dart::FlutterRunState::Error
+                                != crate::dart::FlutterRunState::Error
                         {
                             hr.state.set(crate::dart::FlutterRunState::Error);
                         }
@@ -1305,6 +1318,9 @@ impl WindowTabData {
                 }
                 self.common.focus.set(Focus::Panel(PanelKind::Terminal));
             }
+            FlutterRunTestAtCursor => {
+                self.run_test_at_cursor();
+            }
             CloseTerminalTab => {
                 self.terminal.close_tab(None);
                 if self
@@ -1330,6 +1346,7 @@ impl WindowTabData {
                 }
                 self.common.focus.set(Focus::Panel(PanelKind::Terminal));
             }
+
             PreviousTerminalTab => {
                 self.terminal.previous_tab();
                 if !self.panel.is_panel_visible(&PanelKind::Terminal) {
@@ -1856,6 +1873,9 @@ impl WindowTabData {
             FlutterStop => {
                 self.flutter_hot_reload.stop();
             }
+            PubAdd => {
+                self.palette.run(PaletteKind::PubPackage);
+            }
         }
     }
 
@@ -2012,6 +2032,46 @@ impl WindowTabData {
                 self.common
                     .proxy
                     .rename_path(current_path.clone(), new_path, send);
+            }
+            InternalCommand::RunProcessInTerminal {
+                program,
+                args,
+                name,
+            } => {
+                use crate::debug::RunDebugMode;
+                use sparrow_rpc::dap_types::{ConfigSource, RunDebugConfig};
+                use std::time::Instant;
+
+                let cwd = self
+                    .common
+                    .workspace
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.to_str().map(|s| s.to_string()));
+                let process = crate::debug::RunDebugProcess {
+                    mode: RunDebugMode::Run,
+                    config: RunDebugConfig {
+                        ty: None,
+                        name,
+                        program,
+                        args: Some(args),
+                        cwd,
+                        env: None,
+                        prelaunch: None,
+                        debug_command: None,
+                        dap_id: Default::default(),
+                        tracing_output: false,
+                        config_source: ConfigSource::Palette,
+                    },
+                    stopped: false,
+                    created: Instant::now(),
+                    is_prelaunch: false,
+                };
+                let tab = self.terminal.new_tab_run_debug(Some(process), None);
+                if let Some(term) = tab.active_terminal(false) {
+                    self.terminal.debug.active_term.set(Some(term.term_id));
+                }
+                self.show_panel(crate::panel::kind::PanelKind::Terminal);
             }
             InternalCommand::FinishNewNode { is_dir, path } => {
                 let file_explorer = self.file_explorer.clone();
@@ -2351,6 +2411,9 @@ impl WindowTabData {
             }
             InternalCommand::CallHierarchyIncoming { item_id } => {
                 self.call_hierarchy_incoming(item_id);
+            }
+            InternalCommand::FlutterRunTestAtCursor { term_id } => {
+                self.run_test_at_cursor();
             }
         }
     }
@@ -3257,6 +3320,42 @@ impl WindowTabData {
             item.get_untracked().item.as_ref().clone(),
             send,
         );
+    }
+
+    fn run_test_at_cursor(&self) {
+        use crate::dart::test_runner;
+
+        let Some(editor) = self.main_split.active_editor.get_untracked() else {
+            return;
+        };
+        let doc = editor.doc();
+        let Some(path) = doc.content.with_untracked(|c| c.path().cloned()) else {
+            return;
+        };
+        if !crate::dart::is_dart_path(&path) {
+            return;
+        }
+        let source = doc.buffer.with_untracked(|b| b.to_string());
+        let offset = editor.cursor().with_untracked(|c| c.offset());
+
+        let Some(test) = test_runner::find_test_at_offset(&source, offset) else {
+            self.show_alert(
+                "No test found".to_string(),
+                "Place the cursor inside a `test(...)` or `testWidgets(...)` block."
+                    .to_string(),
+                Vec::new(),
+            );
+            return;
+        };
+
+        let (program, args) = test_runner::build_test_command(&path, &test.name);
+        self.common
+            .internal_command
+            .send(InternalCommand::RunProcessInTerminal {
+                program,
+                args,
+                name: format!("Test: {}", test.name),
+            });
     }
 }
 
