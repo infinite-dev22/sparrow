@@ -371,6 +371,111 @@ impl DartLspService {
         )
     }
 
+    /// `textDocument/references`. Returns all locations the server knows about
+    /// (may span multiple files). `include_declaration: true` matches the
+    /// behavior of every other IDE.
+    pub fn references<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        include_declaration: bool,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::Location>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/references",
+            json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": include_declaration }
+        }),
+            move |resp| {
+                let locations = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<Vec<lsp_types::Location>>(v.clone()).ok()
+                    })
+                    .unwrap_or_default();
+                cb(locations);
+            },
+        )
+    }
+
+    /// `textDocument/prepareRename`. `Some(_)` means "the server has a name
+    /// at this position and will accept a rename"; `None` means "cursor isn't
+    /// on an identifier" (or a transport error).
+    pub fn prepare_rename<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Option<lsp_types::PrepareRenameResponse>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/prepareRename",
+            json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        }),
+            move |resp| {
+                let parsed = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<lsp_types::PrepareRenameResponse>(
+                            v.clone(),
+                        )
+                            .ok()
+                    });
+                cb(parsed);
+            },
+        )
+    }
+
+    /// `textDocument/rename`. Returns a `WorkspaceEdit` that must be applied
+    /// via [`crate::main_split::MainSplitData::apply_workspace_edit`].
+    pub fn rename<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        new_name: &str,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Option<lsp_types::WorkspaceEdit>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        let new_name = new_name.to_string();
+        self.request_async(
+            "textDocument/rename",
+            json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "newName": new_name
+        }),
+            move |resp| {
+                let edit = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<lsp_types::WorkspaceEdit>(v.clone())
+                            .ok()
+                    });
+                cb(edit);
+            },
+        )
+    }
+
     /// `textDocument/completion` at the given 0-based position.
     ///
     /// The server decides what's relevant given the current position and
@@ -985,5 +1090,56 @@ mod tests {
             _ => panic!("expected list"),
         };
         assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn references_parses_location_array() {
+        let locations: Vec<lsp_types::Location> = serde_json::from_value(json!([
+        { "uri": "file:///a.dart", "range": { "start": {"line":0,"character":0},
+            "end": {"line":0,"character":5} } },
+        { "uri": "file:///b.dart", "range": { "start": {"line":2,"character":3},
+            "end": {"line":2,"character":8} } }
+    ])).unwrap();
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[1].range.start.line, 2);
+    }
+
+    #[test]
+    fn prepare_rename_parses_all_shapes() {
+        use lsp_types::PrepareRenameResponse;
+
+        // Range
+        let r: PrepareRenameResponse = serde_json::from_value(json!({
+        "start": {"line":0,"character":0}, "end": {"line":0,"character":5}
+    })).unwrap();
+        assert!(matches!(r, PrepareRenameResponse::Range(_)));
+
+        // Range with placeholder
+        let r: PrepareRenameResponse = serde_json::from_value(json!({
+        "range": { "start": {"line":0,"character":0},
+            "end": {"line":0,"character":5} },
+        "placeholder": "foo"
+    })).unwrap();
+        assert!(matches!(r, PrepareRenameResponse::RangeWithPlaceholder { .. }));
+
+        // Default behavior
+        let r: PrepareRenameResponse = serde_json::from_value(json!({
+        "defaultBehavior": true
+    })).unwrap();
+        assert!(matches!(r, PrepareRenameResponse::DefaultBehavior { .. }));
+    }
+
+    #[test]
+    fn rename_parses_workspace_edit() {
+        let edit: lsp_types::WorkspaceEdit = serde_json::from_value(json!({
+        "changes": {
+            "file:///a.dart": [{
+                "range": { "start": {"line":0,"character":0},
+                    "end": {"line":0,"character":5} },
+                "newText": "bar"
+            }]
+        }
+    })).unwrap();
+        assert!(edit.changes.is_some());
     }
 }

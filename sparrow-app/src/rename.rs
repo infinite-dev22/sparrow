@@ -129,25 +129,47 @@ impl RenameData {
             .doc()
             .buffer
             .with_untracked(|buffer| buffer.to_string());
-        let new_name = new_name.trim();
+        let new_name = new_name.trim().to_string();
         if !new_name.is_empty() {
             let path = self.path.get_untracked();
             let position = self.position.get_untracked();
             let internal_command = self.common.internal_command;
-            let send = create_ext_action(self.common.scope, move |result| {
-                if let Ok(ProxyResponse::Rename { edit }) = result {
-                    internal_command
-                        .send(InternalCommand::ApplyWorkspaceEdit { edit });
-                }
-            });
-            self.common.proxy.rename(
-                path,
-                position,
-                new_name.to_string(),
-                move |result| {
-                    send(result);
-                },
-            );
+
+            // ── Dart fast path ─────────────────────────────────────
+            if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+                use floem::ext_event::create_ext_action;
+                let trigger = create_ext_action(
+                    self.common.scope,
+                    move |edit: Option<lsp_types::WorkspaceEdit>| {
+                        let Some(edit) = edit else { return };
+                        internal_command
+                            .send(InternalCommand::ApplyWorkspaceEdit { edit });
+                    },
+                );
+                self.common.dart_lsp.rename(
+                    &path,
+                    position.line,
+                    position.character,
+                    &new_name,
+                    move |edit| trigger(edit),
+                );
+            } else {
+                // ── Existing proxy path ────────────────────────────
+                let send = create_ext_action(self.common.scope, move |result| {
+                    if let Ok(ProxyResponse::Rename { edit }) = result {
+                        internal_command
+                            .send(InternalCommand::ApplyWorkspaceEdit { edit });
+                    }
+                });
+                self.common.proxy.rename(
+                    path,
+                    position,
+                    new_name.clone(),
+                    move |result| {
+                        send(result);
+                    },
+                );
+            }
         }
         self.cancel();
     }

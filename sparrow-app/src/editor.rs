@@ -48,7 +48,9 @@ use sparrow_core::{
     rope_text_pos::RopeTextPosition,
     selection::{InsertDrift, SelRegion, Selection},
 };
-use sparrow_rpc::{buffer::BufferId, plugin::PluginId, proxy::ProxyResponse};
+use sparrow_rpc::{
+    buffer::BufferId, file_line::FileLine, plugin::PluginId, proxy::ProxyResponse,
+};
 use std::path::PathBuf;
 use std::{
     collections::{HashMap, HashSet},
@@ -1493,6 +1495,29 @@ impl EditorData {
         );
     }
 
+    /// Read `FileLine { path, position, content }` for each location by
+    /// reading the source file from disk. Skips files that can't be read
+    /// (deleted, permission, etc.).
+    fn fetch_file_lines(locations: &[lsp_types::Location]) -> Vec<FileLine> {
+        locations
+            .iter()
+            .filter_map(|loc| {
+                let path = path_from_url(&loc.uri);
+                let line_idx = loc.range.start.line as usize;
+                let content = std::fs::read_to_string(&path)
+                    .ok()?
+                    .lines()
+                    .nth(line_idx)?
+                    .to_string();
+                Some(FileLine {
+                    path,
+                    position: loc.range.start,
+                    content,
+                })
+            })
+            .collect()
+    }
+
     pub fn find_reference(&self, window_tab_data: WindowTabData) {
         let doc = self.doc();
         let path = match if doc.loaded() {
@@ -1511,6 +1536,40 @@ impl EditorData {
             let position = buffer.offset_to_position(offset);
             (start_position, position)
         });
+
+        // ── Dart fast path ─────────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            let scope = window_tab_data.scope;
+            let cursor = self.cursor().read_only();
+            let trigger = create_ext_action(self.scope, {
+                let window_tab_data = window_tab_data.clone();
+                move |locations: Vec<lsp_types::Location>| {
+                    let current_offset = cursor.with_untracked(|c| c.offset());
+                    if current_offset != offset {
+                        return;
+                    }
+                    if locations.is_empty() {
+                        window_tab_data.show_panel(PanelKind::References);
+                        return;
+                    }
+                    let items = Self::fetch_file_lines(&locations);
+                    window_tab_data
+                        .main_split
+                        .references
+                        .update(|x| *x = init_implementation_root(items, scope));
+                    window_tab_data.show_panel(PanelKind::References);
+                }
+            });
+            self.common.dart_lsp.references(
+                &path,
+                position.line,
+                position.character,
+                true,
+                move |locations| trigger(locations),
+            );
+            return;
+        }
+
         let scope = window_tab_data.scope;
         let update_implementation = create_ext_action(self.scope, {
             let window_tab_data = window_tab_data.clone();
@@ -1993,11 +2052,7 @@ impl EditorData {
 
         // Reset completion state synchronously so the popup opens (empty for
         // one round-trip) instead of staying hidden until the response lands.
-        let request_id = self
-            .common
-            .completion
-            .with_untracked(|c| c.request_id)
-            + 1;
+        let request_id = self.common.completion.with_untracked(|c| c.request_id) + 1;
 
         self.common.completion.update(|c| {
             c.request_id = request_id;
@@ -2703,6 +2758,68 @@ impl EditorData {
         let (position, rev) = doc
             .buffer
             .with_untracked(|buffer| (buffer.offset_to_position(offset), doc.rev()));
+
+        // ── Dart fast path ─────────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            let cursor = self.cursor();
+            let buffer = doc.buffer;
+            let internal_command = self.common.internal_command;
+            let local_path = path.clone();
+            let trigger = create_ext_action(
+                self.scope,
+                move |resp: Option<lsp_types::PrepareRenameResponse>| {
+                    if buffer.with_untracked(|b| b.rev()) != rev {
+                        return;
+                    }
+                    if cursor.with_untracked(|c| c.offset()) != offset {
+                        return;
+                    }
+                    let Some(resp) = resp else { return };
+                    let (start, _end, position, placeholder) =
+                        buffer.with_untracked(|buffer| match resp {
+                            lsp_types::PrepareRenameResponse::Range(range) => (
+                                buffer.offset_of_position(&range.start),
+                                buffer.offset_of_position(&range.end),
+                                range.start,
+                                None,
+                            ),
+                            lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+                                range,
+                                placeholder,
+                            } => (
+                                buffer.offset_of_position(&range.start),
+                                buffer.offset_of_position(&range.end),
+                                range.start,
+                                Some(placeholder),
+                            ),
+                            lsp_types::PrepareRenameResponse::DefaultBehavior { .. } => {
+                                let start = buffer.prev_code_boundary(offset);
+                                let pos = buffer.offset_to_position(start);
+                                (start, buffer.next_code_boundary(offset), pos, None)
+                            }
+                        });
+                    let placeholder = placeholder.unwrap_or_else(|| {
+                        buffer.with_untracked(|buffer| {
+                            let (start, end) = buffer.select_word(offset);
+                            buffer.slice_to_cow(start..end).to_string()
+                        })
+                    });
+                    internal_command.send(InternalCommand::StartRename {
+                        path: local_path.clone(),
+                        placeholder,
+                        start,
+                        position,
+                    });
+                },
+            );
+            self.common.dart_lsp.prepare_rename(
+                &path,
+                position.line,
+                position.character,
+                move |resp| trigger(resp),
+            );
+            return;
+        }
 
         let cursor = self.cursor();
         let buffer = doc.buffer;
