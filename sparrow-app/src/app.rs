@@ -3144,6 +3144,9 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
             move || completion_data.with(|c| VectorItems(c.filtered_items.clone())),
             move |(i, _item)| (request_id(), *i),
             move |(i, item)| {
+                let detail = item.item.detail.clone().filter(|d| !d.is_empty());
+                let has_detail = detail.is_some();
+
                 stack((
                     container(
                         text(
@@ -3208,6 +3211,18 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
                                     )
                                 })
                         }),
+                    label(move || detail.clone().unwrap_or_default()).style(
+                        move |s| {
+                            let c = config.get();
+                            s.margin_left(10.0)
+                                .min_width(0.0)
+                                .max_width(320.0)
+                                .text_ellipsis()
+                                .color(c.color(SparrowColor::EDITOR_DIM))
+                                .selectable(false)
+                                .apply_if(!has_detail, |s| s.hide())
+                        },
+                    ),
                 ))
                     .style(move |s| {
                         s.align_items(Some(AlignItems::Center))

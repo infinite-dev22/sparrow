@@ -1845,11 +1845,25 @@ impl EditorData {
         self.cancel_completion();
         let doc = self.doc();
         if let Some(item) = item {
-            // Dart fast path — no proxy resolve possible, apply directly.
+            // Dart fast path — resolve first so we get the full edit
+            // (textEdit, additionalTextEdits for auto-imports, detail,
+            // documentation).
             if item.plugin_id == PluginId(0) {
-                if let Err(err) = self.apply_completion_item(&item.item) {
-                    tracing::error!("{:?}", err);
-                }
+                use floem::ext_event::create_ext_action;
+                let editor = self.clone();
+                let fallback = item.item.clone();
+                let trigger = create_ext_action(
+                    self.scope,
+                    move |resolved: Option<lsp_types::CompletionItem>| {
+                        let item = resolved.unwrap_or(fallback);
+                        if let Err(err) = editor.apply_completion_item(&item) {
+                            tracing::error!("completionItem/resolve then apply: {err:?}");
+                        }
+                    },
+                );
+                self.common
+                    .dart_lsp
+                    .resolve_completion(item.item, move |resolved| trigger(resolved));
                 return;
             }
 
@@ -1950,7 +1964,15 @@ impl EditorData {
 
         // ── Dart fast path ─────────────────────────────────────────
         if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
-            self.update_completion_dart(path, start_offset, input, offset);
+            // `display_if_empty_input` is true only for explicit Ctrl+Space.
+            self.update_completion_dart(
+                path,
+                start_offset,
+                input,
+                char,
+                offset,
+                display_if_empty_input,
+            );
             return;
         }
 
@@ -2040,7 +2062,9 @@ impl EditorData {
         path: PathBuf,
         start_offset: usize,
         input: String,
+        char_before: String,
         cursor_offset: usize,
+        invoked: bool,
     ) {
         use floem::ext_event::create_ext_action;
         use sparrow_rpc::plugin::PluginId;
@@ -2050,10 +2074,23 @@ impl EditorData {
             .buffer
             .with_untracked(|b| b.offset_to_position(cursor_offset));
 
-        // Reset completion state synchronously so the popup opens (empty for
-        // one round-trip) instead of staying hidden until the response lands.
-        let request_id = self.common.completion.with_untracked(|c| c.request_id) + 1;
+        // Only pass `triggerCharacter` if the server advertised it in
+        // `completionProvider.triggerCharacters` — otherwise the server
+        // treats the whole request as malformed on some versions.
+        let trigger_chars = self.common.dart_lsp.trigger_characters();
+        let trigger_character = if !invoked
+            && char_before.chars().count() == 1
+            && trigger_chars.iter().any(|c| c == &char_before)
+        {
+            Some(char_before.clone())
+        } else {
+            None
+        };
 
+        // 1 = manual invoke (Ctrl+Space), 2 = typed (regular or trigger char).
+        let trigger_kind = if invoked { 1 } else { 2 };
+
+        let request_id = self.common.completion.with_untracked(|c| c.request_id) + 1;
         self.common.completion.update(|c| {
             c.request_id = request_id;
             c.status = CompletionStatus::Started;
@@ -2069,24 +2106,17 @@ impl EditorData {
         let editor = self.clone();
         let common = self.common.clone();
 
-        // `create_ext_action`'s trigger is `Send`; the closure it wraps runs
-        // on the UI thread with full access to `!Send` signals.
         let trigger = create_ext_action(
             self.scope,
-            move |items: Option<Vec<lsp_types::CompletionItem>>| {
+            move |result: (Option<Vec<lsp_types::CompletionItem>>, bool)| {
+                let (items, _is_incomplete) = result;
                 let mut completion_data = common.completion.get_untracked();
                 match items {
-                    Some(items) => {
-                        // Strip `data` so `select_completion` applies the item
-                        // directly instead of trying to resolve it via the
-                        // proxy (which knows nothing about this request).
-                        let items = items
-                            .into_iter()
-                            .map(|mut item| {
-                                item.data = None;
-                                item
-                            })
-                            .collect();
+                    Some(items) if !items.is_empty() => {
+                        // IMPORTANT: `item.data` is preserved here. It's the
+                        // only thing that lets `completionItem/resolve` work
+                        // later, which is the only way to get auto-imports
+                        // and snippet-shaped `textEdit`s.
                         completion_data.receive_direct(
                             request_id,
                             items,
@@ -2098,9 +2128,7 @@ impl EditorData {
                             .get_untracked()
                             .update_document_completion(&editor, cursor_offset);
                     }
-                    None => {
-                        // Server returned null (no completions) — reset to
-                        // Inactive so the popup hides.
+                    _ => {
                         if completion_data.request_id == request_id {
                             completion_data.status = CompletionStatus::Inactive;
                             completion_data.filtered_items.clear();
@@ -2111,11 +2139,13 @@ impl EditorData {
             },
         );
 
-        self.common.dart_lsp.completion(
+        self.common.dart_lsp.completion_with_trigger(
             &path,
             position.line,
             position.character,
-            move |resp| trigger(resp),
+            trigger_kind,
+            trigger_character.as_deref(),
+            move |items, is_incomplete| trigger((items, is_incomplete)),
         );
     }
 

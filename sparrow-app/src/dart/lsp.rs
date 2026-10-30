@@ -114,6 +114,7 @@ impl DartLspService {
             open_files: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false),
             semantic_tokens_legend: Mutex::new(None),
+            completion_trigger_characters: Mutex::new(Vec::new()),
             is_running: AtomicBool::new(false),
         });
 
@@ -244,6 +245,7 @@ impl DartLspService {
                     open_files: Mutex::new(HashMap::new()),
                     shutting_down: AtomicBool::new(false),
                     semantic_tokens_legend: Mutex::new(None),
+                    completion_trigger_characters: Mutex::new(Vec::new()),
                     is_running: AtomicBool::new(false),
                 }),
                 last_sent: Arc::new(Mutex::new(HashMap::new())),
@@ -480,43 +482,94 @@ impl DartLspService {
         )
     }
 
-    /// `textDocument/completion` at the given 0-based position.
+    /// `textDocument/completion` with full trigger context.
     ///
-    /// The server decides what's relevant given the current position and
-    /// document content — we don't need to compute a prefix on this side.
-    /// Returns the flattened list of items (or an empty vec on error / null).
-    pub fn completion<F>(&self, path: &Path, line: u32, character: u32, cb: F) -> i64
+    /// `trigger_kind` per LSP spec:
+    ///   1 = Invoked (Ctrl+Space) — "give me everything relevant here"
+    ///   2 = TriggerCharacter — "user typed a char / trigger char"
+    ///   3 = TriggerForIncompleteCompletions (not used here)
+    ///
+    /// `trigger_character` should only be set when the server's
+    /// `completionProvider.triggerCharacters` contains it — otherwise
+    /// the server may reject the request.
+    ///
+    /// Returns `(items, is_incomplete)`. `is_incomplete = true` means
+    /// the server has more items for this prefix than it sent; a
+    /// follow-up request with trigger_kind=3 would fetch more. We
+    /// currently ignore that case (Dart rarely triggers it).
+    pub fn completion_with_trigger<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        trigger_kind: u32,
+        trigger_character: Option<&str>,
+        cb: F,
+    ) -> i64
     where
-        F: FnOnce(Option<Vec<CompletionItem>>) + Send + 'static,
+        F: FnOnce(Option<Vec<CompletionItem>>, bool) + Send + 'static,
     {
         let uri = path_to_uri(path);
+        let mut context = json!({ "triggerKind": trigger_kind });
+        if let Some(ch) = trigger_character {
+            context["triggerCharacter"] = json!(ch);
+        }
         self.request_async(
             "textDocument/completion",
             json!({
                 "textDocument": { "uri": uri },
                 "position": { "line": line, "character": character },
-                // LSP spec: omitting `context` = Invoked. The Dart server
-                // treats that as "compute completions for this exact
-                // position", which is what we want.
-                "context": { "triggerKind": 1 }
+                "context": context
             }),
             move |resp| {
-                // `result: null` means "no completions"; distinguish from
-                // transport / server error (`error` present) so the caller
-                // can clear stale state either way.
-                let items = resp
+                let (items, is_incomplete) = resp
                     .get("result")
                     .filter(|v| !v.is_null())
                     .and_then(|v| {
                         serde_json::from_value::<CompletionResponse>(v.clone()).ok()
                     })
                     .map(|r| match r {
-                        CompletionResponse::Array(items) => items,
-                        CompletionResponse::List(list) => list.items,
-                    });
-                cb(items);
+                        CompletionResponse::Array(items) => (items, false),
+                        CompletionResponse::List(list) => {
+                            (list.items, list.is_incomplete)
+                        }
+                    })
+                    .unwrap_or((Vec::new(), false));
+                cb(Some(items), is_incomplete);
             },
         )
+    }
+
+    /// `completionItem/resolve`. Returns the item with `documentation`,
+    /// `detail`, `textEdit`, and `additionalTextEdits` filled in.
+    ///
+    /// This is **required** for Dart auto-imports: Flutter/Dart items
+    /// only carry `data` in the initial `completion` response; the
+    /// `additionalTextEdits` that insert `import 'package:flutter/…';`
+    /// only come back from resolve.
+    pub fn resolve_completion<F>(&self, item: CompletionItem, cb: F) -> i64
+    where
+        F: FnOnce(Option<CompletionItem>) + Send + 'static,
+    {
+        self.request_async(
+            "completionItem/resolve",
+            serde_json::to_value(&item).unwrap_or(Value::Null),
+            move |resp| {
+                let resolved = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<CompletionItem>(v.clone()).ok()
+                    });
+                cb(resolved);
+            },
+        )
+    }
+
+    /// Trigger characters advertised by the server (`[".", ":"]` for
+    /// Dart). Empty until the `initialize` handshake completes.
+    pub fn trigger_characters(&self) -> Vec<String> {
+        self.state.completion_trigger_characters.lock().clone()
     }
 
     /// `textDocument/codeAction`. Returns refactorings, quick-fixes, etc.
@@ -725,6 +778,9 @@ struct SharedState {
     open_files: Mutex<HashMap<PathBuf, i64>>,
     shutting_down: AtomicBool,
     semantic_tokens_legend: Mutex<Option<lsp_types::SemanticTokensLegend>>,
+    /// Trigger characters advertised by the server (`[".", ":"]` for Dart).
+    /// Empty until `initialize` returns.
+    completion_trigger_characters: Mutex<Vec<String>>,
     /// True while the server process is alive. Set true after successful
     /// spawn; cleared by the writer and reader threads on exit.
     is_running: AtomicBool,
@@ -878,6 +934,24 @@ fn initialize(
                     },
                     "hover": { "contentFormat": ["markdown", "plaintext"] },
                     "definition": { "linkSupport": true },
+                    "completion": {
+                        "dynamicRegistration": false,
+                        "contextSupport": true,
+                        "completionItem": {
+                            "snippetSupport": true,
+                            "documentationFormat": ["markdown", "plaintext"],
+                            "resolveSupport": {
+                                "properties": [
+                                    "documentation",
+                                    "detail",
+                                    "additionalTextEdits",
+                                    "textEdit"
+                                ]
+                            },
+                            "insertReplaceSupport": true,
+                            "labelDetailsSupport": false
+                        }
+                    },
                     "semanticTokens": {
                         "dynamicRegistration": false,
                         "requests": { "full": true, "range": false },
@@ -929,6 +1003,16 @@ fn initialize(
                 })
             {
                 *state.semantic_tokens_legend.lock() = Some(legend);
+            }
+            // Capture completion trigger characters (".", ":", etc.).
+            if let Some(triggers) = resp
+                .get("result")
+                .and_then(|v| v.get("capabilities"))
+                .and_then(|v| v.get("completionProvider"))
+                .and_then(|v| v.get("triggerCharacters"))
+                .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
+            {
+                *state.completion_trigger_characters.lock() = triggers;
             }
         }
         Err(_) => return Err("initialize timed out".into()),
@@ -1209,6 +1293,7 @@ mod tests {
                 open_files: Mutex::new(HashMap::new()),
                 shutting_down: AtomicBool::new(false),
                 semantic_tokens_legend: Mutex::new(None),
+                completion_trigger_characters: Mutex::new(Vec::new()),
                 is_running: AtomicBool::new(false),
             }),
             last_sent: Arc::new(Mutex::new(HashMap::new())),
@@ -1228,6 +1313,7 @@ mod tests {
             open_files: Mutex::new(HashMap::new()),
             shutting_down: AtomicBool::new(false),
             semantic_tokens_legend: Mutex::new(None),
+            completion_trigger_characters: Mutex::new(Vec::new()),
             is_running: AtomicBool::new(true),
         });
         let svc = DartLspService {
