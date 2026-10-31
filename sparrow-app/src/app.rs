@@ -53,7 +53,7 @@ use lsp_types::{CompletionItemKind, MessageType, ShowMessageParams};
 use notify::Watcher;
 use serde::{Deserialize, Serialize};
 use sparrow_core::{
-    command::{EditCommand, FocusCommand},
+    command::{MoveCommand, EditCommand, FocusCommand},
     directory::Directory,
     meta,
     syntax::{Syntax, highlight::reset_highlight_configs},
@@ -64,7 +64,7 @@ use sparrow_rpc::{
     file::PathObject,
 };
 use tracing_subscriber::{filter::Targets, reload::Handle};
-
+use sparrow_core::command::MultiSelectionCommand;
 use crate::{
     about, alert,
     code_action::CodeActionStatus,
@@ -4419,113 +4419,431 @@ pub fn window_menu(
     sparrow_command: Listener<SparrowCommand>,
     workbench_command: Listener<SparrowWorkbenchCommand>,
 ) -> Menu {
-    Menu::new("Sparrow")
-        .entry({
-            let mut menu = Menu::new("Sparrow")
-                .entry(MenuItem::new("About Sparrow").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
-                }))
-                .separator()
-                .entry(
-                    Menu::new("Settings...")
-                        .entry(MenuItem::new("Open Settings").action(move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::OpenSettings);
-                        }))
-                        .entry(MenuItem::new("Open Keyboard Shortcuts").action(
-                            move || {
-                                workbench_command.send(
-                                    SparrowWorkbenchCommand::OpenKeyboardShortcuts,
-                                );
-                            },
-                        )),
-                )
-                .separator()
-                .entry(MenuItem::new("Quit Sparrow").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::Quit);
-                }));
-            if cfg!(target_os = "macos") {
-                menu = menu
-                    .separator()
-                    .entry(MenuItem::new("Hide Sparrow"))
-                    .entry(MenuItem::new("Hide Others"))
-                    .entry(MenuItem::new("Show All"))
-            }
-            menu
-        })
-        .separator()
-        .entry(
-            Menu::new("File")
-                .entry(MenuItem::new("New File").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::NewFile);
-                }))
-                .separator()
-                .entry(MenuItem::new("Open").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::OpenFile);
-                }))
-                .entry(MenuItem::new("Open Folder").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::OpenFolder);
-                }))
-                .separator()
-                .entry(MenuItem::new("Save").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Focus(FocusCommand::Save),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Save All").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::SaveAll);
-                }))
-                .separator()
-                .entry(MenuItem::new("Close Folder").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::CloseFolder);
-                }))
-                .entry(MenuItem::new("Close Window").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::CloseWindow);
-                })),
-        )
-        .entry(
-            Menu::new("Edit")
-                .entry(MenuItem::new("Cut").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::ClipboardCut),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Copy").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::ClipboardCopy),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Paste").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::ClipboardPaste),
-                        data: None,
-                    });
-                }))
-                .separator()
-                .entry(MenuItem::new("Undo").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::Undo),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Redo").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::Redo),
-                        data: None,
-                    });
-                }))
-                .separator()
-                .entry(MenuItem::new("Find").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Focus(FocusCommand::Search),
-                        data: None,
-                    });
-                })),
-        )
+    use crate::command::SparrowWorkbenchCommand::*;
+
+    let mut menu = Menu::new("");
+
+    // ── FILE ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("File")
+            .entry(MenuItem::new("New...").action(move || {
+                workbench_command.send(NewFile);
+            }))
+            .entry(MenuItem::new("Open...").action(move || {
+                workbench_command.send(OpenFile);
+            }))
+            .entry(MenuItem::new("Open Folder...").action(move || {
+                workbench_command.send(OpenFolder);
+            }))
+            .entry(MenuItem::new("Recent Projects").action(move || {
+                workbench_command.send(PaletteWorkspace);
+            }))
+            .separator()
+            .entry(MenuItem::new("Close Project").action(move || {
+                workbench_command.send(CloseFolder);
+            }))
+            .entry(MenuItem::new("Settings...").action(move || {
+                workbench_command.send(OpenSettings);
+            }))
+            .entry(MenuItem::new("Project Structure...").enabled(false))
+            .entry(MenuItem::new("Plugins...").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Save All").action(move || {
+                workbench_command.send(SaveAll);
+            }))
+            .entry(MenuItem::new("Reload All from Disk").enabled(false))
+            .entry(MenuItem::new("Invalidate Caches...").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Exit").action(move || {
+                workbench_command.send(Quit);
+            })),
+    );
+
+    // ── EDIT ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Edit")
+            .entry(MenuItem::new("Undo").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::Undo),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Redo").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::Redo),
+                    data: None,
+                });
+            }))
+            .separator()
+            .entry(MenuItem::new("Cut").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::ClipboardCut),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Copy").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::ClipboardCopy),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Paste").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::ClipboardPaste),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Find...").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::Search),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Find Usages").action(move || {
+                workbench_command.send(FindReferences);
+            }))
+            .separator()
+            .entry(MenuItem::new("Select All").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::MultiSelection(MultiSelectionCommand::SelectAllCurrent),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Duplicate Line").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::DuplicateLineDown),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Join Lines").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Indent Selection").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::IndentLine),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Unindent Line or Selection").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::OutdentLine),
+                    data: None,
+                });
+            })),
+    );
+
+    // ── VIEW ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("View")
+            .entry(
+                Menu::new("Tool Windows")
+                    .entry(MenuItem::new("Project").action(move || {
+                        workbench_command.send(ToggleFileExplorerVisual);
+                    }))
+                    .entry(MenuItem::new("Terminal").action(move || {
+                        workbench_command.send(ToggleTerminalVisual);
+                    }))
+                    .entry(MenuItem::new("Version Control").action(move || {
+                        workbench_command.send(ToggleSourceControlVisual);
+                    }))
+                    .entry(MenuItem::new("Problems").action(move || {
+                        workbench_command.send(ToggleProblemVisual);
+                    }))
+                    .entry(MenuItem::new("Debug").action(move || {
+                        workbench_command.send(ToggleDebugVisual);
+                    }))
+                    .entry(MenuItem::new("Extensions").action(move || {
+                        workbench_command.send(TogglePluginVisual);
+                    })),
+            )
+            .entry(
+                Menu::new("Appearance")
+                    .entry(MenuItem::new("Change Color Theme").action(move || {
+                        workbench_command.send(ChangeColorTheme);
+                    }))
+                    .entry(MenuItem::new("Change Icon Theme").action(move || {
+                        workbench_command.send(ChangeIconTheme);
+                    }))
+                    .entry(MenuItem::new("Zoom In").action(move || {
+                        workbench_command.send(ZoomIn);
+                    }))
+                    .entry(MenuItem::new("Zoom Out").action(move || {
+                        workbench_command.send(ZoomOut);
+                    }))
+                    .entry(MenuItem::new("Reset Zoom").action(move || {
+                        workbench_command.send(ZoomReset);
+                    })),
+            )
+            .separator()
+            .entry(MenuItem::new("Recent Files").action(move || {
+                workbench_command.send(PaletteHelpAndFile);
+            }))
+            .entry(MenuItem::new("Active Editor").enabled(false)),
+    );
+
+    // ── NAVIGATE ────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Navigate")
+            .entry(MenuItem::new("Back").action(move || {
+                workbench_command.send(JumpLocationBackward);
+            }))
+            .entry(MenuItem::new("Forward").action(move || {
+                workbench_command.send(JumpLocationForward);
+            }))
+            .separator()
+            .entry(MenuItem::new("Search Everywhere").action(move || {
+                workbench_command.send(PaletteHelpAndFile);
+            }))
+            .entry(MenuItem::new("Class...").action(move || {
+                workbench_command.send(PaletteWorkspaceSymbol);
+            }))
+            .entry(MenuItem::new("File...").action(move || {
+                workbench_command.send(Palette);
+            }))
+            .entry(MenuItem::new("Symbol...").action(move || {
+                workbench_command.send(PaletteSymbol);
+            }))
+            .entry(MenuItem::new("Line:Column...").action(move || {
+                workbench_command.send(PaletteLine);
+            }))
+            .separator()
+            .entry(MenuItem::new("Next Highlighted Error").action(move || {
+                workbench_command.send(NextError);
+            }))
+            .entry(MenuItem::new("Previous Highlighted Error").action(move || {
+                workbench_command.send(PreviousError);
+            }))
+            .separator()
+            .entry(MenuItem::new("Declaration or Usages").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::GotoDefinition),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Type Declaration").enabled(false))
+            .entry(MenuItem::new("Super Method").enabled(false))
+            .entry(MenuItem::new("Test").enabled(false))
+            .entry(MenuItem::new("File Structure").action(move || {
+                workbench_command.send(PaletteSymbol);
+            }))
+            .entry(MenuItem::new("Call Hierarchy").action(move || {
+                workbench_command.send(ShowCallHierarchy);
+            }))
+            .entry(MenuItem::new("Type Hierarchy").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Implementation(s)").action(move || {
+                workbench_command.send(GoToImplementation);
+            }))
+            .entry(MenuItem::new("References").action(move || {
+                workbench_command.send(FindReferences);
+            })),
+    );
+
+    // ── CODE ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Code")
+            .entry(MenuItem::new("Override Methods...").enabled(false))
+            .entry(MenuItem::new("Implement Methods...").enabled(false))
+            .entry(MenuItem::new("Generate...").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Code Completion").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::GetCompletion),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Inspect Code...").enabled(false))
+            .entry(MenuItem::new("Analyze Code").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Comment with Line Comment").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::ToggleLineComment),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Reformat Code").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::FormatDocument),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Optimize Imports").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Move Statement Down").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::MoveLineDown),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Move Statement Up").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::MoveLineUp),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Move Element Left").enabled(false))
+            .entry(MenuItem::new("Move Element Right").enabled(false)),
+    );
+
+    // ── REFACTOR ────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Refactor")
+            .entry(MenuItem::new("Refactor This...").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::Rename),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Rename File...").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Extract/Introduce...").enabled(false))
+            .entry(MenuItem::new("Inline...").enabled(false))
+            .entry(MenuItem::new("Move File...").enabled(false))
+            .entry(MenuItem::new("Copy File...").enabled(false))
+            .entry(MenuItem::new("Safe Delete...").enabled(false)),
+    );
+
+    // ── BUILD ───────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Build")
+            .entry(MenuItem::new("Build Project").enabled(false))
+            .entry(MenuItem::new("Rebuild Project").enabled(false))
+            .entry(MenuItem::new("Generate App Bundles or APKs").enabled(false))
+            .entry(MenuItem::new("Analyze APK...").enabled(false)),
+    );
+
+    // ── RUN ─────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Run")
+            .entry(MenuItem::new("Run 'main.dart'").action(move || {
+                workbench_command.send(FlutterRun);
+            }))
+            .entry(MenuItem::new("Debug 'main.dart'").action(move || {
+                workbench_command.send(PaletteRunAndDebug);
+            }))
+            .entry(MenuItem::new("Edit Configurations...").action(move || {
+                workbench_command.send(PaletteRunAndDebug);
+            }))
+            .separator()
+            .entry(MenuItem::new("Stop").action(move || {
+                workbench_command.send(FlutterStop);
+            }))
+            .separator()
+            .entry(MenuItem::new("Flutter Hot Reload").action(move || {
+                workbench_command.send(FlutterHotReload);
+            }))
+            .entry(MenuItem::new("Flutter Hot Restart").action(move || {
+                workbench_command.send(FlutterHotRestart);
+            }))
+            .separator()
+            .entry(MenuItem::new("Toggle Breakpoint").enabled(false))
+            .entry(MenuItem::new("View Breakpoints...").enabled(false)),
+    );
+
+    // ── TOOLS ───────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Tools")
+            .entry(MenuItem::new("Device Manager").enabled(false))
+            .entry(MenuItem::new("SDK Manager").enabled(false))
+            .entry(MenuItem::new("Resource Manager").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Layout Inspector").enabled(false))
+            .entry(MenuItem::new("Generate Javadoc...").enabled(false))
+            .entry(MenuItem::new("Create Command Line Launcher...").enabled(false))
+            .separator()
+            .entry(
+                Menu::new("Flutter")
+                    .entry(MenuItem::new("Open Widget Tree").action(move || {
+                        // Note: Assuming this opens the panel
+                        workbench_command.send(TogglePanelVisual) // Placeholder, requires data payload
+                    }))
+                    .entry(MenuItem::new("Open Outline").action(move || {
+                        workbench_command.send(TogglePanelVisual) // Placeholder
+                    })),
+            ),
+    );
+
+    // ── GIT ─────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Git")
+            .entry(MenuItem::new("Commit...").action(move || {
+                workbench_command.send(SourceControlCommit);
+            }))
+            .entry(MenuItem::new("Push...").enabled(false))
+            .entry(MenuItem::new("Update Project...").enabled(false))
+            .entry(MenuItem::new("Pull...").enabled(false))
+            .entry(MenuItem::new("Fetch...").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Merge...").enabled(false))
+            .entry(MenuItem::new("Rebase...").enabled(false))
+            .entry(MenuItem::new("Branches...").action(move || {
+                workbench_command.send(PaletteSCMReferences);
+            }))
+            .entry(MenuItem::new("Reset HEAD...").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Show Git Log").enabled(false))
+            .entry(MenuItem::new("Manage Remotes...").enabled(false))
+            .entry(MenuItem::new("Clone...").enabled(false)),
+    );
+
+    // ── WINDOW ──────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Window")
+            .entry(
+                Menu::new("Layouts")
+                    .entry(MenuItem::new("Toggle Left Panel").action(move || {
+                        workbench_command.send(TogglePanelLeftVisual);
+                    }))
+                    .entry(MenuItem::new("Toggle Right Panel").action(move || {
+                        workbench_command.send(TogglePanelRightVisual);
+                    }))
+                    .entry(MenuItem::new("Toggle Bottom Panel").action(move || {
+                        workbench_command.send(TogglePanelBottomVisual);
+                    })),
+            )
+            .entry(MenuItem::new("Next Editor Tab").action(move || {
+                workbench_command.send(NextEditorTab);
+            }))
+            .entry(MenuItem::new("Previous Editor Tab").action(move || {
+                workbench_command.send(PreviousEditorTab);
+            }))
+            .separator()
+            .entry(MenuItem::new("Next Window Tab").action(move || {
+                workbench_command.send(NextWindowTab);
+            }))
+            .entry(MenuItem::new("Previous Window Tab").action(move || {
+                workbench_command.send(PreviousWindowTab);
+            }))
+            .separator()
+            .entry(MenuItem::new("New Window").action(move || {
+                workbench_command.send(NewWindow);
+            })),
+    );
+
+    // ── HELP ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Help")
+            .entry(MenuItem::new("Find Action...").action(move || {
+                workbench_command.send(PaletteCommand);
+            }))
+            .separator()
+            .entry(MenuItem::new("Keyboard Shortcuts").action(move || {
+                workbench_command.send(OpenKeyboardShortcuts);
+            }))
+            .entry(MenuItem::new("Open Logs Directory").action(move || {
+                workbench_command.send(OpenLogsDirectory);
+            }))
+            .entry(MenuItem::new("Check for Updates...").action(move || {
+                workbench_command.send(RestartToUpdate);
+            }))
+            .separator()
+            .entry(MenuItem::new("About Sparrow").action(move || {
+                workbench_command.send(ShowAbout);
+            })),
+    );
+
+    menu
 }
+
 fn tab_secondary_click(
     internal_command: Listener<InternalCommand>,
     editor_tab_id: EditorTabId,
