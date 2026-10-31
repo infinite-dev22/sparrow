@@ -14,6 +14,7 @@ use floem::{
 use sparrow_core::meta;
 use sparrow_rpc::proxy::ProxyStatus;
 
+use crate::dart::FlutterHotReloadData;
 use crate::{
     app::{clickable_icon, not_clickable_icon, tooltip_label, window_menu},
     command::{SparrowCommand, SparrowWorkbenchCommand, WindowCommand},
@@ -51,7 +52,7 @@ fn left(
                     .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
             },
         ))
-            .style(move |s| s.margin_horiz(10.0).apply_if(is_macos, |s| s.hide())),
+        .style(move |s| s.margin_horiz(10.0).apply_if(is_macos, |s| s.hide())),
         not_clickable_icon(
             || SparrowIcons::MENU,
             || false,
@@ -59,12 +60,12 @@ fn left(
             || "Menu",
             config,
         )
-            .popout_menu(move || window_menu(sparrow_command, workbench_command))
-            .style(move |s| {
-                s.margin_left(4.0)
-                    .margin_right(6.0)
-                    .apply_if(is_macos, |s| s.hide())
-            }),
+        .popout_menu(move || window_menu(sparrow_command, workbench_command))
+        .style(move |s| {
+            s.margin_left(4.0)
+                .margin_right(6.0)
+                .apply_if(is_macos, |s| s.hide())
+        }),
         tooltip_label(
             config,
             container(
@@ -87,72 +88,72 @@ fn left(
             ),
             || "Connect to Remote",
         )
-            .popout_menu(move || {
-                #[allow(unused_mut)]
-                let mut menu = Menu::new("").entry(
-                    MenuItem::new("Connect to SSH Host").action(move || {
-                        workbench_command.send(SparrowWorkbenchCommand::ConnectSshHost);
-                    }),
-                );
-                if !is_local
-                    && proxy_status.get().is_some_and(|p| {
+        .popout_menu(move || {
+            #[allow(unused_mut)]
+            let mut menu = Menu::new("").entry(
+                MenuItem::new("Connect to SSH Host").action(move || {
+                    workbench_command.send(SparrowWorkbenchCommand::ConnectSshHost);
+                }),
+            );
+            if !is_local
+                && proxy_status.get().is_some_and(|p| {
                     matches!(p, ProxyStatus::Connecting | ProxyStatus::Connected)
                 })
-                {
-                    menu = menu.entry(MenuItem::new("Disconnect remote").action(
-                        move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::DisconnectRemote);
-                        },
-                    ));
-                }
-                #[cfg(windows)]
-                {
-                    menu = menu.entry(MenuItem::new("Connect to WSL Host").action(
-                        move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::ConnectWslHost);
-                        },
-                    ));
-                }
-                menu
-            })
-            .style(move |s| {
-                let config = config.get();
-                let color = if is_local {
-                    Color::TRANSPARENT
-                } else {
-                    match proxy_status.get() {
-                        Some(ProxyStatus::Connected) => {
-                            config.color(SparrowColor::SPARROW_REMOTE_CONNECTED)
-                        }
-                        Some(ProxyStatus::Connecting) => {
-                            config.color(SparrowColor::SPARROW_REMOTE_CONNECTING)
-                        }
-                        Some(ProxyStatus::Disconnected) => {
-                            config.color(SparrowColor::SPARROW_REMOTE_DISCONNECTED)
-                        }
-                        None => Color::TRANSPARENT,
+            {
+                menu = menu.entry(MenuItem::new("Disconnect remote").action(
+                    move || {
+                        workbench_command
+                            .send(SparrowWorkbenchCommand::DisconnectRemote);
+                    },
+                ));
+            }
+            #[cfg(windows)]
+            {
+                menu = menu.entry(MenuItem::new("Connect to WSL Host").action(
+                    move || {
+                        workbench_command
+                            .send(SparrowWorkbenchCommand::ConnectWslHost);
+                    },
+                ));
+            }
+            menu
+        })
+        .style(move |s| {
+            let config = config.get();
+            let color = if is_local {
+                Color::TRANSPARENT
+            } else {
+                match proxy_status.get() {
+                    Some(ProxyStatus::Connected) => {
+                        config.color(SparrowColor::SPARROW_REMOTE_CONNECTED)
                     }
-                };
-                s.height_pct(100.0)
-                    .padding_horiz(10.0)
-                    .items_center()
-                    .background(color)
-                    .hover(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
-                    .active(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
-                        )
-                    })
-            }),
+                    Some(ProxyStatus::Connecting) => {
+                        config.color(SparrowColor::SPARROW_REMOTE_CONNECTING)
+                    }
+                    Some(ProxyStatus::Disconnected) => {
+                        config.color(SparrowColor::SPARROW_REMOTE_DISCONNECTED)
+                    }
+                    None => Color::TRANSPARENT,
+                }
+            };
+            s.height_pct(100.0)
+                .padding_horiz(10.0)
+                .items_center()
+                .background(color)
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer).background(
+                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
+                .active(|s| {
+                    s.cursor(CursorStyle::Pointer).background(
+                        config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
+                    )
+                })
+        }),
     ))
-        .style(move |s| s.height_pct(100.0).items_center())
-        .debug_name("Left Side of Top Bar")
+    .style(move |s| s.height_pct(100.0).items_center())
+    .debug_name("Left Side of Top Bar")
 }
 
 fn middle(
@@ -182,7 +183,7 @@ fn middle(
             || "Jump Backward",
             config,
         )
-            .style(move |s| s.margin_horiz(6.0))
+        .style(move |s| s.margin_horiz(6.0))
     };
     let jump_forward = move || {
         clickable_icon(
@@ -195,7 +196,7 @@ fn middle(
             || "Jump Forward",
             config,
         )
-            .style(move |s| s.margin_right(6.0))
+        .style(move |s| s.margin_right(6.0))
     };
 
     let open_folder = move || {
@@ -206,16 +207,16 @@ fn middle(
             || "Open Folder / Recent Workspace",
             config,
         )
-            .popout_menu(move || {
-                Menu::new("")
-                    .entry(MenuItem::new("Open Folder").action(move || {
-                        workbench_command.send(SparrowWorkbenchCommand::OpenFolder);
-                    }))
-                    .entry(MenuItem::new("Open Recent Workspace").action(move || {
-                        workbench_command
-                            .send(SparrowWorkbenchCommand::PaletteWorkspace);
-                    }))
-            })
+        .popout_menu(move || {
+            Menu::new("")
+                .entry(MenuItem::new("Open Folder").action(move || {
+                    workbench_command.send(SparrowWorkbenchCommand::OpenFolder);
+                }))
+                .entry(MenuItem::new("Open Recent Workspace").action(move || {
+                    workbench_command
+                        .send(SparrowWorkbenchCommand::PaletteWorkspace);
+                }))
+        })
     };
 
     // Islands style project widget: coloured initial + name + dropdown.
@@ -228,17 +229,17 @@ fn middle(
                 .map(|c| c.to_uppercase().to_string())
                 .unwrap_or_else(|| "S".to_string())
         })
-            .style(|s| s.font_size(10.0).font_bold().selectable(false)),
+        .style(|s| s.font_size(10.0).font_bold().selectable(false)),
     )
-        .style(|s| {
-            s.size(18.0, 18.0)
-                .items_center()
-                .justify_center()
-                .border_radius(5.0)
-                .margin_right(7.0)
-                .color(Color::WHITE)
-                .background(Color::from_rgba8(0x35, 0x74, 0xF0, 0xFF))
-        });
+    .style(|s| {
+        s.size(18.0, 18.0)
+            .items_center()
+            .justify_center()
+            .border_radius(5.0)
+            .margin_right(7.0)
+            .color(Color::WHITE)
+            .background(Color::from_rgba8(0x35, 0x74, 0xF0, 0xFF))
+    });
     let project_chip = container(
         stack((
             project_avatar,
@@ -249,31 +250,31 @@ fn middle(
                     "Open Folder".to_string()
                 }
             })
-                .style(|s| s.selectable(false)),
+            .style(|s| s.selectable(false)),
             open_folder(),
         ))
-            .style(|s| s.items_center()),
+        .style(|s| s.items_center()),
     )
-        .on_event_stop(EventListener::PointerDown, |_| {})
-        .on_click_stop(move |_| {
-            if workspace.clone().path.is_some() {
-                workbench_command.send(SparrowWorkbenchCommand::PaletteHelpAndFile);
-            } else {
-                workbench_command.send(SparrowWorkbenchCommand::PaletteWorkspace);
-            }
-        })
-        // In `fn middle` in title.rs, update project_chip style:
-        .style(move |s| {
-            let config = config.get();
-            s.height(30.0)
-                .padding_horiz(12.0)
-                .items_center()
-                .border_radius(8.0) // Rounder
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer)
-                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
-        });
+    .on_event_stop(EventListener::PointerDown, |_| {})
+    .on_click_stop(move |_| {
+        if workspace.clone().path.is_some() {
+            workbench_command.send(SparrowWorkbenchCommand::PaletteHelpAndFile);
+        } else {
+            workbench_command.send(SparrowWorkbenchCommand::PaletteWorkspace);
+        }
+    })
+    // In `fn middle` in title.rs, update project_chip style:
+    .style(move |s| {
+        let config = config.get();
+        s.height(30.0)
+            .padding_horiz(12.0)
+            .items_center()
+            .border_radius(8.0) // Rounder
+            .hover(|s| {
+                s.cursor(CursorStyle::Pointer)
+                    .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+            })
+    });
 
     // Android Studio style VCS widget: branch icon + branch name.
     let branch_chip = stack((
@@ -294,21 +295,21 @@ fn middle(
             },
         ),
     ))
-        .on_click_stop(move |_| {
-            workbench_command.send(SparrowWorkbenchCommand::PaletteSCMReferences);
-        })
-        // In `fn middle` in title.rs, update project_chip style:
-        .style(move |s| {
-            let config = config.get();
-            s.height(30.0)
-                .padding_horiz(12.0)
-                .items_center()
-                .border_radius(8.0) // Rounder
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer)
-                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
-        });
+    .on_click_stop(move |_| {
+        workbench_command.send(SparrowWorkbenchCommand::PaletteSCMReferences);
+    })
+    // In `fn middle` in title.rs, update project_chip style:
+    .style(move |s| {
+        let config = config.get();
+        s.height(30.0)
+            .padding_horiz(12.0)
+            .items_center()
+            .border_radius(8.0) // Rounder
+            .hover(|s| {
+                s.cursor(CursorStyle::Pointer)
+                    .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+            })
+    });
 
     stack((
         project_chip,
@@ -318,13 +319,13 @@ fn middle(
         drag_window_area(empty())
             .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0f32)),
     ))
-        .style(|s| {
-            s.flex_basis(0)
-                .flex_grow(1.0f32)
-                .height_pct(100.0)
-                .items_center()
-        })
-        .debug_name("Middle of Top Bar")
+    .style(|s| {
+        s.flex_basis(0)
+            .flex_grow(1.0f32)
+            .height_pct(100.0)
+            .items_center()
+    })
+    .debug_name("Middle of Top Bar")
 }
 
 fn right(
@@ -335,6 +336,7 @@ fn right(
     num_window_tabs: Memo<usize>,
     window_maximized: RwSignal<bool>,
     config: ReadSignal<Arc<SparrowConfig>>,
+    hot_reload: FlutterHotReloadData,
 ) -> impl View {
     let latest_version = create_memo(move |_| {
         let latest_release = latest_release.get();
@@ -362,20 +364,20 @@ fn right(
                     .color(config.color(SparrowColor::SPARROW_RUN_ICON))
             },
         ))
-            .on_click_stop(move |_| {
-                workbench_command.send(SparrowWorkbenchCommand::PaletteRunAndDebug);
-            })
-            .style(move |s| {
-                let config = config.get();
-                s.padding(4.0)
-                    .margin_horiz(6.0)
-                    .border_radius(6.0)
-                    .hover(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
-            }),
+        .on_click_stop(move |_| {
+            workbench_command.send(SparrowWorkbenchCommand::PaletteRunAndDebug);
+        })
+        .style(move |s| {
+            let config = config.get();
+            s.padding(4.0)
+                .margin_horiz(6.0)
+                .border_radius(6.0)
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer).background(
+                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
+        }),
         || "Run and Debug",
     );
 
@@ -390,21 +392,21 @@ fn right(
                     .color(config.color(SparrowColor::SPARROW_RUN_ICON))
             },
         ))
-            .on_click_stop(move |_| {
-                workbench_command.send(SparrowWorkbenchCommand::PaletteRunAndDebug);
+        .on_click_stop(move |_| {
+            workbench_command.send(SparrowWorkbenchCommand::PaletteRunAndDebug);
+        })
+        .style(move |s| {
+            let config = config.get();
+            s.padding(4.0).border_radius(6.0).hover(|s| {
+                s.cursor(CursorStyle::Pointer)
+                    .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
             })
-            .style(move |s| {
-                let config = config.get();
-                s.padding(4.0).border_radius(6.0).hover(|s| {
-                    s.cursor(CursorStyle::Pointer).background(
-                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-            }),
+        }),
         || "Debug",
     );
 
     stack((
+        device_selector(hot_reload.clone(), config),
         run_button,
         debug_button,
         clickable_icon(
@@ -425,51 +427,51 @@ fn right(
                 || "Settings",
                 config,
             )
-                .popout_menu(move || {
-                    Menu::new("")
-                        .entry(MenuItem::new("Command Palette").action(move || {
+            .popout_menu(move || {
+                Menu::new("")
+                    .entry(MenuItem::new("Command Palette").action(move || {
+                        workbench_command
+                            .send(SparrowWorkbenchCommand::PaletteCommand)
+                    }))
+                    .separator()
+                    .entry(MenuItem::new("Open Settings").action(move || {
+                        workbench_command.send(SparrowWorkbenchCommand::OpenSettings)
+                    }))
+                    .entry(MenuItem::new("Open Keyboard Shortcuts").action(
+                        move || {
                             workbench_command
-                                .send(SparrowWorkbenchCommand::PaletteCommand)
-                        }))
-                        .separator()
-                        .entry(MenuItem::new("Open Settings").action(move || {
-                            workbench_command.send(SparrowWorkbenchCommand::OpenSettings)
-                        }))
-                        .entry(MenuItem::new("Open Keyboard Shortcuts").action(
-                            move || {
-                                workbench_command
-                                    .send(SparrowWorkbenchCommand::OpenKeyboardShortcuts)
-                            },
-                        ))
-                        .entry(MenuItem::new("Open Theme Color Settings").action(
-                            move || {
-                                workbench_command.send(
-                                    SparrowWorkbenchCommand::OpenThemeColorSettings,
-                                )
-                            },
-                        ))
-                        .separator()
-                        .entry(if let Some(v) = latest_version.get_untracked() {
-                            if update_in_progress.get_untracked() {
-                                MenuItem::new(format!("Update in progress ({v})"))
-                                    .enabled(false)
-                            } else {
-                                MenuItem::new(format!("Restart to update ({v})")).action(
-                                    move || {
-                                        workbench_command.send(
-                                            SparrowWorkbenchCommand::RestartToUpdate,
-                                        )
-                                    },
-                                )
-                            }
+                                .send(SparrowWorkbenchCommand::OpenKeyboardShortcuts)
+                        },
+                    ))
+                    .entry(MenuItem::new("Open Theme Color Settings").action(
+                        move || {
+                            workbench_command.send(
+                                SparrowWorkbenchCommand::OpenThemeColorSettings,
+                            )
+                        },
+                    ))
+                    .separator()
+                    .entry(if let Some(v) = latest_version.get_untracked() {
+                        if update_in_progress.get_untracked() {
+                            MenuItem::new(format!("Update in progress ({v})"))
+                                .enabled(false)
                         } else {
-                            MenuItem::new("No update available").enabled(false)
-                        })
-                        .separator()
-                        .entry(MenuItem::new("About Sparrow").action(move || {
-                            workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
-                        }))
-                }),
+                            MenuItem::new(format!("Restart to update ({v})")).action(
+                                move || {
+                                    workbench_command.send(
+                                        SparrowWorkbenchCommand::RestartToUpdate,
+                                    )
+                                },
+                            )
+                        }
+                    } else {
+                        MenuItem::new("No update available").enabled(false)
+                    })
+                    .separator()
+                    .entry(MenuItem::new("About Sparrow").action(move || {
+                        workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
+                    }))
+            }),
             container(label(|| "1".to_string()).style(move |s| {
                 let config = config.get();
                 s.font_size(10.0)
@@ -479,17 +481,17 @@ fn right(
                     .margin_top(10.0)
                     .background(config.color(SparrowColor::EDITOR_CARET))
             }))
-                .style(move |s| {
-                    let has_update = has_update();
-                    s.absolute()
-                        .size_pct(100.0, 100.0)
-                        .justify_end()
-                        .items_end()
-                        .pointer_events_none()
-                        .apply_if(!has_update, |s| s.hide())
-                }),
+            .style(move |s| {
+                let has_update = has_update();
+                s.absolute()
+                    .size_pct(100.0, 100.0)
+                    .justify_end()
+                    .items_end()
+                    .pointer_events_none()
+                    .apply_if(!has_update, |s| s.hide())
+            }),
         ))
-            .style(move |s| s.margin_horiz(6.0)),
+        .style(move |s| s.margin_horiz(6.0)),
         window_controls_view(
             window_command,
             true,
@@ -498,8 +500,8 @@ fn right(
             config,
         ),
     ))
-        .style(|s| s.items_center().height_pct(100.0))
-        .debug_name("Right of top bar")
+    .style(|s| s.items_center().height_pct(100.0))
+    .debug_name("Right of top bar")
 }
 
 pub fn title(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -540,22 +542,23 @@ pub fn title(window_tab_data: Rc<WindowTabData>) -> impl View {
             num_window_tabs,
             window_maximized,
             config,
+            window_tab_data.flutter_hot_reload.clone(),
         ),
     ))
-        .on_resize(move |rect| {
-            let height = rect.height();
-            if height != title_height.get_untracked() {
-                title_height.set(height);
-            }
-        })
-        .style(move |s| {
-            let config = config.get();
-            s.width_pct(100.0)
-                .height(40.0)
-                .items_center()
-                .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
-        })
-        .debug_name("Title / Top Bar")
+    .on_resize(move |rect| {
+        let height = rect.height();
+        if height != title_height.get_untracked() {
+            title_height.set(height);
+        }
+    })
+    .style(move |s| {
+        let config = config.get();
+        s.width_pct(100.0)
+            .height(40.0)
+            .items_center()
+            .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
+    })
+    .debug_name("Title / Top Bar")
 }
 
 pub fn window_controls_view(
@@ -576,7 +579,7 @@ pub fn window_controls_view(
             || "Minimize",
             config,
         )
-            .style(|s| s.margin_right(16.0).margin_left(10.0)),
+        .style(|s| s.margin_right(16.0).margin_left(10.0)),
         clickable_icon(
             move || {
                 if window_maximized.get() {
@@ -595,7 +598,7 @@ pub fn window_controls_view(
             || "Maximize",
             config,
         )
-            .style(|s| s.margin_right(16.0)),
+        .style(|s| s.margin_right(16.0)),
         clickable_icon(
             || SparrowIcons::WINDOW_CLOSE,
             move || {
@@ -606,14 +609,112 @@ pub fn window_controls_view(
             || "Close Window",
             config,
         )
-            .style(|s| s.margin_right(6.0)),
+        .style(|s| s.margin_right(6.0)),
     ))
-        .style(move |s| {
-            s.apply_if(
-                cfg!(target_os = "macos")
-                    || !config.get_untracked().core.custom_titlebar
-                    || (is_title && num_window_tabs.get() > 1),
-                |s| s.hide(),
-            )
-        })
+    .style(move |s| {
+        s.apply_if(
+            cfg!(target_os = "macos")
+                || !config.get_untracked().core.custom_titlebar
+                || (is_title && num_window_tabs.get() > 1),
+            |s| s.hide(),
+        )
+    })
+}
+
+fn device_selector(
+    hot_reload: FlutterHotReloadData,
+    config: ReadSignal<Arc<SparrowConfig>>,
+) -> impl View {
+    let value = hot_reload.clone();
+    let is_flutter = move || value.is_flutter_project();
+
+    container(
+        stack((
+            label(move || {
+                if let Some(dev) = hot_reload.selected_device.get() {
+                    dev.name.clone()
+                } else {
+                    "Select Device".to_string()
+                }
+            })
+            .style({
+                let value = is_flutter.clone();
+                move |s| s.selectable(false).apply_if(!value(), |s| s.hide())
+            }),
+            svg(move || config.get().ui_svg(SparrowIcons::DROPDOWN_ARROW)).style({
+                let value = is_flutter.clone();
+                move |s| {
+                    let config = config.get();
+                    let size = config.ui.icon_size() as f32;
+                    s.size(size, size)
+                        .margin_left(4.0)
+                        .color(config.color(SparrowColor::SPARROW_ICON_INACTIVE))
+                        .apply_if(!value(), |s| s.hide())
+                }
+            }),
+        ))
+        .style(|s| s.items_center()),
+    )
+    .popout_menu({
+        let hot_reload = hot_reload.clone();
+        move || {
+            if !hot_reload.is_flutter_project() {
+                return Menu::new("");
+            }
+
+            // Trigger a background refresh every time the menu opens
+            hot_reload.fetch_devices();
+
+            let mut menu = Menu::new("");
+            if hot_reload.is_fetching_devices.get_untracked() {
+                menu = menu
+                    .entry(MenuItem::new("Refreshing devices...").enabled(false));
+            } else {
+                let devices = hot_reload.devices.get_untracked();
+                if devices.is_empty() {
+                    menu = menu
+                        .entry(MenuItem::new("No devices connected").enabled(false));
+                } else {
+                    for dev in devices {
+                        let is_selected = hot_reload
+                            .selected_device
+                            .get_untracked()
+                            .map(|d| d.id == dev.id)
+                            .unwrap_or(false);
+                        let hot_reload_clone = hot_reload.clone();
+
+                        // Add a checkmark to the active device like Android Studio
+                        let label = if is_selected {
+                            format!("✓ {} ({})", dev.name, dev.id)
+                        } else {
+                            format!("   {} ({})", dev.name, dev.id)
+                        };
+
+                        menu = menu.entry(MenuItem::new(label).action(move || {
+                            hot_reload_clone.selected_device.set(Some(dev.clone()));
+                        }));
+                    }
+                }
+            }
+            menu
+        }
+    })
+    .style({
+        let value = is_flutter.clone();
+        move |s| {
+            let config = config.get();
+            s.height(28.0)
+                .padding_horiz(10.0)
+                .margin_right(4.0)
+                .items_center()
+                .border_radius(6.0)
+                .apply_if(!value(), |s| s.hide())
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer).background(
+                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
+        }
+    })
+    .debug_name("Flutter Device Selector")
 }
