@@ -51,7 +51,7 @@ use sparrow_rpc::{
 };
 use tracing::{Level, debug, error, event};
 
-use crate::dart::{DartLspService, FlutterHotReloadData, FlutterInspectorData};
+use crate::dart::{DartLspService, FlutterHotReloadData, FlutterInspectorData, SignatureHelpData};
 use crate::outline::OutlineData;
 use crate::widget_tree::WidgetTreeData;
 use crate::{
@@ -144,6 +144,7 @@ pub struct CommonData {
     pub register: RwSignal<Register>,
     pub find: Find,
     pub dart_lsp: DartLspService,
+    pub signature_help: RwSignal<SignatureHelpData>,
     pub workbench_size: RwSignal<Size>,
     pub window_origin: RwSignal<Point>,
     pub internal_command: Listener<InternalCommand>,
@@ -386,6 +387,8 @@ impl WindowTabData {
             _ => DartLspService::spawn_unavailable(),
         };
 
+        let signature_help = cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
+
         let common = Rc::new(CommonData {
             workspace: workspace.clone(),
             scope: cx,
@@ -395,6 +398,7 @@ impl WindowTabData {
             inline_completion,
             hover,
             dart_lsp: dart_lsp.clone(),
+            signature_help,
             register,
             find,
             internal_command,
@@ -2825,6 +2829,51 @@ impl WindowTabData {
             origin.x = tab_size.width - hover_size.width - 1.0;
         }
         if origin.x <= 0.0 {
+            origin.x = 0.0;
+        }
+
+        Some(origin)
+    }
+
+    /// Screen position for the signature-help popup: just below the
+    /// cursor's current line.
+    pub fn signature_help_origin(&self) -> Option<floem::peniko::kurbo::Point> {
+        use floem::peniko::kurbo::Vec2;
+        use sparrow_core::cursor::CursorAffinity;
+
+        let sh = self.common.signature_help.get_untracked();
+        if !sh.is_active() {
+            return None;
+        }
+        let editor_data = self.main_split.active_editor.get_untracked()?;
+        if Some(editor_data.id()) != sh.editor_id {
+            return None;
+        }
+        let (window_origin, viewport, editor) = (
+            editor_data.window_origin(),
+            editor_data.viewport(),
+            &editor_data.editor,
+        );
+        let offset = editor_data
+            .cursor()
+            .with_untracked(|c| c.offset());
+        let (_, point_below) = editor.points_of_offset(offset, CursorAffinity::Forward);
+        let window_origin =
+            window_origin.get() - self.common.window_origin.get().to_vec2();
+        let viewport = viewport.get();
+        let tab_size = self.layout_rect.get().size();
+        let sh_size = sh.layout_rect.size();
+
+        let mut origin = window_origin
+            + Vec2::new(
+            point_below.x - viewport.x0,
+            point_below.y - viewport.y0 + 4.0,
+        );
+
+        if origin.x + sh_size.width + 8.0 > tab_size.width {
+            origin.x = (tab_size.width - sh_size.width - 8.0).max(0.0);
+        }
+        if origin.x < 0.0 {
             origin.x = 0.0;
         }
 

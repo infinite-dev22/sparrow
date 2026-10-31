@@ -551,6 +551,7 @@ impl DartLspService {
     where
         F: FnOnce(Option<CompletionItem>) + Send + 'static,
     {
+        let label = item.label.clone();
         self.request_async(
             "completionItem/resolve",
             serde_json::to_value(&item).unwrap_or(Value::Null),
@@ -561,7 +562,76 @@ impl DartLspService {
                     .and_then(|v| {
                         serde_json::from_value::<CompletionItem>(v.clone()).ok()
                     });
+                // Diagnostic: shows what the server actually sent for this item.
+                if let Some(ref r) = resolved {
+                    let text_edit_summary = match &r.text_edit {
+                        Some(lsp_types::CompletionTextEdit::Edit(e)) => format!(
+                            "Edit({:?} range={:?}..{:?})",
+                            e.new_text,
+                            (e.range.start.line, e.range.start.character),
+                            (e.range.end.line, e.range.end.character),
+                        ),
+                        Some(lsp_types::CompletionTextEdit::InsertAndReplace(ir)) => {
+                            format!("InsertAndReplace({:?})", ir.new_text)
+                        }
+                        None => "none".to_string(),
+                    };
+                    tracing::debug!(
+                        "dart resolve `{label}`: kind={:?} fmt={:?} insert_text={:?} text_edit={} additional_edits={}",
+                        r.kind,
+                        r.insert_text_format,
+                        r.insert_text.as_deref(),
+                        text_edit_summary,
+                        r.additional_text_edits.as_ref().map(|v| v.len()).unwrap_or(0),
+                    );
+                } else {
+                    tracing::debug!("dart resolve `{label}`: no result");
+                }
                 cb(resolved);
+            },
+        )
+    }
+
+    /// `textDocument/signatureHelp`. `trigger_kind`:
+    ///   1 = Invoked (Ctrl+Space, programmatic)
+    ///   2 = TriggerCharacter (typed `(` or `,`)
+    ///   3 = ContentChange (typed any other char while popup is visible)
+    pub fn signature_help<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        trigger_kind: u32,
+        trigger_character: Option<&str>,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Option<lsp_types::SignatureHelp>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        let mut context = json!({
+            "triggerKind": trigger_kind,
+            "isRetrigger": false,
+        });
+        if let Some(ch) = trigger_character {
+            context["triggerCharacter"] = json!(ch);
+        }
+        self.request_async(
+            "textDocument/signatureHelp",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "context": context
+            }),
+            move |resp| {
+                let help = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<lsp_types::SignatureHelp>(v.clone())
+                            .ok()
+                    });
+                cb(help);
             },
         )
     }
@@ -945,6 +1015,16 @@ fn initialize(
                     },
                     "hover": { "contentFormat": ["markdown", "plaintext"] },
                     "definition": { "linkSupport": true },
+                    "signatureHelp": {
+                        "contextSupport": true,
+                        "signatureInformation": {
+                            "documentationFormat": ["markdown", "plaintext"],
+                            "parameterInformation": {
+                                "labelOffsetSupport": true
+                            },
+                            "activeParameterSupport": true
+                        }
+                    },
                     "completion": {
                         "dynamicRegistration": false,
                         "contextSupport": true,

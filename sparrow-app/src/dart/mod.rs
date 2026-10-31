@@ -5,10 +5,12 @@ pub mod semantic_tokens;
 pub mod test_runner;
 pub mod vm_service;
 pub mod widget_lsp;
+pub mod signature_help;
 
 pub use hot_reload::{FlutterHotReloadData, FlutterRunState};
 pub use lsp::{DartLspService, Notification as DartNotification};
 pub use regex::{analyze_dart_file, ClassInfo, DartAnalysis};
+pub use signature_help::{SignatureHelpData, SignatureStatus};
 pub use vm_service::{
     FlutterInspectorData, InspectorNode, InspectorState,
     Notification as VmServiceNotification,

@@ -704,6 +704,7 @@ impl EditorData {
         });
 
         self.editor.cursor.set(cursor);
+        self.cancel_signature_help();
 
         if self.snippet.with_untracked(|s| s.is_some()) {
             self.snippet.update(|snippet| {
@@ -785,6 +786,7 @@ impl EditorData {
         match cmd {
             FocusCommand::ModalClose => {
                 self.cancel_completion();
+                self.cancel_signature_help();
             }
             FocusCommand::SplitVertical => {
                 if let Some(editor_tab_id) =
@@ -1864,6 +1866,15 @@ impl EditorData {
                 self.common
                     .dart_lsp
                     .resolve_completion(item.item, move |resolved| trigger(resolved));
+
+                // After completion, if the inserted text opened a call,
+                // signature help should show. Do it on a small delay so the
+                // cursor has landed in the new text.
+                let editor = self.clone();
+                floem::action::exec_after(
+                    std::time::Duration::from_millis(20),
+                    move |_| editor.update_signature_help(Some('(')),
+                );
                 return;
             }
 
@@ -1922,6 +1933,94 @@ impl EditorData {
         });
 
         self.doc().clear_completion_lens()
+    }
+
+    /// Ask the Dart LSP for signature help at the cursor.
+    ///
+    /// `trigger_char` is `Some("(")` or `Some(",")` when the user just
+    /// typed one of those, `None` when re-fetching because the cursor
+    /// moved (active-param update).
+    fn update_signature_help(&self, trigger_char: Option<char>) {
+        use floem::ext_event::create_ext_action;
+        use lsp_types::Position as LspPosition;
+
+        let doc = self.doc();
+        let path = match if doc.loaded() {
+            doc.content.with_untracked(|c| c.path().cloned())
+        } else {
+            None
+        } {
+            Some(p) => p,
+            None => return,
+        };
+        if !crate::dart::is_dart_path(&path) || !self.common.dart_lsp.is_available() {
+            return;
+        }
+
+        let offset = self.cursor().with_untracked(|c| c.offset());
+        let position: LspPosition = doc
+            .buffer
+            .with_untracked(|b| b.offset_to_position(offset));
+
+        let (trigger_kind, trigger_str) = match trigger_char {
+            Some(ch) => (2u32, Some(ch.to_string())),
+            None => (3u32, None),
+        };
+
+        let request_id = self
+            .common
+            .signature_help
+            .with_untracked(|s| s.request_id)
+            + 1;
+        self.common.signature_help.update(|s| {
+            s.request_id = request_id;
+            s.editor_id = Some(self.id());
+            s.offset = offset;
+            // Do not clear existing signatures until the response arrives
+            // — keeps the popup from flickering during re-fetch.
+        });
+
+        let editor = self.clone();
+        let common = self.common.clone();
+        let trigger = create_ext_action(
+            self.scope,
+            move |help: Option<lsp_types::SignatureHelp>| {
+                let current_offset = editor
+                    .cursor()
+                    .with_untracked(|c| c.offset());
+                // Reject stale responses if the cursor moved.
+                let req_offset =
+                    common.signature_help.with_untracked(|s| s.offset);
+                if current_offset < req_offset {
+                    return;
+                }
+                let mut data = common.signature_help.get_untracked();
+                data.receive(request_id, help);
+                common.signature_help.set(data);
+            },
+        );
+
+        self.common.dart_lsp.signature_help(
+            &path,
+            position.line,
+            position.character,
+            trigger_kind,
+            trigger_str.as_deref(),
+            move |help| trigger(help),
+        );
+    }
+
+    fn cancel_signature_help(&self) {
+        if !self.signature_help_active() {
+            return;
+        }
+        self.common.signature_help.update(|s| s.cancel());
+    }
+
+    fn signature_help_active(&self) -> bool {
+        self.common
+            .signature_help
+            .with_untracked(|s| s.is_active())
     }
 
     /// Update the displayed autocompletion box
@@ -2177,85 +2276,126 @@ impl EditorData {
     }
 
     fn apply_completion_item(&self, item: &CompletionItem) -> anyhow::Result<()> {
+        use lsp_types::{CompletionItemKind, InsertTextFormat};
+
         let doc = self.doc();
         let buffer = doc.buffer.get_untracked();
         let cursor = self.cursor().get_untracked();
-        // Get all the edits which would be applied in places other than right where the cursor is
-        let additional_edit: Vec<_> = item
-            .additional_text_edits
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .map(|edit| {
-                let selection = sparrow_core::selection::Selection::region(
-                    buffer.offset_of_position(&edit.range.start),
-                    buffer.offset_of_position(&edit.range.end),
-                );
-                (selection, edit.new_text.as_str())
-            })
-            .collect::<Vec<(sparrow_core::selection::Selection, &str)>>();
+
+        // Additional edits (auto-imports, additional locations).
+        let additional_edit_owned: Vec<(sparrow_core::selection::Selection, String)> =
+            item.additional_text_edits
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .map(|edit| {
+                    let selection = sparrow_core::selection::Selection::region(
+                        buffer.offset_of_position(&edit.range.start),
+                        buffer.offset_of_position(&edit.range.end),
+                    );
+                    (selection, edit.new_text.clone())
+                })
+                .collect();
+        let additional_edit: Vec<(sparrow_core::selection::Selection, &str)> =
+            additional_edit_owned
+                .iter()
+                .map(|(s, t)| (s.clone(), t.as_str()))
+                .collect();
 
         let text_format = item
             .insert_text_format
-            .unwrap_or(lsp_types::InsertTextFormat::PLAIN_TEXT);
-        if let Some(edit) = &item.text_edit {
-            match edit {
-                CompletionTextEdit::Edit(edit) => {
-                    let offset = cursor.offset();
-                    let start_offset = buffer.prev_code_boundary(offset);
-                    let end_offset = buffer.next_code_boundary(offset);
-                    let edit_start = buffer.offset_of_position(&edit.range.start);
-                    let edit_end = buffer.offset_of_position(&edit.range.end);
+            .unwrap_or(InsertTextFormat::PLAIN_TEXT);
 
-                    let selection = sparrow_core::selection::Selection::region(
-                        start_offset.min(edit_start),
-                        end_offset.max(edit_end),
-                    );
-                    match text_format {
-                        lsp_types::InsertTextFormat::PLAIN_TEXT => {
-                            self.do_edit(
-                                &selection,
-                                &[
-                                    &[(selection.clone(), edit.new_text.as_str())][..],
-                                    &additional_edit[..],
-                                ]
-                                .concat(),
-                            );
-                            return Ok(());
-                        }
-                        lsp_types::InsertTextFormat::SNIPPET => {
-                            self.completion_apply_snippet(
-                                &edit.new_text,
-                                &selection,
-                                additional_edit,
-                                start_offset,
-                            )?;
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
-                }
-                CompletionTextEdit::InsertAndReplace(_) => (),
+        // Extract raw text and replacement range from `textEdit` if present,
+        // otherwise from `insertText`, otherwise the label.
+        let (raw_insert, replace_start, replace_end) = match &item.text_edit {
+            Some(CompletionTextEdit::Edit(e)) => (
+                e.new_text.clone(),
+                buffer.offset_of_position(&e.range.start),
+                buffer.offset_of_position(&e.range.end),
+            ),
+            Some(CompletionTextEdit::InsertAndReplace(ir)) => (
+                ir.new_text.clone(),
+                buffer.offset_of_position(&ir.replace.start),
+                buffer.offset_of_position(&ir.replace.end),
+            ),
+            None => {
+                let offset = cursor.offset();
+                let s = buffer.prev_code_boundary(offset);
+                let e = buffer.next_code_boundary(offset);
+                let text = item
+                    .insert_text
+                    .clone()
+                    .unwrap_or_else(|| item.label.clone());
+                (text, s, e)
             }
+        };
+
+        let snippet_by_flag = text_format == InsertTextFormat::SNIPPET;
+        let snippet_by_content = Self::looks_like_snippet(&raw_insert);
+
+        // Defensive parens: for callable kinds whose insert text lacks a
+        // call expression, add `($0)` ourselves. This makes `Ro` → `Row()`
+        // work even when the server sends bare `Row` (older Dart SDKs, or
+        // when the server couldn't attach a snippet for some reason).
+        let is_callable = matches!(
+        item.kind,
+        Some(CompletionItemKind::CONSTRUCTOR)
+            | Some(CompletionItemKind::FUNCTION)
+            | Some(CompletionItemKind::METHOD)
+    );
+        let needs_parens = is_callable
+            && !raw_insert.contains('(')
+            && !raw_insert.contains(';')
+            && !raw_insert.contains('=')
+            && !raw_insert.contains('.');
+
+        let (final_text, is_snippet) = if needs_parens {
+            // `Row` → `Row($0)` (cursor inside).
+            (format!("{}($0)", raw_insert), true)
+        } else {
+            (raw_insert, snippet_by_flag || snippet_by_content)
+        };
+
+        let selection =
+            sparrow_core::selection::Selection::region(replace_start, replace_end);
+
+        if is_snippet {
+            self.completion_apply_snippet(
+                &final_text,
+                &selection,
+                additional_edit,
+                replace_start,
+            )?;
+        } else {
+            self.do_edit(
+                &selection,
+                &[
+                    &[(selection.clone(), final_text.as_str())][..],
+                    &additional_edit[..],
+                ]
+                    .concat(),
+            );
         }
 
-        let offset = cursor.offset();
-        let start_offset = buffer.prev_code_boundary(offset);
-        let end_offset = buffer.next_code_boundary(offset);
-        let selection = Selection::region(start_offset, end_offset);
-
-        self.do_edit(
-            &selection,
-            &[
-                &[(
-                    selection.clone(),
-                    item.insert_text.as_deref().unwrap_or(item.label.as_str()),
-                )][..],
-                &additional_edit[..],
-            ]
-            .concat(),
-        );
         Ok(())
+    }
+
+    /// Heuristic: does `text` contain an LSP-style snippet placeholder
+    /// (`$0`, `$1`, `${1:…}`, etc.)?
+    fn looks_like_snippet(text: &str) -> bool {
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'$' {
+                let next = bytes[i + 1];
+                if next == b'{' || next.is_ascii_digit() {
+                    return true;
+                }
+            }
+            i += 1;
+        }
+        false
     }
 
     pub fn completion_apply_snippet(
@@ -3840,6 +3980,22 @@ impl KeyPressFocus for EditorData {
                 );
 
                 self.apply_deltas(&deltas);
+                // Signature help trigger
+                if let Some(ch) = c.chars().next() {
+                    match ch {
+                        '(' | ',' => {
+                            self.update_signature_help(Some(ch));
+                        }
+                        ')' | ';' | '}' => {
+                            self.cancel_signature_help();
+                        }
+                        _ if self.signature_help_active() => {
+                            // Update active-param highlight as user types
+                            self.update_signature_help(None);
+                        }
+                        _ => {}
+                    }
+                }
             } else if let Some(direction) = self.inline_find.get_untracked() {
                 self.inline_find(direction.clone(), c);
                 self.last_inline_find.set(Some((direction, c.to_string())));
