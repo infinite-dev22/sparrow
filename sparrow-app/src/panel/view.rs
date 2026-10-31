@@ -619,13 +619,13 @@ pub fn tool_window_stripe(
             let config = config.get();
             s.flex_col()
                 .items_center()
-                .width(34.0)
+                .width(36.0) // AS uses 36px
                 .height_pct(100.0)
                 .flex_shrink(0.0f32)
-                .padding_vert(4.0)
-                .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
-                .apply_if(is_left, |s| s.margin_right(-3.0))
-                .apply_if(!is_left, |s| s.margin_left(-3.0))
+                .padding_vert(6.0)
+                .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND)) // Blends with title bar
+                .apply_if(is_left, |s| s.margin_right(-1.0)) // Tighten gap
+                .apply_if(!is_left, |s| s.margin_left(-1.0))
         })
         .debug_name("Tool Window Stripe")
 }

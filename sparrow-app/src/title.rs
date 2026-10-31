@@ -262,12 +262,13 @@ fn middle(
                 workbench_command.send(SparrowWorkbenchCommand::PaletteWorkspace);
             }
         })
+        // In `fn middle` in title.rs, update project_chip style:
         .style(move |s| {
             let config = config.get();
-            s.height(28.0)
-                .padding_horiz(10.0)
+            s.height(30.0)
+                .padding_horiz(12.0)
                 .items_center()
-                .border_radius(6.0)
+                .border_radius(8.0) // Rounder
                 .hover(|s| {
                     s.cursor(CursorStyle::Pointer)
                         .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
@@ -296,14 +297,13 @@ fn middle(
         .on_click_stop(move |_| {
             workbench_command.send(SparrowWorkbenchCommand::PaletteSCMReferences);
         })
+        // In `fn middle` in title.rs, update project_chip style:
         .style(move |s| {
             let config = config.get();
-            s.height(28.0)
-                .padding_horiz(10.0)
-                .margin_left(4.0)
+            s.height(30.0)
+                .padding_horiz(12.0)
                 .items_center()
-                .border_radius(6.0)
-                .apply_if(branch().is_empty(), |s| s.hide())
+                .border_radius(8.0) // Rounder
                 .hover(|s| {
                     s.cursor(CursorStyle::Pointer)
                         .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
@@ -551,7 +551,7 @@ pub fn title(window_tab_data: Rc<WindowTabData>) -> impl View {
         .style(move |s| {
             let config = config.get();
             s.width_pct(100.0)
-                .height(34.0)
+                .height(40.0)
                 .items_center()
                 .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
         })

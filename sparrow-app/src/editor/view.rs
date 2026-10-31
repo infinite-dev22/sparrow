@@ -2144,7 +2144,8 @@ fn editor_content(
             editor_view(e_data.get_untracked(), debug_breakline, is_active).style(
                 move |s| {
                     s.absolute()
-                        .margin_left(1.0)
+                        .margin_left(6.0)
+                        .margin_top(4.0)
                         .min_size_full()
                         .cursor(CursorStyle::Text)
                 },

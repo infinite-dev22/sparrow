@@ -984,18 +984,20 @@ fn editor_tab_header(
             .on_resize(move |rect| {
                 layout_rect.set(rect);
             })
+            // Around line 3142 in app.rs
             .style(move |s| {
                 let config = config.get();
                 let active = editor_tab_active.get() == i.get();
                 let border = config.color(SparrowColor::SPARROW_TAB_ACTIVE_BORDER);
-                // Islands look: the active tab is a rounded pill with a thin
-                // blue outline, inactive tabs are plain text.
-                s.height(24.0)
+
+                // Islands look: the active tab is a rounded pill with a thin blue outline,
+                // inactive tabs are plain text.
+                s.height(26.0) // Slightly taller like AS
                     .margin_horiz(2.0)
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .border_radius(6.0)
+                    .border_radius(8.0) // More rounded than 6.0
                     .cursor(CursorStyle::Pointer)
                     .background(config.color(if active {
                         SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND
