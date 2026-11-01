@@ -32,16 +32,16 @@ use std::{
     io,
     net::TcpStream,
     sync::{
-        atomic::{AtomicBool, AtomicI64, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 use floem::reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sparrow_rpc::terminal::TermId;
 use tungstenite::{Message, WebSocket};
 
@@ -59,7 +59,6 @@ type NotifReceiver = std::sync::mpsc::Receiver<Notification>;
 pub struct VmServiceClient {
     tx: Sender<Command>,
     connected: Arc<AtomicBool>,
-    next_ui_id: Arc<AtomicI64>,
 }
 
 /// Events emitted from the connection thread to the UI.
@@ -91,7 +90,7 @@ pub struct InspectorNode {
 impl VmServiceClient {
     pub fn new() -> (Self, NotifReceiver) {
         let (tx, rx) = unbounded();
-        let (notif_tx, notif_rx) = std::sync::mpsc::channel();   // was: unbounded()
+        let (notif_tx, notif_rx) = std::sync::mpsc::channel(); // was: unbounded()
         let connected = Arc::new(AtomicBool::new(false));
 
         let worker = ConnectionWorker {
@@ -104,14 +103,7 @@ impl VmServiceClient {
             .spawn(move || worker.run())
             .expect("spawn DartVmService worker");
 
-        (
-            Self {
-                tx,
-                connected,
-                next_ui_id: Arc::new(AtomicI64::new(1_000_000)),
-            },
-            notif_rx,
-        )
+        (Self { tx, connected }, notif_rx)
     }
 
     /// Connect to a VM service URL (`http://127.0.0.1:PORT/TOKEN=/`).
@@ -202,7 +194,12 @@ impl ConnectionWorker {
             match socket.read() {
                 Ok(Message::Text(text)) => {
                     if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                        self.dispatch_message(v, &mut socket, &isolate_id, &mut last_refresh)?;
+                        self.dispatch_message(
+                            v,
+                            &mut socket,
+                            &isolate_id,
+                            &mut last_refresh,
+                        )?;
                     }
                 }
                 Ok(Message::Ping(_))
@@ -211,7 +208,7 @@ impl ConnectionWorker {
                 | Ok(Message::Frame(_)) => {}
                 Ok(Message::Close(_)) => return Ok(()),
                 Err(tungstenite::Error::Io(e))
-                if matches!(
+                    if matches!(
                         e.kind(),
                         io::ErrorKind::WouldBlock
                             | io::ErrorKind::TimedOut
@@ -228,8 +225,8 @@ impl ConnectionWorker {
     ) -> Result<(WebSocket<TcpStream>, String), String> {
         // Parse host:port ourselves so we can set socket timeouts before
         // wrapping in `tungstenite`.
-        let parsed = url::Url::parse(ws_url)
-            .map_err(|e| format!("bad ws url: {e}"))?;
+        let parsed =
+            url::Url::parse(ws_url).map_err(|e| format!("bad ws url: {e}"))?;
         let host = parsed
             .host_str()
             .ok_or_else(|| "ws url has no host".to_string())?;
@@ -251,7 +248,8 @@ impl ConnectionWorker {
             .map_err(|e| format!("ws handshake: {e}"))?;
 
         // 1. getVM
-        let isolate_id = self.send_blocking(&mut socket, 1, "getVM", json!({}))
+        let isolate_id = self
+            .send_blocking(&mut socket, 1, "getVM", json!({}))
             .and_then(|v| {
                 v.get("result")
                     .and_then(|r| r.get("isolates"))
@@ -317,16 +315,13 @@ impl ConnectionWorker {
                     if let Some(m) = v.get("method").and_then(|x| x.as_str()) {
                         let _ = self.notif_tx.send(Notification::Event {
                             method: m.to_string(),
-                            params: v
-                                .get("params")
-                                .cloned()
-                                .unwrap_or(Value::Null),
+                            params: v.get("params").cloned().unwrap_or(Value::Null),
                         });
                     }
                 }
                 Ok(_) => {}
                 Err(tungstenite::Error::Io(e))
-                if matches!(
+                    if matches!(
                         e.kind(),
                         io::ErrorKind::WouldBlock
                             | io::ErrorKind::TimedOut
@@ -378,10 +373,16 @@ impl ConnectionWorker {
 
         // Extension event?
         if let Some(method) = v.get("method").and_then(|x| x.as_str()) {
-            if method == "Flutter.Frame" && last_refresh.elapsed() >= Duration::from_millis(500) {
+            if method == "Flutter.Frame"
+                && last_refresh.elapsed() >= Duration::from_millis(500)
+            {
                 *last_refresh = Instant::now();
                 // Fire-and-forget refresh — response handled above.
-                self.send_widget_tree_request(socket, next_id_for_tree(), isolate_id)?;
+                self.send_widget_tree_request(
+                    socket,
+                    next_id_for_tree(),
+                    isolate_id,
+                )?;
             }
             let _ = self.notif_tx.send(Notification::Event {
                 method: method.to_string(),

@@ -233,6 +233,13 @@ impl FlutterHotReloadData {
         self.common.proxy.terminal_write(term_id, "R".to_string());
     }
 
+    pub fn restart_daemon(&self) {
+        // Force a refresh of the devices.
+        self.devices.set(Vec::new());
+        self.selected_device.set(None);
+        self.fetch_devices();
+    }
+
     /// Send `q` to the running `flutter run` — graceful shutdown.
     /// The terminal-exit effect will transition state back to Idle
     /// shortly after.

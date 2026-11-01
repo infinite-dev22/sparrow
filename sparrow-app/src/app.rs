@@ -12,59 +12,7 @@ use std::{
     },
 };
 
-use anyhow::{Context, Result, anyhow};
-use clap::Parser;
-use floem::{
-    IntoView, View,
-    action::show_context_menu,
-    event::{Event, EventListener, EventPropagation},
-    ext_event::{create_ext_action, create_signal_from_channel},
-    menu::{Menu, MenuItem},
-    peniko::{
-        Color,
-        kurbo::{Point, Rect, Size},
-    },
-    prelude::SignalTrack,
-    reactive::{
-        ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith,
-        create_effect, create_memo, create_rw_signal, provide_context, use_context,
-    },
-    style::{
-        AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Position,
-        Style,
-    },
-    taffy::{
-        Line,
-        style_helpers::{self, auto, fr},
-    },
-    text::{Style as FontStyle, Weight},
-    unit::PxPctAuto,
-    views::{
-        Decorators, VirtualVector, clip, container, drag_resize_window_area,
-        drag_window_area, dyn_stack,
-        editor::{core::register::Clipboard, text::SystemClipboard},
-        empty, label, rich_text,
-        scroll::{PropagatePointerWheel, VerticalScrollAsHorizontal, scroll},
-        stack, svg, tab, text, tooltip, virtual_stack,
-    },
-    window::{ResizeDirection, WindowConfig, WindowId},
-};
-use lsp_types::{CompletionItemKind, MessageType, ShowMessageParams};
-use notify::Watcher;
-use serde::{Deserialize, Serialize};
-use sparrow_core::{
-    command::{MoveCommand, EditCommand, FocusCommand},
-    directory::Directory,
-    meta,
-    syntax::{Syntax, highlight::reset_highlight_configs},
-};
-use sparrow_rpc::{
-    RpcMessage,
-    core::{CoreMessage, CoreNotification},
-    file::PathObject,
-};
-use tracing_subscriber::{filter::Targets, reload::Handle};
-use sparrow_core::command::MultiSelectionCommand;
+use crate::title::{branch_switcher, device_selector_overlay, project_switcher};
 use crate::{
     about, alert,
     code_action::CodeActionStatus,
@@ -114,6 +62,59 @@ use crate::{
     window_tab::{Focus, WindowTabData},
     workspace::{SparrowWorkspace, SparrowWorkspaceType},
 };
+use anyhow::{Context, Result, anyhow};
+use clap::Parser;
+use floem::{
+    IntoView, View,
+    action::show_context_menu,
+    event::{Event, EventListener, EventPropagation},
+    ext_event::{create_ext_action, create_signal_from_channel},
+    menu::{Menu, MenuItem},
+    peniko::{
+        Color,
+        kurbo::{Point, Rect, Size},
+    },
+    prelude::SignalTrack,
+    reactive::{
+        ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith,
+        create_effect, create_memo, create_rw_signal, provide_context, use_context,
+    },
+    style::{
+        AlignItems, CursorStyle, Display, FlexDirection, JustifyContent, Position,
+        Style,
+    },
+    taffy::{
+        Line,
+        style_helpers::{self, auto, fr},
+    },
+    text::{Style as FontStyle, Weight},
+    unit::PxPctAuto,
+    views::{
+        Decorators, VirtualVector, clip, container, drag_resize_window_area,
+        drag_window_area, dyn_stack,
+        editor::{core::register::Clipboard, text::SystemClipboard},
+        empty, label, rich_text,
+        scroll::{PropagatePointerWheel, VerticalScrollAsHorizontal, scroll},
+        stack, svg, tab, text, tooltip, virtual_stack,
+    },
+    window::{ResizeDirection, WindowConfig, WindowId},
+};
+use lsp_types::{CompletionItemKind, MessageType, ShowMessageParams};
+use notify::Watcher;
+use serde::{Deserialize, Serialize};
+use sparrow_core::command::MultiSelectionCommand;
+use sparrow_core::{
+    command::{EditCommand, FocusCommand},
+    directory::Directory,
+    meta,
+    syntax::{Syntax, highlight::reset_highlight_configs},
+};
+use sparrow_rpc::{
+    RpcMessage,
+    core::{CoreMessage, CoreNotification},
+    file::PathObject,
+};
+use tracing_subscriber::{filter::Targets, reload::Handle};
 
 mod grammars;
 mod logging;
@@ -602,19 +603,19 @@ impl AppData {
                     },
                 ),
             ))
-                .debug_name("Drag Resize Areas")
-                .style(move |s| {
-                    s.absolute()
-                        .size_full()
-                        .apply_if(
-                            cfg!(target_os = "macos")
-                                || !config.get_untracked().core.custom_titlebar,
-                            |s| s.hide(),
-                        )
-                        .pointer_events_none()
-                }),
+            .debug_name("Drag Resize Areas")
+            .style(move |s| {
+                s.absolute()
+                    .size_full()
+                    .apply_if(
+                        cfg!(target_os = "macos")
+                            || !config.get_untracked().core.custom_titlebar,
+                        |s| s.hide(),
+                    )
+                    .pointer_events_none()
+            }),
         ))
-            .style(|s| s.flex_col().size_full());
+        .style(|s| s.flex_col().size_full());
         let view_id = view.id();
         app_view_id.set(view_id);
 
@@ -757,14 +758,14 @@ fn editor_tab_header(
                             .apply_if(
                                 !info.with(|info| info.is_pristine)
                                     && config.ui.tab_close_button
-                                    == TabCloseButton::Off,
+                                        == TabCloseButton::Off,
                                 |s| {
                                     s.color(config.color(SparrowColor::SPARROW_WARN))
                                 },
                             )
                     })
             })
-                .style(|s| s.padding(4.));
+            .style(|s| s.padding(4.));
 
             let tab_content = tooltip(
                 label(move || info.with(|info| info.name.clone())).style(move |s| {
@@ -775,7 +776,7 @@ fn editor_tab_header(
                             .unwrap_or(true),
                         |s| s.font_style(FontStyle::Italic),
                     )
-                        .selectable(false)
+                    .selectable(false)
                 }),
                 move || {
                     tooltip_tip(
@@ -811,13 +812,13 @@ fn editor_tab_header(
                 || "Close",
                 config,
             )
-                .on_event_stop(EventListener::PointerDown, |_| {})
-                .on_event_stop(EventListener::PointerEnter, move |_| {
-                    hovered.set(true);
-                })
-                .on_event_stop(EventListener::PointerLeave, move |_| {
-                    hovered.set(false);
-                });
+            .on_event_stop(EventListener::PointerDown, |_| {})
+            .on_event_stop(EventListener::PointerEnter, move |_| {
+                hovered.set(true);
+            })
+            .on_event_stop(EventListener::PointerLeave, move |_| {
+                hovered.set(false);
+            });
 
             stack((
                 tab_icon.style(move |s| {
@@ -837,16 +838,16 @@ fn editor_tab_header(
                             end: style_helpers::span(1),
                         })
                     })
-                        .color(config.get().color(
-                            if editor_tab_active.get() == i.get() {
-                                SparrowColor::SPARROW_TAB_ACTIVE_FOREGROUND
-                            } else {
-                                SparrowColor::SPARROW_TAB_INACTIVE_FOREGROUND
-                            },
-                        ))
-                        .apply_if(tab_close_button == TabCloseButton::Off, |s| {
-                            s.padding_right(4.)
-                        })
+                    .color(config.get().color(
+                        if editor_tab_active.get() == i.get() {
+                            SparrowColor::SPARROW_TAB_ACTIVE_FOREGROUND
+                        } else {
+                            SparrowColor::SPARROW_TAB_INACTIVE_FOREGROUND
+                        },
+                    ))
+                    .apply_if(tab_close_button == TabCloseButton::Off, |s| {
+                        s.padding_right(4.)
+                    })
                 }),
                 tab_close_button.style(move |s| {
                     let tab_close_button = config.get().ui.tab_close_button;
@@ -856,22 +857,22 @@ fn editor_tab_header(
                             end: style_helpers::span(1),
                         })
                     })
-                        .apply_if(tab_close_button == TabCloseButton::Off, |s| s.hide())
+                    .apply_if(tab_close_button == TabCloseButton::Off, |s| s.hide())
                 }),
             ))
-                .style(move |s| {
-                    s.items_center()
-                        .justify_center()
-                        .padding_horiz(10.)
-                        .gap(6.)
-                        .grid()
-                        .grid_template_columns(vec![auto(), fr(1_f32), auto()])
-                        .apply_if(
-                            config.get().ui.tab_separator_height
-                                == TabSeparatorHeight::Full,
-                            |s| s.height_full(),
-                        )
-                })
+            .style(move |s| {
+                s.items_center()
+                    .justify_center()
+                    .padding_horiz(10.)
+                    .gap(6.)
+                    .grid()
+                    .grid_template_columns(vec![auto(), fr(1_f32), auto()])
+                    .apply_if(
+                        config.get().ui.tab_separator_height
+                            == TabSeparatorHeight::Full,
+                        |s| s.height_full(),
+                    )
+            })
         };
 
         let confirmed = match local_child {
@@ -981,76 +982,78 @@ fn editor_tab_header(
                 })
                 .debug_name("Active Tab Indicator"),
         ))
-            .on_resize(move |rect| {
-                layout_rect.set(rect);
-            })
-            // Around line 3142 in app.rs
-            .style(move |s| {
-                let config = config.get();
-                let active = editor_tab_active.get() == i.get();
-                let border = config.color(SparrowColor::SPARROW_TAB_ACTIVE_BORDER);
+        .on_resize(move |rect| {
+            layout_rect.set(rect);
+        })
+        // Around line 3142 in app.rs
+        .style(move |s| {
+            let config = config.get();
+            let active = editor_tab_active.get() == i.get();
+            let border = config.color(SparrowColor::SPARROW_TAB_ACTIVE_BORDER);
 
-                // Islands look: the active tab is a rounded pill with a thin blue outline,
-                // inactive tabs are plain text.
-                s.height(26.0) // Slightly taller like AS
-                    .margin_horiz(2.0)
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .border_radius(8.0) // More rounded than 6.0
-                    .cursor(CursorStyle::Pointer)
-                    .background(config.color(if active {
-                        SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND
-                    } else {
-                        SparrowColor::SPARROW_TAB_INACTIVE_BACKGROUND
-                    }))
-                    .apply_if(active, |s| {
-                        s.border(1.0).border_color(if is_focused() {
-                            border
-                        } else {
-                            border.multiply_alpha(0.5)
-                        })
-                    })
-                    .hover(|s| {
-                        s.background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                    })
-            })
-            .debug_name("Tab and Active Indicator")
-            .on_event_stop(EventListener::DragOver, move |event| {
-                if dragging.with_untracked(|dragging| dragging.is_some()) {
-                    if let Event::PointerMove(pointer_event) = event {
-                        let new_left = pointer_event.pos.x
-                            < header_content_size.get_untracked().width / 2.0;
-                        if drag_over_left.get_untracked() != Some(new_left) {
-                            drag_over_left.set(Some(new_left));
-                        }
-                    }
-                }
-            })
-            .on_event(EventListener::Drop, move |event| {
-                if let Some((from_index, from_editor_tab_id)) = dragging.get_untracked()
-                {
-                    drag_over_left.set(None);
-                    if let Event::PointerUp(pointer_event) = event {
-                        let left = pointer_event.pos.x
-                            < header_content_size.get_untracked().width / 2.0;
-                        let index = i.get_untracked();
-                        let new_index = if left { index } else { index + 1 };
-                        main_split.move_editor_tab_child(
-                            from_editor_tab_id,
-                            editor_tab_id,
-                            from_index.get_untracked(),
-                            new_index,
-                        );
-                    }
-                    EventPropagation::Stop
+            // Islands look: the active tab is a rounded pill with a thin blue outline,
+            // inactive tabs are plain text.
+            s.height(26.0) // Slightly taller like AS
+                .margin_horiz(2.0)
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .border_radius(8.0) // More rounded than 6.0
+                .cursor(CursorStyle::Pointer)
+                .background(config.color(if active {
+                    SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND
                 } else {
-                    EventPropagation::Continue
+                    SparrowColor::SPARROW_TAB_INACTIVE_BACKGROUND
+                }))
+                .apply_if(active, |s| {
+                    s.border(1.0).border_color(if is_focused() {
+                        border
+                    } else {
+                        border.multiply_alpha(0.5)
+                    })
+                })
+                .hover(|s| {
+                    s.background(
+                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
+        })
+        .debug_name("Tab and Active Indicator")
+        .on_event_stop(EventListener::DragOver, move |event| {
+            if dragging.with_untracked(|dragging| dragging.is_some()) {
+                if let Event::PointerMove(pointer_event) = event {
+                    let new_left = pointer_event.pos.x
+                        < header_content_size.get_untracked().width / 2.0;
+                    if drag_over_left.get_untracked() != Some(new_left) {
+                        drag_over_left.set(Some(new_left));
+                    }
                 }
-            })
-            .on_event_stop(EventListener::DragLeave, move |_| {
+            }
+        })
+        .on_event(EventListener::Drop, move |event| {
+            if let Some((from_index, from_editor_tab_id)) = dragging.get_untracked()
+            {
                 drag_over_left.set(None);
-            })
+                if let Event::PointerUp(pointer_event) = event {
+                    let left = pointer_event.pos.x
+                        < header_content_size.get_untracked().width / 2.0;
+                    let index = i.get_untracked();
+                    let new_index = if left { index } else { index + 1 };
+                    main_split.move_editor_tab_child(
+                        from_editor_tab_id,
+                        editor_tab_id,
+                        from_index.get_untracked(),
+                        new_index,
+                    );
+                }
+                EventPropagation::Stop
+            } else {
+                EventPropagation::Continue
+            }
+        })
+        .on_event_stop(EventListener::DragLeave, move |_| {
+            drag_over_left.set(None);
+        })
     };
 
     let content_size = create_rw_signal(Size::ZERO);
@@ -1058,28 +1061,26 @@ fn editor_tab_header(
     stack((
         stack({
             let size = create_rw_signal(Size::ZERO);
-            (
-                clip(empty().style(move |s| {
-                    let config = config.get();
-                    s.absolute()
-                        .height_full()
-                        .width(size.get().width as f32)
-                        .background(config.color(SparrowColor::PANEL_BACKGROUND))
-                        .box_shadow_blur(3.0)
-                        .box_shadow_color(
-                            config.color(SparrowColor::SPARROW_DROPDOWN_SHADOW),
-                        )
-                }))
-                    .style(move |s| {
-                        let scroll_offset = scroll_offset.get();
-                        s.absolute()
-                            .width(size.get().width as f32 + 30.0)
-                            .height_full()
-                            .apply_if(scroll_offset.x0 == 0.0, |s| s.hide())
-                    }),
-            )
+            (clip(empty().style(move |s| {
+                let config = config.get();
+                s.absolute()
+                    .height_full()
+                    .width(size.get().width as f32)
+                    .background(config.color(SparrowColor::PANEL_BACKGROUND))
+                    .box_shadow_blur(3.0)
+                    .box_shadow_color(
+                        config.color(SparrowColor::SPARROW_DROPDOWN_SHADOW),
+                    )
+            }))
+            .style(move |s| {
+                let scroll_offset = scroll_offset.get();
+                s.absolute()
+                    .width(size.get().width as f32 + 30.0)
+                    .height_full()
+                    .apply_if(scroll_offset.x0 == 0.0, |s| s.hide())
+            }),)
         })
-            .style(|s| s.flex_shrink(0f32)),
+        .style(|s| s.flex_shrink(0f32)),
         container(
             scroll({
                 dyn_stack(items, key, view_fn)
@@ -1092,29 +1093,29 @@ fn editor_tab_header(
                     .debug_name("Horizontal Tab Stack")
                     .style(|s| s.height_full().items_center())
             })
-                .on_scroll(move |rect| {
-                    scroll_offset.set(rect);
-                })
-                .ensure_visible(move || {
-                    let active = editor_tab_active.get();
-                    editor_tab
-                        .with_untracked(|editor_tab| editor_tab.children[active].1)
-                        .get_untracked()
-                })
-                .scroll_style(|s| s.hide_bars(true))
-                .style(|s| {
-                    s.set(VerticalScrollAsHorizontal, true)
-                        .absolute()
-                        .size_full()
-                }),
-        )
-            .style(|s| {
-                s.height_full()
-                    .flex_grow(1.0f32)
-                    .flex_basis(0.)
-                    .min_width(10.)
+            .on_scroll(move |rect| {
+                scroll_offset.set(rect);
             })
-            .debug_name("Tab scroll"),
+            .ensure_visible(move || {
+                let active = editor_tab_active.get();
+                editor_tab
+                    .with_untracked(|editor_tab| editor_tab.children[active].1)
+                    .get_untracked()
+            })
+            .scroll_style(|s| s.hide_bars(true))
+            .style(|s| {
+                s.set(VerticalScrollAsHorizontal, true)
+                    .absolute()
+                    .size_full()
+            }),
+        )
+        .style(|s| {
+            s.height_full()
+                .flex_grow(1.0f32)
+                .flex_basis(0.)
+                .min_width(10.)
+        })
+        .debug_name("Tab scroll"),
         stack({
             let size = create_rw_signal(Size::ZERO);
             (
@@ -1132,64 +1133,62 @@ fn editor_tab_header(
                             )
                     })
                 })
-                    .style(move |s| {
-                        let content_size = content_size.get();
-                        let scroll_offset = scroll_offset.get();
-                        s.absolute()
-                            .margin_left(-30.0)
-                            .width(size.get().width as f32 + 30.0)
-                            .height_full()
-                            .apply_if(scroll_offset.x1 >= content_size.width, |s| {
-                                s.hide()
-                            })
-                    }),
-                stack((
-                    clickable_icon(
-                        || SparrowIcons::SPLIT_HORIZONTAL,
-                        move || {
-                            let editor_tab_id =
-                                editor_tab.with_untracked(|t| t.editor_tab_id);
-                            internal_command.send(InternalCommand::Split {
-                                direction: SplitDirection::Vertical,
-                                editor_tab_id,
-                            });
-                        },
-                        || false,
-                        || false,
-                        || "Split Horizontally",
-                        config,
-                    )
-                        .style(|s| s.margin_left(6.0)),
-                ))
-                    .on_resize(move |rect| {
-                        size.set(rect.size());
-                    })
-                    .style(|s| s.items_center().height_full()),
+                .style(move |s| {
+                    let content_size = content_size.get();
+                    let scroll_offset = scroll_offset.get();
+                    s.absolute()
+                        .margin_left(-30.0)
+                        .width(size.get().width as f32 + 30.0)
+                        .height_full()
+                        .apply_if(scroll_offset.x1 >= content_size.width, |s| {
+                            s.hide()
+                        })
+                }),
+                stack((clickable_icon(
+                    || SparrowIcons::SPLIT_HORIZONTAL,
+                    move || {
+                        let editor_tab_id =
+                            editor_tab.with_untracked(|t| t.editor_tab_id);
+                        internal_command.send(InternalCommand::Split {
+                            direction: SplitDirection::Vertical,
+                            editor_tab_id,
+                        });
+                    },
+                    || false,
+                    || false,
+                    || "Split Horizontally",
+                    config,
+                )
+                .style(|s| s.margin_left(6.0)),))
+                .on_resize(move |rect| {
+                    size.set(rect.size());
+                })
+                .style(|s| s.items_center().height_full()),
             )
         })
-            .debug_name("Split/Close Panel Buttons")
-            .style(move |s| {
-                let content_size = content_size.get();
-                let scroll_offset = scroll_offset.get();
-                s.height_full()
-                    .flex_shrink(0f32)
-                    .margin_left(PxPctAuto::Auto)
-                    .apply_if(scroll_offset.x1 < content_size.width, |s| {
-                        s.margin_left(0.)
-                    })
-            }),
-    ))
+        .debug_name("Split/Close Panel Buttons")
         .style(move |s| {
-            let config = config.get();
-            s.items_center()
-                .padding_horiz(4.0)
-                .max_width_full()
-                .border_bottom(1.0)
-                .border_color(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
-                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
-                .height(config.ui.header_height() as i32)
-        })
-        .debug_name("Editor Tab Header")
+            let content_size = content_size.get();
+            let scroll_offset = scroll_offset.get();
+            s.height_full()
+                .flex_shrink(0f32)
+                .margin_left(PxPctAuto::Auto)
+                .apply_if(scroll_offset.x1 < content_size.width, |s| {
+                    s.margin_left(0.)
+                })
+        }),
+    ))
+    .style(move |s| {
+        let config = config.get();
+        s.items_center()
+            .padding_horiz(4.0)
+            .max_width_full()
+            .border_bottom(1.0)
+            .border_color(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
+            .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+            .height(config.ui.header_height() as i32)
+    })
+    .debug_name("Editor Tab Header")
 }
 
 fn editor_tab_content(
@@ -1250,7 +1249,7 @@ fn editor_tab_content(
                         is_active,
                         editor_data,
                     )
-                        .into_any()
+                    .into_any()
                 } else {
                     text("empty editor").into_any()
                 }
@@ -1315,27 +1314,27 @@ fn editor_tab_content(
                                 move |track| {
                                     is_active(track)
                                         && if track {
-                                        !focus_right.get()
-                                    } else {
-                                        !focus_right.get_untracked()
-                                    }
+                                            !focus_right.get()
+                                        } else {
+                                            !focus_right.get_untracked()
+                                        }
                                 },
                                 left_editor,
                             )
-                                .debug_name("Left Editor"),
+                            .debug_name("Left Editor"),
                         )
-                            .on_event_cont(EventListener::PointerDown, move |_| {
-                                focus_right.set(false);
-                            })
-                            .style(move |s| {
-                                s.height_full()
-                                    .flex_grow(1.0f32)
-                                    .flex_basis(0.0)
-                                    .border_right(1.0)
-                                    .border_color(
-                                        config.get().color(SparrowColor::SPARROW_BORDER),
-                                    )
-                            }),
+                        .on_event_cont(EventListener::PointerDown, move |_| {
+                            focus_right.set(false);
+                        })
+                        .style(move |s| {
+                            s.height_full()
+                                .flex_grow(1.0f32)
+                                .flex_basis(0.0)
+                                .border_right(1.0)
+                                .border_color(
+                                    config.get().color(SparrowColor::SPARROW_BORDER),
+                                )
+                        }),
                         container(
                             editor_container_view(
                                 window_tab_data.clone(),
@@ -1343,31 +1342,31 @@ fn editor_tab_content(
                                 move |track| {
                                     is_active(track)
                                         && if track {
-                                        focus_right.get()
-                                    } else {
-                                        focus_right.get_untracked()
-                                    }
+                                            focus_right.get()
+                                        } else {
+                                            focus_right.get_untracked()
+                                        }
                                 },
                                 right_editor,
                             )
-                                .debug_name("Right Editor"),
+                            .debug_name("Right Editor"),
                         )
-                            .on_event_cont(EventListener::PointerDown, move |_| {
-                                focus_right.set(true);
-                            })
-                            .style(|s| {
-                                s.height_full().flex_grow(1.0f32).flex_basis(0.0)
-                            }),
+                        .on_event_cont(EventListener::PointerDown, move |_| {
+                            focus_right.set(true);
+                        })
+                        .style(|s| {
+                            s.height_full().flex_grow(1.0f32).flex_basis(0.0)
+                        }),
                         diff_show_more_section_view(
                             &diff_editor_data.left,
                             &diff_editor_data.right,
                         ),
                     ))
-                        .style(|s: Style| s.size_full())
-                        .on_cleanup(move || {
-                            diff_editor_scope.dispose();
-                        })
-                        .into_any()
+                    .style(|s: Style| s.size_full())
+                    .on_cleanup(move || {
+                        diff_editor_scope.dispose();
+                    })
+                    .into_any()
                 } else {
                     text("empty diff editor").into_any()
                 }
@@ -1581,28 +1580,28 @@ fn editor_tab(
                         })
                 }),
         ))
-            .debug_name("Editor Content and Drag Over")
-            .style(|s| s.size_full()),
+        .debug_name("Editor Content and Drag Over")
+        .style(|s| s.size_full()),
     ))
-        .on_event_cont(EventListener::PointerDown, move |_| {
-            if focus.get_untracked() != Focus::Workbench {
-                focus.set(Focus::Workbench);
-            }
-            let editor_tab_id = editor_tab.with_untracked(|t| t.editor_tab_id);
-            internal_command.send(InternalCommand::FocusEditorTab { editor_tab_id });
-        })
-        .on_cleanup(move || {
-            if editor_tabs
-                .with_untracked(|editor_tabs| editor_tabs.contains_key(&editor_tab_id))
-            {
-                return;
-            }
-            editor_tab
-                .with_untracked(|editor_tab| editor_tab.scope)
-                .dispose();
-        })
-        .style(|s| s.flex_col().size_full())
-        .debug_name("Editor Tab (Content + Header)")
+    .on_event_cont(EventListener::PointerDown, move |_| {
+        if focus.get_untracked() != Focus::Workbench {
+            focus.set(Focus::Workbench);
+        }
+        let editor_tab_id = editor_tab.with_untracked(|t| t.editor_tab_id);
+        internal_command.send(InternalCommand::FocusEditorTab { editor_tab_id });
+    })
+    .on_cleanup(move || {
+        if editor_tabs
+            .with_untracked(|editor_tabs| editor_tabs.contains_key(&editor_tab_id))
+        {
+            return;
+        }
+        editor_tab
+            .with_untracked(|editor_tab| editor_tab.scope)
+            .dispose();
+    })
+    .style(|s| s.flex_col().size_full())
+    .debug_name("Editor Tab (Content + Header)")
 }
 
 fn split_resize_border(
@@ -1680,118 +1679,118 @@ fn split_resize_border(
                     drag_start.set(Some(pointer_event.pos));
                 }
             })
-                .on_event_stop(EventListener::PointerUp, move |_| {
-                    drag_start.set(None);
-                })
-                .on_event_stop(EventListener::PointerMove, move |event| {
-                    if let Event::PointerMove(pointer_event) = event {
-                        if let Some(drag_start_point) = drag_start.get_untracked() {
-                            let rects = split.with_untracked(|split| {
-                                split
-                                    .children
-                                    .iter()
-                                    .map(|(_, c)| content_rect(c, false))
-                                    .collect::<Vec<Rect>>()
-                            });
-                            let direction = direction(false);
-                            match direction {
-                                SplitDirection::Vertical => {
-                                    let left = rects[index - 1].width();
-                                    let right = rects[index].width();
-                                    let shift = pointer_event.pos.x - drag_start_point.x;
-                                    let left = left + shift;
-                                    let right = right - shift;
-                                    let total_width =
-                                        rects.iter().map(|r| r.width()).sum::<f64>();
-                                    split.with_untracked(|split| {
-                                        for (i, (size, _)) in
-                                            split.children.iter().enumerate()
-                                        {
-                                            if i == index - 1 {
-                                                size.set(left / total_width);
-                                            } else if i == index {
-                                                size.set(right / total_width);
-                                            } else {
-                                                size.set(rects[i].width() / total_width);
-                                            }
+            .on_event_stop(EventListener::PointerUp, move |_| {
+                drag_start.set(None);
+            })
+            .on_event_stop(EventListener::PointerMove, move |event| {
+                if let Event::PointerMove(pointer_event) = event {
+                    if let Some(drag_start_point) = drag_start.get_untracked() {
+                        let rects = split.with_untracked(|split| {
+                            split
+                                .children
+                                .iter()
+                                .map(|(_, c)| content_rect(c, false))
+                                .collect::<Vec<Rect>>()
+                        });
+                        let direction = direction(false);
+                        match direction {
+                            SplitDirection::Vertical => {
+                                let left = rects[index - 1].width();
+                                let right = rects[index].width();
+                                let shift = pointer_event.pos.x - drag_start_point.x;
+                                let left = left + shift;
+                                let right = right - shift;
+                                let total_width =
+                                    rects.iter().map(|r| r.width()).sum::<f64>();
+                                split.with_untracked(|split| {
+                                    for (i, (size, _)) in
+                                        split.children.iter().enumerate()
+                                    {
+                                        if i == index - 1 {
+                                            size.set(left / total_width);
+                                        } else if i == index {
+                                            size.set(right / total_width);
+                                        } else {
+                                            size.set(rects[i].width() / total_width);
                                         }
-                                    })
-                                }
-                                SplitDirection::Horizontal => {
-                                    let up = rects[index - 1].height();
-                                    let down = rects[index].height();
-                                    let shift = pointer_event.pos.y - drag_start_point.y;
-                                    let up = up + shift;
-                                    let down = down - shift;
-                                    let total_height =
-                                        rects.iter().map(|r| r.height()).sum::<f64>();
-                                    split.with_untracked(|split| {
-                                        for (i, (size, _)) in
-                                            split.children.iter().enumerate()
-                                        {
-                                            if i == index - 1 {
-                                                size.set(up / total_height);
-                                            } else if i == index {
-                                                size.set(down / total_height);
-                                            } else {
-                                                size.set(
-                                                    rects[i].height() / total_height,
-                                                );
-                                            }
+                                    }
+                                })
+                            }
+                            SplitDirection::Horizontal => {
+                                let up = rects[index - 1].height();
+                                let down = rects[index].height();
+                                let shift = pointer_event.pos.y - drag_start_point.y;
+                                let up = up + shift;
+                                let down = down - shift;
+                                let total_height =
+                                    rects.iter().map(|r| r.height()).sum::<f64>();
+                                split.with_untracked(|split| {
+                                    for (i, (size, _)) in
+                                        split.children.iter().enumerate()
+                                    {
+                                        if i == index - 1 {
+                                            size.set(up / total_height);
+                                        } else if i == index {
+                                            size.set(down / total_height);
+                                        } else {
+                                            size.set(
+                                                rects[i].height() / total_height,
+                                            );
                                         }
-                                    })
-                                }
+                                    }
+                                })
                             }
                         }
                     }
-                })
-                .style(move |s| {
-                    let rect = content_rect(&content, true);
-                    let is_dragging = drag_start.get().is_some();
-                    let direction = direction(true);
-                    s.position(Position::Absolute)
-                        .apply_if(direction == SplitDirection::Vertical, |style| {
-                            style.margin_left(rect.x0 as f32 - 0.0)
+                }
+            })
+            .style(move |s| {
+                let rect = content_rect(&content, true);
+                let is_dragging = drag_start.get().is_some();
+                let direction = direction(true);
+                s.position(Position::Absolute)
+                    .apply_if(direction == SplitDirection::Vertical, |style| {
+                        style.margin_left(rect.x0 as f32 - 0.0)
+                    })
+                    .apply_if(direction == SplitDirection::Horizontal, |style| {
+                        style.margin_top(rect.y0 as f32 - 0.0)
+                    })
+                    .width(match direction {
+                        SplitDirection::Vertical => PxPctAuto::Px(4.0),
+                        SplitDirection::Horizontal => PxPctAuto::Pct(100.0),
+                    })
+                    .height(match direction {
+                        SplitDirection::Vertical => PxPctAuto::Pct(100.0),
+                        SplitDirection::Horizontal => PxPctAuto::Px(4.0),
+                    })
+                    .flex_direction(match direction {
+                        SplitDirection::Vertical => FlexDirection::Row,
+                        SplitDirection::Horizontal => FlexDirection::Column,
+                    })
+                    .apply_if(is_dragging, |s| {
+                        s.cursor(match direction {
+                            SplitDirection::Vertical => CursorStyle::ColResize,
+                            SplitDirection::Horizontal => CursorStyle::RowResize,
                         })
-                        .apply_if(direction == SplitDirection::Horizontal, |style| {
-                            style.margin_top(rect.y0 as f32 - 0.0)
+                        .background(config.get().color(SparrowColor::EDITOR_CARET))
+                    })
+                    .hover(|s| {
+                        s.cursor(match direction {
+                            SplitDirection::Vertical => CursorStyle::ColResize,
+                            SplitDirection::Horizontal => CursorStyle::RowResize,
                         })
-                        .width(match direction {
-                            SplitDirection::Vertical => PxPctAuto::Px(4.0),
-                            SplitDirection::Horizontal => PxPctAuto::Pct(100.0),
-                        })
-                        .height(match direction {
-                            SplitDirection::Vertical => PxPctAuto::Pct(100.0),
-                            SplitDirection::Horizontal => PxPctAuto::Px(4.0),
-                        })
-                        .flex_direction(match direction {
-                            SplitDirection::Vertical => FlexDirection::Row,
-                            SplitDirection::Horizontal => FlexDirection::Column,
-                        })
-                        .apply_if(is_dragging, |s| {
-                            s.cursor(match direction {
-                                SplitDirection::Vertical => CursorStyle::ColResize,
-                                SplitDirection::Horizontal => CursorStyle::RowResize,
-                            })
-                                .background(config.get().color(SparrowColor::EDITOR_CARET))
-                        })
-                        .hover(|s| {
-                            s.cursor(match direction {
-                                SplitDirection::Vertical => CursorStyle::ColResize,
-                                SplitDirection::Horizontal => CursorStyle::RowResize,
-                            })
-                                .background(config.get().color(SparrowColor::EDITOR_CARET))
-                        })
-                        .pointer_events_auto()
-                })
+                        .background(config.get().color(SparrowColor::EDITOR_CARET))
+                    })
+                    .pointer_events_auto()
+            })
         },
     )
-        .style(|s| {
-            s.position(Position::Absolute)
-                .size_full()
-                .pointer_events_none()
-        })
-        .debug_name("Split Resize Border")
+    .style(|s| {
+        s.position(Position::Absolute)
+            .size_full()
+            .pointer_events_none()
+    })
+    .debug_name("Split Resize Border")
 }
 
 fn split_border(
@@ -1811,63 +1810,63 @@ fn split_border(
                     SplitDirection::Vertical => PxPctAuto::Px(1.0),
                     SplitDirection::Horizontal => PxPctAuto::Pct(100.0),
                 })
+                .height(match direction {
+                    SplitDirection::Vertical => PxPctAuto::Pct(100.0),
+                    SplitDirection::Horizontal => PxPctAuto::Px(1.0),
+                })
+                .background(config.get().color(SparrowColor::SPARROW_BORDER))
+            }))
+            .style(move |s| {
+                let rect = match &content {
+                    SplitContent::EditorTab(editor_tab_id) => {
+                        let editor_tab_data = editor_tabs
+                            .with(|tabs| tabs.get(editor_tab_id).cloned());
+                        if let Some(editor_tab_data) = editor_tab_data {
+                            editor_tab_data.with(|editor_tab| editor_tab.layout_rect)
+                        } else {
+                            Rect::ZERO
+                        }
+                    }
+                    SplitContent::Split(split_id) => {
+                        if let Some(split) =
+                            splits.with(|splits| splits.get(split_id).cloned())
+                        {
+                            split.with(|split| split.layout_rect)
+                        } else {
+                            Rect::ZERO
+                        }
+                    }
+                };
+                let direction = direction();
+                s.position(Position::Absolute)
+                    .apply_if(direction == SplitDirection::Vertical, |style| {
+                        style.margin_left(rect.x0 as f32 - 2.0)
+                    })
+                    .apply_if(direction == SplitDirection::Horizontal, |style| {
+                        style.margin_top(rect.y0 as f32 - 2.0)
+                    })
+                    .width(match direction {
+                        SplitDirection::Vertical => PxPctAuto::Px(4.0),
+                        SplitDirection::Horizontal => PxPctAuto::Pct(100.0),
+                    })
                     .height(match direction {
                         SplitDirection::Vertical => PxPctAuto::Pct(100.0),
-                        SplitDirection::Horizontal => PxPctAuto::Px(1.0),
+                        SplitDirection::Horizontal => PxPctAuto::Px(4.0),
                     })
-                    .background(config.get().color(SparrowColor::SPARROW_BORDER))
-            }))
-                .style(move |s| {
-                    let rect = match &content {
-                        SplitContent::EditorTab(editor_tab_id) => {
-                            let editor_tab_data = editor_tabs
-                                .with(|tabs| tabs.get(editor_tab_id).cloned());
-                            if let Some(editor_tab_data) = editor_tab_data {
-                                editor_tab_data.with(|editor_tab| editor_tab.layout_rect)
-                            } else {
-                                Rect::ZERO
-                            }
-                        }
-                        SplitContent::Split(split_id) => {
-                            if let Some(split) =
-                                splits.with(|splits| splits.get(split_id).cloned())
-                            {
-                                split.with(|split| split.layout_rect)
-                            } else {
-                                Rect::ZERO
-                            }
-                        }
-                    };
-                    let direction = direction();
-                    s.position(Position::Absolute)
-                        .apply_if(direction == SplitDirection::Vertical, |style| {
-                            style.margin_left(rect.x0 as f32 - 2.0)
-                        })
-                        .apply_if(direction == SplitDirection::Horizontal, |style| {
-                            style.margin_top(rect.y0 as f32 - 2.0)
-                        })
-                        .width(match direction {
-                            SplitDirection::Vertical => PxPctAuto::Px(4.0),
-                            SplitDirection::Horizontal => PxPctAuto::Pct(100.0),
-                        })
-                        .height(match direction {
-                            SplitDirection::Vertical => PxPctAuto::Pct(100.0),
-                            SplitDirection::Horizontal => PxPctAuto::Px(4.0),
-                        })
-                        .flex_direction(match direction {
-                            SplitDirection::Vertical => FlexDirection::Row,
-                            SplitDirection::Horizontal => FlexDirection::Column,
-                        })
-                        .justify_content(Some(JustifyContent::Center))
-                })
+                    .flex_direction(match direction {
+                        SplitDirection::Vertical => FlexDirection::Row,
+                        SplitDirection::Horizontal => FlexDirection::Column,
+                    })
+                    .justify_content(Some(JustifyContent::Center))
+            })
         },
     )
-        .style(|s| {
-            s.position(Position::Absolute)
-                .size_full()
-                .pointer_events_none()
-        })
-        .debug_name("Split Border")
+    .style(|s| {
+        s.position(Position::Absolute)
+            .size_full()
+            .pointer_events_none()
+    })
+    .debug_name("Split Border")
 }
 
 fn split_list(
@@ -1908,7 +1907,7 @@ fn split_list(
                             editor_tab_data,
                             dragging,
                         )
-                            .into_any()
+                        .into_any()
                     } else {
                         text("empty editor tab").into_any()
                     }
@@ -1923,7 +1922,7 @@ fn split_list(
                             plugin.clone(),
                             dragging,
                         )
-                            .into_any()
+                        .into_any()
                     } else {
                         text("empty split").into_any()
                     }
@@ -1978,22 +1977,22 @@ fn split_list(
                     SplitDirection::Vertical => FlexDirection::Row,
                     SplitDirection::Horizontal => FlexDirection::Column,
                 })
-                    .size_full()
+                .size_full()
             }),
             split_border(splits, editor_tabs, split, config),
             split_resize_border(splits, editor_tabs, split, config),
         ))
-            .style(|s| s.size_full()),
+        .style(|s| s.size_full()),
     )
-        .on_cleanup(move || {
-            if splits.with_untracked(|splits| splits.contains_key(&split_id)) {
-                return;
-            }
-            split
-                .with_untracked(|split_data| split_data.scope)
-                .dispose();
-        })
-        .debug_name("Split List")
+    .on_cleanup(move || {
+        if splits.with_untracked(|splits| splits.contains_key(&split_id)) {
+            return;
+        }
+        split
+            .with_untracked(|split_data| split_data.scope)
+            .dispose();
+    })
+    .debug_name("Split List")
 }
 
 fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -2017,13 +2016,13 @@ fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
         plugin.clone(),
         dragging,
     )
-        .style(move |s| {
-            let config = config.get();
-            s.border_color(config.color(SparrowColor::SPARROW_BORDER))
-                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
-                .size_full()
-        })
-        .debug_name("Main Split");
+    .style(move |s| {
+        let config = config.get();
+        s.border_color(config.color(SparrowColor::SPARROW_BORDER))
+            .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+            .size_full()
+    })
+    .debug_name("Main Split");
 
     // Islands look: the editor area is a rounded island.
     stack((split, island_corners(config)))
@@ -2031,7 +2030,7 @@ fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
             let config = config.get();
             let is_hidden = hidden_panel.panel_bottom_maximized(true)
                 && hidden_panel
-                .is_container_shown(&PanelContainerPosition::Bottom, true);
+                    .is_container_shown(&PanelContainerPosition::Bottom, true);
             s.background(config.color(SparrowColor::EDITOR_BACKGROUND))
                 .border_radius(ISLAND_RADIUS)
                 .apply_if(is_hidden, |s| s.display(Display::None))
@@ -2060,7 +2059,7 @@ pub fn not_clickable_icon<S: std::fmt::Display + 'static>(
         ),
         tooltip_,
     )
-        .debug_name("Not Clickable Icon")
+    .debug_name("Not Clickable Icon")
 }
 
 pub fn clickable_icon<S: std::fmt::Display + 'static>(
@@ -2099,26 +2098,26 @@ pub fn clickable_icon_base(
             })
             .disabled(disabled_fn),
     )
-        .disabled(disabled_fn)
-        .style(move |s| {
-            let config = config.get();
-            s.padding(4.0)
-                .border_radius(6.0)
-                .border(1.0)
-                .border_color(Color::TRANSPARENT)
-                .apply_if(active_fn(), |s| {
-                    s.border_color(config.color(SparrowColor::EDITOR_CARET))
-                })
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer)
-                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
-                .active(|s| {
-                    s.background(
-                        config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
-                    )
-                })
-        });
+    .disabled(disabled_fn)
+    .style(move |s| {
+        let config = config.get();
+        s.padding(4.0)
+            .border_radius(6.0)
+            .border(1.0)
+            .border_color(Color::TRANSPARENT)
+            .apply_if(active_fn(), |s| {
+                s.border_color(config.color(SparrowColor::EDITOR_CARET))
+            })
+            .hover(|s| {
+                s.cursor(CursorStyle::Pointer)
+                    .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+            })
+            .active(|s| {
+                s.background(
+                    config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
+                )
+            })
+    });
 
     if let Some(on_click) = on_click {
         view.on_click_stop(move |_| {
@@ -2183,26 +2182,26 @@ fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
                     PanelContainerPosition::Bottom,
                 ),
             ))
-                .on_resize(move |rect| {
-                    let width = rect.size().width;
-                    if main_split_width.get_untracked() != width {
-                        main_split_width.set(width);
-                    }
-                })
-                .style(|s| s.flex_col().flex_grow(1.0f32).gap(4.0))
+            .on_resize(move |rect| {
+                let width = rect.size().width;
+                if main_split_width.get_untracked() != width {
+                    main_split_width.set(width);
+                }
+            })
+            .style(|s| s.flex_col().flex_grow(1.0f32).gap(4.0))
         },
         panel_container_view(window_tab_data.clone(), PanelContainerPosition::Right),
         tool_window_stripe(window_tab_data.clone(), false),
         window_message_view(window_tab_data.messages, window_tab_data.common.config),
     ))
-        .on_resize(move |rect| {
-            let size = rect.size();
-            if size != workbench_size.get_untracked() {
-                workbench_size.set(size);
-            }
-        })
-        .style(move |s| s.size_full().gap(4.0).padding_bottom(2.0))
-        .debug_name("Workbench")
+    .on_resize(move |rect| {
+        let size = rect.size();
+        if size != workbench_size.get_untracked() {
+            workbench_size.set(size);
+        }
+    })
+    .style(move |s| s.size_full().gap(4.0).padding_bottom(2.0))
+    .debug_name("Workbench")
 }
 
 fn palette_item(
@@ -2270,20 +2269,20 @@ fn palette_item(
                         move || file_name_indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(|s| s.margin_right(6.0).max_width_full()),
+                    .style(|s| s.margin_right(6.0).max_width_full()),
                     focus_text(
                         move || folder.clone(),
                         move || folder_indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(move |s| {
-                            s.color(config.get().color(SparrowColor::EDITOR_DIM))
-                                .min_width(0.0)
-                                .flex_grow(1.0f32)
-                                .flex_basis(0.0)
-                        }),
+                    .style(move |s| {
+                        s.color(config.get().color(SparrowColor::EDITOR_DIM))
+                            .min_width(0.0)
+                            .flex_grow(1.0f32)
+                            .flex_basis(0.0)
+                    }),
                 ))
-                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
         PaletteItemContent::DocumentSymbol {
@@ -2323,34 +2322,34 @@ fn palette_item(
                             .symbol_svg(&kind)
                             .unwrap_or_else(|| config.ui_svg(SparrowIcons::FILE))
                     })
-                        .style(move |s| {
-                            let config = config.get();
-                            let size = config.ui.icon_size() as f32;
-                            s.min_width(size).size(size, size).margin_right(5.0).color(
-                                config.symbol_color(&kind).unwrap_or_else(|| {
-                                    config.color(SparrowColor::SPARROW_ICON_ACTIVE)
-                                }),
-                            )
-                        }),
+                    .style(move |s| {
+                        let config = config.get();
+                        let size = config.ui.icon_size() as f32;
+                        s.min_width(size).size(size, size).margin_right(5.0).color(
+                            config.symbol_color(&kind).unwrap_or_else(|| {
+                                config.color(SparrowColor::SPARROW_ICON_ACTIVE)
+                            }),
+                        )
+                    }),
                     focus_text(
                         move || text.clone(),
                         move || text_indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(|s| s.margin_right(6.0).max_width_full()),
+                    .style(|s| s.margin_right(6.0).max_width_full()),
                     focus_text(
                         move || hint.clone(),
                         move || hint_indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(move |s| {
-                            s.color(config.get().color(SparrowColor::EDITOR_DIM))
-                                .min_width(0.0)
-                                .flex_grow(1.0f32)
-                                .flex_basis(0.0)
-                        }),
+                    .style(move |s| {
+                        s.color(config.get().color(SparrowColor::EDITOR_DIM))
+                            .min_width(0.0)
+                            .flex_grow(1.0f32)
+                            .flex_basis(0.0)
+                    }),
                 ))
-                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
         PaletteItemContent::WorkspaceSymbol {
@@ -2401,33 +2400,33 @@ fn palette_item(
                             .symbol_svg(&kind)
                             .unwrap_or_else(|| config.ui_svg(SparrowIcons::FILE))
                     })
-                        .style(move |s| {
-                            let config = config.get();
-                            let size = config.ui.icon_size() as f32;
-                            s.min_width(size)
-                                .size(size, size)
-                                .margin_right(5.0)
-                                .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
-                        }),
+                    .style(move |s| {
+                        let config = config.get();
+                        let size = config.ui.icon_size() as f32;
+                        s.min_width(size)
+                            .size(size, size)
+                            .margin_right(5.0)
+                            .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
+                    }),
                     focus_text(
                         move || text.clone(),
                         move || text_indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(|s| s.margin_right(6.0).max_width_full()),
+                    .style(|s| s.margin_right(6.0).max_width_full()),
                     focus_text(
                         move || hint.clone(),
                         move || hint_indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(move |s| {
-                            s.color(config.get().color(SparrowColor::EDITOR_DIM))
-                                .min_width(0.0)
-                                .flex_grow(1.0f32)
-                                .flex_basis(0.0)
-                        }),
+                    .style(move |s| {
+                        s.color(config.get().color(SparrowColor::EDITOR_DIM))
+                            .min_width(0.0)
+                            .flex_grow(1.0f32)
+                            .flex_basis(0.0)
+                    }),
                 ))
-                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
         PaletteItemContent::RunAndDebug {
@@ -2472,33 +2471,33 @@ fn palette_item(
                             }
                         }
                     })
-                        .style(move |s| {
-                            let config = config.get();
-                            let size = config.ui.icon_size() as f32;
-                            s.min_width(size)
-                                .size(size, size)
-                                .margin_right(5.0)
-                                .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
-                        }),
+                    .style(move |s| {
+                        let config = config.get();
+                        let size = config.ui.icon_size() as f32;
+                        s.min_width(size)
+                            .size(size, size)
+                            .margin_right(5.0)
+                            .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
+                    }),
                     focus_text(
                         move || text.clone(),
                         move || text_indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(|s| s.margin_right(6.0).max_width_full()),
+                    .style(|s| s.margin_right(6.0).max_width_full()),
                     focus_text(
                         move || hint.clone(),
                         move || hint_indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(move |s| {
-                            s.color(config.get().color(SparrowColor::EDITOR_DIM))
-                                .min_width(0.0)
-                                .flex_grow(1.0f32)
-                                .flex_basis(0.0)
-                        }),
+                    .style(move |s| {
+                        s.color(config.get().color(SparrowColor::EDITOR_DIM))
+                            .min_width(0.0)
+                            .flex_grow(1.0f32)
+                            .flex_basis(0.0)
+                    }),
                 ))
-                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
         PaletteItemContent::PaletteHelp { .. }
@@ -2522,11 +2521,11 @@ fn palette_item(
                         move || indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(|s| {
-                            s.flex_row()
-                                .flex_grow(1.0f32)
-                                .align_items(Some(AlignItems::Center))
-                        }),
+                    .style(|s| {
+                        s.flex_row()
+                            .flex_grow(1.0f32)
+                            .align_items(Some(AlignItems::Center))
+                    }),
                     stack((dyn_stack(
                         move || keys.clone(),
                         |k| k.clone(),
@@ -2547,7 +2546,7 @@ fn palette_item(
                         },
                     ),)),
                 ))
-                    .style(|s| s.width_full().items_center()),
+                .style(|s| s.width_full().items_center()),
             )
         }
         PaletteItemContent::Line { .. }
@@ -2567,7 +2566,7 @@ fn palette_item(
                     move || indices.clone(),
                     move || config.get().color(SparrowColor::EDITOR_FOCUS),
                 )
-                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
         PaletteItemContent::FileChooserEntry { is_dir, .. } => {
@@ -2598,9 +2597,9 @@ fn palette_item(
                         move || indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(|s| s.margin_right(6.0).max_width_full()),
+                    .style(|s| s.margin_right(6.0).max_width_full()),
                 ))
-                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
         PaletteItemContent::ConfirmFileChooserEntry { .. } => {
@@ -2628,9 +2627,9 @@ fn palette_item(
                         move || indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(|s| s.margin_right(6.0).max_width_full()),
+                    .style(|s| s.margin_right(6.0).max_width_full()),
                 ))
-                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
         #[cfg(windows)]
@@ -2643,10 +2642,14 @@ fn palette_item(
                     move || indices.clone(),
                     move || config.get().color(SparrowColor::EDITOR_FOCUS),
                 )
-                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
-        PaletteItemContent::PubPackage { description, version, .. } => {
+        PaletteItemContent::PubPackage {
+            description,
+            version,
+            ..
+        } => {
             let text = item.filter_text;
             let indices = item.indices;
             // Clone the borrowed fields so the closures can be `'static`.
@@ -2659,7 +2662,7 @@ fn palette_item(
                         move || indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .style(|s| s.margin_right(6.0).max_width_full()),
+                    .style(|s| s.margin_right(6.0).max_width_full()),
                     label(move || description.clone()).style(move |s| {
                         s.color(config.get().color(SparrowColor::EDITOR_DIM))
                             .min_width(0.0)
@@ -2673,20 +2676,20 @@ fn palette_item(
                             .selectable(false)
                     }),
                 ))
-                    .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
     }
-        .style(move |s| {
-            s.width_full()
-                .height(palette_item_height as f32)
-                .padding_horiz(10.0)
-                .apply_if(index.get() == i, |style| {
-                    style.background(
-                        config.get().color(SparrowColor::PALETTE_CURRENT_BACKGROUND),
-                    )
-                })
-        })
+    .style(move |s| {
+        s.width_full()
+            .height(palette_item_height as f32)
+            .padding_horiz(10.0)
+            .apply_if(index.get() == i, |style| {
+                style.background(
+                    config.get().color(SparrowColor::PALETTE_CURRENT_BACKGROUND),
+                )
+            })
+    })
 }
 
 fn palette_input(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -2710,7 +2713,7 @@ fn palette_input(window_tab_data: Rc<WindowTabData>) -> impl View {
             .border_color(config.color(SparrowColor::SPARROW_BORDER))
             .background(config.color(SparrowColor::EDITOR_BACKGROUND))
     }))
-        .style(|s| s.padding_bottom(5.0))
+    .style(|s| s.padding_bottom(5.0))
 }
 
 struct PaletteItems(im::Vector<PaletteItem>);
@@ -2786,55 +2789,55 @@ fn palette_content(
                         config,
                         keymap,
                     ))
-                        .on_click_stop(move |_| {
-                            clicked_index.set(Some(i));
+                    .on_click_stop(move |_| {
+                        clicked_index.set(Some(i));
+                    })
+                    .style(move |s| {
+                        s.width_full().cursor(CursorStyle::Pointer).hover(|s| {
+                            s.background(
+                                config
+                                    .get()
+                                    .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                            )
                         })
-                        .style(move |s| {
-                            s.width_full().cursor(CursorStyle::Pointer).hover(|s| {
-                                s.background(
-                                    config
-                                        .get()
-                                        .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                                )
-                            })
-                        })
+                    })
                 },
             )
-                .item_size_fixed(move || palette_item_height)
-                .style(|s| s.width_full().flex_col())
+            .item_size_fixed(move || palette_item_height)
+            .style(|s| s.width_full().flex_col())
         })
-            .ensure_visible(move || {
-                Size::new(1.0, palette_item_height)
-                    .to_rect()
-                    .with_origin(Point::new(
-                        0.0,
-                        index.get() as f64 * palette_item_height,
-                    ))
-            })
-            .style(|s| {
-                s.width_full()
-                    .min_height(0.0)
-                    .set(PropagatePointerWheel, false)
-            }),
+        .ensure_visible(move || {
+            Size::new(1.0, palette_item_height)
+                .to_rect()
+                .with_origin(Point::new(
+                    0.0,
+                    index.get() as f64 * palette_item_height,
+                ))
+        })
+        .style(|s| {
+            s.width_full()
+                .min_height(0.0)
+                .set(PropagatePointerWheel, false)
+        }),
         text("No matching results").style(move |s| {
             s.display(if items.with(|items| items.is_empty()) {
                 Display::Flex
             } else {
                 Display::None
             })
-                .padding_horiz(10.0)
-                .align_items(Some(AlignItems::Center))
-                .height(palette_item_height as f32)
+            .padding_horiz(10.0)
+            .align_items(Some(AlignItems::Center))
+            .height(palette_item_height as f32)
         }),
     ))
-        .style(move |s| {
-            s.flex_col()
-                .width_full()
-                .min_height(0.0)
-                .max_height((layout_rect.get().height() * 0.45 - 36.0).round() as f32)
-                .padding_bottom(5.0)
-                .padding_bottom(5.0)
-        })
+    .style(move |s| {
+        s.flex_col()
+            .width_full()
+            .min_height(0.0)
+            .max_height((layout_rect.get().height() * 0.45 - 36.0).round() as f32)
+            .padding_bottom(5.0)
+            .padding_bottom(5.0)
+    })
 }
 
 fn palette_preview(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -2851,23 +2854,23 @@ fn palette_preview(window_tab_data: Rc<WindowTabData>) -> impl View {
             |_tracked: bool| true,
             preview_editor,
         ))
-            .style(move |s| {
-                let config = config.get();
-                s.position(Position::Absolute)
-                    .border_top(1.0)
-                    .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                    .size_full()
-                    .background(config.color(SparrowColor::EDITOR_BACKGROUND))
-            }),
-    )
         .style(move |s| {
-            s.display(if has_preview.get() {
-                Display::Flex
-            } else {
-                Display::None
-            })
-                .flex_grow(1.0f32)
+            let config = config.get();
+            s.position(Position::Absolute)
+                .border_top(1.0)
+                .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                .size_full()
+                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+        }),
+    )
+    .style(move |s| {
+        s.display(if has_preview.get() {
+            Display::Flex
+        } else {
+            Display::None
         })
+        .flex_grow(1.0f32)
+    })
 }
 
 fn palette(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -2882,43 +2885,43 @@ fn palette(window_tab_data: Rc<WindowTabData>) -> impl View {
             palette_content(window_tab_data.clone(), layout_rect),
             palette_preview(window_tab_data.clone()),
         ))
-            .on_event_stop(EventListener::PointerDown, move |_| {})
-            .style(move |s| {
-                let config = config.get();
-                s.width(config.ui.palette_width() as f64)
-                    .max_width_full()
-                    .max_height(if has_preview.get() {
-                        PxPctAuto::Auto
-                    } else {
-                        PxPctAuto::Pct(100.0)
-                    })
-                    .height(if has_preview.get() {
-                        PxPctAuto::Px(layout_rect.get().height() - 10.0)
-                    } else {
-                        PxPctAuto::Auto
-                    })
-                    .margin_top(4.0)
-                    .border(1.0)
-                    .border_radius(6.0)
-                    .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                    .flex_col()
-                    .background(config.color(SparrowColor::PALETTE_BACKGROUND))
-                    .pointer_events_auto()
-            }),
-    )
+        .on_event_stop(EventListener::PointerDown, move |_| {})
         .style(move |s| {
-            s.display(if status.get() == PaletteStatus::Inactive {
-                Display::None
-            } else {
-                Display::Flex
-            })
-                .position(Position::Absolute)
-                .size_full()
+            let config = config.get();
+            s.width(config.ui.palette_width() as f64)
+                .max_width_full()
+                .max_height(if has_preview.get() {
+                    PxPctAuto::Auto
+                } else {
+                    PxPctAuto::Pct(100.0)
+                })
+                .height(if has_preview.get() {
+                    PxPctAuto::Px(layout_rect.get().height() - 10.0)
+                } else {
+                    PxPctAuto::Auto
+                })
+                .margin_top(4.0)
+                .border(1.0)
+                .border_radius(6.0)
+                .border_color(config.color(SparrowColor::SPARROW_BORDER))
                 .flex_col()
-                .items_center()
-                .pointer_events_none()
+                .background(config.color(SparrowColor::PALETTE_BACKGROUND))
+                .pointer_events_auto()
+        }),
+    )
+    .style(move |s| {
+        s.display(if status.get() == PaletteStatus::Inactive {
+            Display::None
+        } else {
+            Display::Flex
         })
-        .debug_name("Palette Layer")
+        .position(Position::Absolute)
+        .size_full()
+        .flex_col()
+        .items_center()
+        .pointer_events_none()
+    })
+    .debug_name("Palette Layer")
 }
 
 fn window_message_view(
@@ -2935,20 +2938,20 @@ fn window_message_view(
                         config.get().ui_svg(SparrowIcons::WARNING)
                     }
                 })
-                    .style(move |s| {
-                        let config = config.get();
-                        let size = config.ui.icon_size() as f32;
-                        let color = if let MessageType::ERROR = message.typ {
-                            config.color(SparrowColor::SPARROW_ERROR)
-                        } else {
-                            config.color(SparrowColor::SPARROW_WARN)
-                        };
-                        s.min_width(size)
-                            .size(size, size)
-                            .margin_right(10.0)
-                            .margin_top(4.0)
-                            .color(color)
-                    }),
+                .style(move |s| {
+                    let config = config.get();
+                    let size = config.ui.icon_size() as f32;
+                    let color = if let MessageType::ERROR = message.typ {
+                        config.color(SparrowColor::SPARROW_ERROR)
+                    } else {
+                        config.color(SparrowColor::SPARROW_WARN)
+                    };
+                    s.min_width(size)
+                        .size(size, size)
+                        .margin_right(10.0)
+                        .margin_top(4.0)
+                        .color(color)
+                }),
                 stack((
                     text(title.clone()).style(|s| {
                         s.min_width(0.0).line_height(1.8).font_weight(Weight::BOLD)
@@ -2957,12 +2960,12 @@ fn window_message_view(
                         s.min_width(0.0).line_height(1.8).margin_top(5.0)
                     }),
                 ))
-                    .style(move |s| {
-                        s.flex_col()
-                            .min_width(0.0)
-                            .flex_basis(0.0)
-                            .flex_grow(1.0f32)
-                    }),
+                .style(move |s| {
+                    s.flex_col()
+                        .min_width(0.0)
+                        .flex_basis(0.0)
+                        .flex_grow(1.0f32)
+                }),
                 clickable_icon(
                     || SparrowIcons::CLOSE,
                     move || {
@@ -2975,34 +2978,34 @@ fn window_message_view(
                     || "Close",
                     config,
                 )
-                    .style(|s| s.margin_left(6.0)),
+                .style(|s| s.margin_left(6.0)),
             ))
-                .on_double_click_stop(move |_| {
-                    messages.update(|messages| {
-                        messages.remove(i);
-                    });
-                })
-                .on_secondary_click_stop({
-                    let message = message.message.clone();
-                    move |_| {
-                        let mut clipboard = SystemClipboard::new();
-                        if !message.is_empty() {
-                            clipboard.put_string(&message);
-                        }
+            .on_double_click_stop(move |_| {
+                messages.update(|messages| {
+                    messages.remove(i);
+                });
+            })
+            .on_secondary_click_stop({
+                let message = message.message.clone();
+                move |_| {
+                    let mut clipboard = SystemClipboard::new();
+                    if !message.is_empty() {
+                        clipboard.put_string(&message);
                     }
-                })
-                .on_event_stop(EventListener::PointerDown, |_| {})
-                .style(move |s| {
-                    let config = config.get();
-                    s.width_full()
-                        .items_start()
-                        .padding(10.0)
-                        .border(1.0)
-                        .border_radius(6.0)
-                        .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                        .background(config.color(SparrowColor::PANEL_BACKGROUND))
-                        .apply_if(i > 0, |s| s.margin_top(10.0))
-                })
+                }
+            })
+            .on_event_stop(EventListener::PointerDown, |_| {})
+            .style(move |s| {
+                let config = config.get();
+                s.width_full()
+                    .items_start()
+                    .padding(10.0)
+                    .border(1.0)
+                    .border_radius(6.0)
+                    .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                    .background(config.color(SparrowColor::PANEL_BACKGROUND))
+                    .apply_if(i > 0, |s| s.margin_top(10.0))
+            })
         };
 
     let id = AtomicU64::new(0);
@@ -3017,28 +3020,28 @@ fn window_message_view(
                         },
                         view_fn,
                     )
-                        .style(|s| s.flex_col().width_full()),
+                    .style(|s| s.flex_col().width_full()),
                 )
-                    .style(|s| {
-                        s.absolute()
-                            .pointer_events_auto()
-                            .width_full()
-                            .min_height(0.0)
-                            .max_height_full()
-                            .set(PropagatePointerWheel, false)
-                    }),
+                .style(|s| {
+                    s.absolute()
+                        .pointer_events_auto()
+                        .width_full()
+                        .min_height(0.0)
+                        .max_height_full()
+                        .set(PropagatePointerWheel, false)
+                }),
             )
-                .style(|s| s.size_full()),
+            .style(|s| s.size_full()),
         )
-            .style(|s| {
-                s.width(360.0)
-                    .max_width_pct(80.0)
-                    .padding(10.0)
-                    .height_full()
-            }),
+        .style(|s| {
+            s.width(360.0)
+                .max_width_pct(80.0)
+                .padding(10.0)
+                .height_full()
+        }),
     )
-        .style(|s| s.absolute().size_full().justify_end().pointer_events_none())
-        .debug_name("Window Message View")
+    .style(|s| s.absolute().size_full().justify_end().pointer_events_none())
+    .debug_name("Window Message View")
 }
 
 struct VectorItems<V>(im::Vector<V>);
@@ -3093,7 +3096,7 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
                     rich_text(move || text_layout.clone())
                         .style(|s| s.max_width(600.0)),
                 )
-                    .style(|s| s.max_width_full()),
+                .style(|s| s.max_width_full()),
                 MarkdownContent::Image { .. } => container(empty()),
                 MarkdownContent::Separator => container(empty().style(move |s| {
                     s.width_full()
@@ -3103,35 +3106,35 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
                 })),
             },
         )
-            .style(|s| s.flex_col().padding_horiz(10.0).padding_vert(5.0)),
+        .style(|s| s.flex_col().padding_horiz(10.0).padding_vert(5.0)),
     )
-        .on_resize(move |rect| {
-            layout_rect.set(rect);
-        })
-        .on_event_stop(EventListener::PointerMove, |_| {})
-        .on_event_stop(EventListener::PointerDown, |_| {})
-        .style(move |s| {
-            let active = window_tab_data.common.hover.active.get();
-            if !active {
-                s.hide()
+    .on_resize(move |rect| {
+        layout_rect.set(rect);
+    })
+    .on_event_stop(EventListener::PointerMove, |_| {})
+    .on_event_stop(EventListener::PointerDown, |_| {})
+    .style(move |s| {
+        let active = window_tab_data.common.hover.active.get();
+        if !active {
+            s.hide()
+        } else {
+            let config = config.get();
+            if let Some(origin) = window_tab_data.hover_origin() {
+                s.absolute()
+                    .margin_left(origin.x as f32)
+                    .margin_top(origin.y as f32)
+                    .max_height(300.0)
+                    .border(1.0)
+                    .border_radius(6.0)
+                    .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                    .background(config.color(SparrowColor::PANEL_BACKGROUND))
+                    .set(PropagatePointerWheel, false)
             } else {
-                let config = config.get();
-                if let Some(origin) = window_tab_data.hover_origin() {
-                    s.absolute()
-                        .margin_left(origin.x as f32)
-                        .margin_top(origin.y as f32)
-                        .max_height(300.0)
-                        .border(1.0)
-                        .border_radius(6.0)
-                        .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                        .background(config.color(SparrowColor::PANEL_BACKGROUND))
-                        .set(PropagatePointerWheel, false)
-                } else {
-                    s.hide()
-                }
+                s.hide()
             }
-        })
-        .debug_name("Hover Layer")
+        }
+    })
+    .debug_name("Hover Layer")
 }
 
 fn signature_help(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -3158,7 +3161,10 @@ fn signature_help(window_tab_data: Rc<WindowTabData>) -> impl View {
             }
             ParameterLabel::LabelOffsets(offsets) => {
                 let [s, e] = *offsets;
-                Some((utf16_to_byte(label, s as usize), utf16_to_byte(label, e as usize)))
+                Some((
+                    utf16_to_byte(label, s as usize),
+                    utf16_to_byte(label, e as usize),
+                ))
             }
         }
     }
@@ -3217,24 +3223,24 @@ fn signature_help(window_tab_data: Rc<WindowTabData>) -> impl View {
             .max_width(600.0)
             .set(PropagatePointerWheel, false)
     }),))
-        .on_resize(move |rect| {
-            layout_rect.set(rect);
-        })
-        .on_event_stop(EventListener::PointerMove, |_| {})
-        .on_event_stop(EventListener::PointerDown, |_| {})
-        .style(move |s| {
-            if !sig.with(|s| s.is_active()) {
-                return s.hide();
-            }
-            match window_tab_data.signature_help_origin() {
-                Some(origin) => s
-                    .position(Position::Absolute)
-                    .margin_left(origin.x as f32)
-                    .margin_top(origin.y as f32),
-                None => s.hide(),
-            }
-        })
-        .debug_name("Signature Help Layer")
+    .on_resize(move |rect| {
+        layout_rect.set(rect);
+    })
+    .on_event_stop(EventListener::PointerMove, |_| {})
+    .on_event_stop(EventListener::PointerDown, |_| {})
+    .style(move |s| {
+        if !sig.with(|s| s.is_active()) {
+            return s.hide();
+        }
+        match window_tab_data.signature_help_origin() {
+            Some(origin) => s
+                .position(Position::Absolute)
+                .margin_left(origin.x as f32)
+                .margin_top(origin.y as f32),
+            None => s.hide(),
+        }
+    })
+    .debug_name("Signature Help Layer")
 }
 
 fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -3257,24 +3263,24 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
                         text(
                             item.item.kind.map(completion_kind_to_str).unwrap_or(""),
                         )
-                            .style(move |s| {
-                                s.width_full()
-                                    .justify_content(Some(JustifyContent::Center))
-                            }),
-                    )
                         .style(move |s| {
-                            let config = config.get();
-                            let width = config.editor.line_height() as f32;
-                            s.width(width)
-                                .min_width(width)
-                                .height_full()
-                                .align_items(Some(AlignItems::Center))
-                                .font_weight(Weight::BOLD)
-                                .apply_opt(
-                                    config.completion_color(item.item.kind),
-                                    |s, c| s.color(c).background(c.multiply_alpha(0.3)),
-                                )
+                            s.width_full()
+                                .justify_content(Some(JustifyContent::Center))
                         }),
+                    )
+                    .style(move |s| {
+                        let config = config.get();
+                        let width = config.editor.line_height() as f32;
+                        s.width(width)
+                            .min_width(width)
+                            .height_full()
+                            .align_items(Some(AlignItems::Center))
+                            .font_weight(Weight::BOLD)
+                            .apply_opt(
+                                config.completion_color(item.item.kind),
+                                |s, c| s.color(c).background(c.multiply_alpha(0.3)),
+                            )
+                    }),
                     focus_text(
                         move || {
                             if config.get().editor.completion_item_show_detail {
@@ -3289,33 +3295,33 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
                         move || item.indices.clone(),
                         move || config.get().color(SparrowColor::EDITOR_FOCUS),
                     )
-                        .on_click_stop(move |_| {
-                            active.set(i);
-                            if let Some(editor) = active_editor.get_untracked() {
-                                editor.select_completion();
-                            }
-                        })
-                        .on_event_stop(EventListener::PointerDown, |_| {})
-                        .style(move |s| {
-                            let config = config.get();
-                            s.padding_horiz(5.0)
-                                .min_width(0.0)
-                                .align_items(Some(AlignItems::Center))
-                                .size_full()
-                                .cursor(CursorStyle::Pointer)
-                                .apply_if(active.get() == i, |s| {
-                                    s.background(
-                                        config.color(SparrowColor::COMPLETION_CURRENT),
-                                    )
-                                })
-                                .hover(move |s| {
-                                    s.background(
-                                        config.color(
-                                            SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                        ),
-                                    )
-                                })
-                        }),
+                    .on_click_stop(move |_| {
+                        active.set(i);
+                        if let Some(editor) = active_editor.get_untracked() {
+                            editor.select_completion();
+                        }
+                    })
+                    .on_event_stop(EventListener::PointerDown, |_| {})
+                    .style(move |s| {
+                        let config = config.get();
+                        s.padding_horiz(5.0)
+                            .min_width(0.0)
+                            .align_items(Some(AlignItems::Center))
+                            .size_full()
+                            .cursor(CursorStyle::Pointer)
+                            .apply_if(active.get() == i, |s| {
+                                s.background(
+                                    config.color(SparrowColor::COMPLETION_CURRENT),
+                                )
+                            })
+                            .hover(move |s| {
+                                s.background(
+                                    config.color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
+                                )
+                            })
+                    }),
                     label(move || detail.clone().unwrap_or_default()).style(
                         move |s| {
                             let c = config.get();
@@ -3329,50 +3335,50 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
                         },
                     ),
                 ))
-                    .style(move |s| {
-                        s.align_items(Some(AlignItems::Center))
-                            .width_full()
-                            .height(config.get().editor.line_height() as f32)
-                    })
+                .style(move |s| {
+                    s.align_items(Some(AlignItems::Center))
+                        .width_full()
+                        .height(config.get().editor.line_height() as f32)
+                })
             },
         )
-            .item_size_fixed(move || config.get().editor.line_height() as f64)
-            .style(|s| {
-                s.align_items(Some(AlignItems::Center))
-                    .width_full()
-                    .flex_col()
-            }),
+        .item_size_fixed(move || config.get().editor.line_height() as f64)
+        .style(|s| {
+            s.align_items(Some(AlignItems::Center))
+                .width_full()
+                .flex_col()
+        }),
     )
-        .ensure_visible(move || {
-            let config = config.get();
-            let active = active.get();
-            Size::new(1.0, config.editor.line_height() as f64)
-                .to_rect()
-                .with_origin(Point::new(
-                    0.0,
-                    active as f64 * config.editor.line_height() as f64,
-                ))
-        })
-        .on_resize(move |rect| {
-            completion_data.update(|c| {
-                c.layout_rect = rect;
-            });
-        })
-        .on_event_stop(EventListener::PointerMove, |_| {})
-        .style(move |s| {
-            let config = config.get();
-            let origin = window_tab_data.completion_origin();
-            s.position(Position::Absolute)
-                .width(config.editor.completion_width as i32)
-                .max_height(400.0)
-                .margin_left(origin.x as f32)
-                .margin_top(origin.y as f32)
-                .background(config.color(SparrowColor::COMPLETION_BACKGROUND))
-                .font_family(config.editor.font_family.clone())
-                .font_size(config.editor.font_size() as f32)
-                .border_radius(6.0)
-        })
-        .debug_name("Completion Layer")
+    .ensure_visible(move || {
+        let config = config.get();
+        let active = active.get();
+        Size::new(1.0, config.editor.line_height() as f64)
+            .to_rect()
+            .with_origin(Point::new(
+                0.0,
+                active as f64 * config.editor.line_height() as f64,
+            ))
+    })
+    .on_resize(move |rect| {
+        completion_data.update(|c| {
+            c.layout_rect = rect;
+        });
+    })
+    .on_event_stop(EventListener::PointerMove, |_| {})
+    .style(move |s| {
+        let config = config.get();
+        let origin = window_tab_data.completion_origin();
+        s.position(Position::Absolute)
+            .width(config.editor.completion_width as i32)
+            .max_height(400.0)
+            .margin_left(origin.x as f32)
+            .margin_top(origin.y as f32)
+            .background(config.color(SparrowColor::COMPLETION_BACKGROUND))
+            .font_family(config.editor.font_family.clone())
+            .font_size(config.editor.font_size() as f32)
+            .border_radius(6.0)
+    })
+    .debug_name("Completion Layer")
 }
 
 fn code_action(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -3396,71 +3402,71 @@ fn code_action(window_tab_data: Rc<WindowTabData>) -> impl View {
                         text(item.title().replace('\n', " "))
                             .style(|s| s.text_ellipsis().min_width(0.0)),
                     )
-                        .on_click_stop(move |_| {
-                            let code_action = code_action.get_untracked();
-                            code_action.active.set(i);
-                            code_action.select();
-                        })
-                        .on_event_stop(EventListener::PointerDown, |_| {})
-                        .style(move |s| {
-                            let config = config.get();
-                            s.padding_horiz(10.0)
-                                .align_items(Some(AlignItems::Center))
-                                .min_width(0.0)
-                                .width_full()
-                                .line_height(1.8)
-                                .border_radius(6.0)
-                                .cursor(CursorStyle::Pointer)
-                                .apply_if(active.get() == i, |s| {
-                                    s.background(
-                                        config.color(SparrowColor::COMPLETION_CURRENT),
-                                    )
-                                })
-                                .hover(move |s| {
-                                    s.background(
-                                        config.color(
-                                            SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                        ),
-                                    )
-                                })
-                        })
+                    .on_click_stop(move |_| {
+                        let code_action = code_action.get_untracked();
+                        code_action.active.set(i);
+                        code_action.select();
+                    })
+                    .on_event_stop(EventListener::PointerDown, |_| {})
+                    .style(move |s| {
+                        let config = config.get();
+                        s.padding_horiz(10.0)
+                            .align_items(Some(AlignItems::Center))
+                            .min_width(0.0)
+                            .width_full()
+                            .line_height(1.8)
+                            .border_radius(6.0)
+                            .cursor(CursorStyle::Pointer)
+                            .apply_if(active.get() == i, |s| {
+                                s.background(
+                                    config.color(SparrowColor::COMPLETION_CURRENT),
+                                )
+                            })
+                            .hover(move |s| {
+                                s.background(
+                                    config.color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
+                                )
+                            })
+                    })
                 },
             )
-                .style(|s| s.width_full().flex_col()),
+            .style(|s| s.width_full().flex_col()),
         )
-            .style(|s| s.width_full().padding_vert(4.0)),
+        .style(|s| s.width_full().padding_vert(4.0)),
     )
-        .ensure_visible(move || {
-            let config = config.get();
-            let active = active.get();
-            Size::new(1.0, config.editor.line_height() as f64)
-                .to_rect()
-                .with_origin(Point::new(
-                    0.0,
-                    active as f64 * config.editor.line_height() as f64,
-                ))
+    .ensure_visible(move || {
+        let config = config.get();
+        let active = active.get();
+        Size::new(1.0, config.editor.line_height() as f64)
+            .to_rect()
+            .with_origin(Point::new(
+                0.0,
+                active as f64 * config.editor.line_height() as f64,
+            ))
+    })
+    .on_resize(move |rect| {
+        code_action.update(|c| {
+            c.layout_rect = rect;
+        });
+    })
+    .on_event_stop(EventListener::PointerMove, |_| {})
+    .style(move |s| {
+        let origin = window_tab_data.code_action_origin();
+        s.display(match status.get() {
+            CodeActionStatus::Inactive => Display::None,
+            CodeActionStatus::Active => Display::Flex,
         })
-        .on_resize(move |rect| {
-            code_action.update(|c| {
-                c.layout_rect = rect;
-            });
-        })
-        .on_event_stop(EventListener::PointerMove, |_| {})
-        .style(move |s| {
-            let origin = window_tab_data.code_action_origin();
-            s.display(match status.get() {
-                CodeActionStatus::Inactive => Display::None,
-                CodeActionStatus::Active => Display::Flex,
-            })
-                .position(Position::Absolute)
-                .width(400.0)
-                .max_height(400.0)
-                .margin_left(origin.x as f32)
-                .margin_top(origin.y as f32)
-                .background(config.get().color(SparrowColor::COMPLETION_BACKGROUND))
-                .border_radius(6.0)
-        })
-        .debug_name("Code Action Layer")
+        .position(Position::Absolute)
+        .width(400.0)
+        .max_height(400.0)
+        .margin_left(origin.x as f32)
+        .margin_top(origin.y as f32)
+        .background(config.get().color(SparrowColor::COMPLETION_BACKGROUND))
+        .border_radius(6.0)
+    })
+    .debug_name("Code Action Layer")
 }
 
 fn rename(window_tab_data: Rc<WindowTabData>) -> impl View {
@@ -3476,35 +3482,38 @@ fn rename(window_tab_data: Rc<WindowTabData>) -> impl View {
                 .build_editor(editor)
                 .style(|s| s.width(150.0)),
         )
-            .style(move |s| {
-                let config = config.get();
-                s.font_family(config.editor.font_family.clone())
-                    .font_size(config.editor.font_size() as f32)
-                    .border(1.0)
-                    .border_radius(6.0)
-                    .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                    .background(config.color(SparrowColor::EDITOR_BACKGROUND))
-            }),
-    )
-        .on_resize(move |rect| {
-            layout_rect.set(rect);
-        })
-        .on_event_stop(EventListener::PointerMove, |_| {})
-        .on_event_stop(EventListener::PointerDown, |_| {})
         .style(move |s| {
-            let origin = window_tab_data.rename_origin();
-            s.position(Position::Absolute)
-                .apply_if(!active.get(), |s| s.hide())
-                .margin_left(origin.x as f32)
-                .margin_top(origin.y as f32)
-                .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
+            let config = config.get();
+            s.font_family(config.editor.font_family.clone())
+                .font_size(config.editor.font_size() as f32)
+                .border(1.0)
                 .border_radius(6.0)
-                .padding(6.0)
-        })
-        .debug_name("Rename Layer")
+                .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+        }),
+    )
+    .on_resize(move |rect| {
+        layout_rect.set(rect);
+    })
+    .on_event_stop(EventListener::PointerMove, |_| {})
+    .on_event_stop(EventListener::PointerDown, |_| {})
+    .style(move |s| {
+        let origin = window_tab_data.rename_origin();
+        s.position(Position::Absolute)
+            .apply_if(!active.get(), |s| s.hide())
+            .margin_left(origin.x as f32)
+            .margin_top(origin.y as f32)
+            .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
+            .border_radius(6.0)
+            .padding(6.0)
+    })
+    .debug_name("Rename Layer")
 }
 
-fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
+fn window_tab(
+    window_tab_data: Rc<WindowTabData>,
+    window_tabs: ReadSignal<im::Vector<(RwSignal<usize>, Rc<WindowTabData>)>>,
+) -> impl View {
     let source_control = window_tab_data.source_control.clone();
     let window_origin = window_tab_data.common.window_origin;
     let layout_rect = window_tab_data.layout_rect;
@@ -3513,10 +3522,13 @@ fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
     let window_tab_scope = window_tab_data.scope;
     let hover_active = window_tab_data.common.hover.active;
     let status_height = window_tab_data.status_height;
+    let project_chip_origin = create_rw_signal(Point::ZERO);
+    let branch_chip_origin = create_rw_signal(Point::ZERO);
+    let device_chip_origin = create_rw_signal(Point::ZERO);
 
     let view = stack((
         stack((
-            title(window_tab_data.clone()),
+            title(window_tab_data.clone(), window_tabs, project_chip_origin, branch_chip_origin, device_chip_origin),
             workbench(window_tab_data.clone()),
             status(
                 window_tab_data.clone(),
@@ -3526,18 +3538,18 @@ fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
                 config,
             ),
         ))
-            .on_resize(move |rect| {
-                layout_rect.set(rect);
-            })
-            .on_move(move |point| {
-                window_origin.set(point);
-            })
-            .style(move |s| {
-                s.size_full().flex_col().background(
-                    config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
-                )
-            })
-            .debug_name("Base Layer"),
+        .on_resize(move |rect| {
+            layout_rect.set(rect);
+        })
+        .on_move(move |point| {
+            window_origin.set(point);
+        })
+        .style(move |s| {
+            s.size_full().flex_col().background(
+                config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
+            )
+        })
+        .debug_name("Base Layer"),
         completion(window_tab_data.clone()),
         signature_help(window_tab_data.clone()),
         hover(window_tab_data.clone()),
@@ -3546,29 +3558,33 @@ fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
         palette(window_tab_data.clone()),
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
+
+        project_switcher(window_tab_data.clone(), window_tabs, project_chip_origin),
+        branch_switcher(window_tab_data.clone(), branch_chip_origin),
+        device_selector_overlay(window_tab_data.clone(), device_chip_origin),
     ))
-        .on_cleanup(move || {
-            window_tab_scope.dispose();
-        })
-        .on_event_cont(EventListener::PointerMove, move |_| {
-            if hover_active.get_untracked() {
-                hover_active.set(false);
-            }
-        })
-        .style(move |s| {
-            let config = config.get();
-            s.size_full()
-                .color(config.color(SparrowColor::EDITOR_FOREGROUND))
-                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
-                .font_size(config.ui.font_size() as f32)
-                .apply_if(!config.ui.font_family.is_empty(), |s| {
-                    s.font_family(config.ui.font_family.clone())
-                })
-                .class(floem::views::scroll::Handle, |s| {
-                    s.background(config.color(SparrowColor::SPARROW_SCROLL_BAR))
-                })
-        })
-        .debug_name("Window Tab");
+    .on_cleanup(move || {
+        window_tab_scope.dispose();
+    })
+    .on_event_cont(EventListener::PointerMove, move |_| {
+        if hover_active.get_untracked() {
+            hover_active.set(false);
+        }
+    })
+    .style(move |s| {
+        let config = config.get();
+        s.size_full()
+            .color(config.color(SparrowColor::EDITOR_FOREGROUND))
+            .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+            .font_size(config.ui.font_size() as f32)
+            .apply_if(!config.ui.font_family.is_empty(), |s| {
+                s.font_family(config.ui.font_family.clone())
+            })
+            .class(floem::views::scroll::Handle, |s| {
+                s.background(config.color(SparrowColor::SPARROW_SCROLL_BAR))
+            })
+    })
+    .debug_name("Window Tab");
 
     let view_id = view.id();
     window_tab_data.common.view_id.set(view_id);
@@ -3632,14 +3648,14 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
                             workspace_title(&tab.workspace)
                                 .unwrap_or_else(|| String::from("New Tab")),
                         )
-                            .style(|s| {
-                                s.margin_left(10.0)
-                                    .min_width(0.0)
-                                    .flex_basis(0.0)
-                                    .flex_grow(1.0f32)
-                                    .selectable(false)
-                                    .text_ellipsis()
-                            }),
+                        .style(|s| {
+                            s.margin_left(10.0)
+                                .min_width(0.0)
+                                .flex_basis(0.0)
+                                .flex_grow(1.0f32)
+                                .selectable(false)
+                                .text_ellipsis()
+                        }),
                         {
                             let window_data = local_window_data.clone();
                             clickable_icon(
@@ -3656,58 +3672,58 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
                                 || "Close",
                                 config.read_only(),
                             )
-                                .style(|s| s.margin_horiz(6.0))
+                            .style(|s| s.margin_horiz(6.0))
                         },
                     ))
-                        .on_event_stop(EventListener::DragOver, move |event| {
-                            if dragging_index.get_untracked().is_some() {
-                                if let Event::PointerMove(pointer_event) = event {
-                                    let left = pointer_event.pos.x
-                                        < tab_width.get_untracked() / 2.0;
-                                    if drag_over_left.get_untracked() != Some(left) {
-                                        drag_over_left.set(Some(left));
-                                    }
+                    .on_event_stop(EventListener::DragOver, move |event| {
+                        if dragging_index.get_untracked().is_some() {
+                            if let Event::PointerMove(pointer_event) = event {
+                                let left = pointer_event.pos.x
+                                    < tab_width.get_untracked() / 2.0;
+                                if drag_over_left.get_untracked() != Some(left) {
+                                    drag_over_left.set(Some(left));
                                 }
                             }
-                        })
-                        .on_event(EventListener::Drop, move |event| {
-                            if dragging_index.get_untracked().is_some() {
-                                drag_over_left.set(None);
-                                if let Event::PointerUp(pointer_event) = event {
-                                    let left = pointer_event.pos.x
-                                        < tab_width.get_untracked() / 2.0;
-                                    let index = index.get_untracked();
-                                    let new_index = if left { index } else { index + 1 };
-                                    if let Some(from_index) =
-                                        dragging_index.get_untracked()
-                                    {
-                                        window_data.move_tab(
-                                            from_index.get_untracked(),
-                                            new_index,
-                                        );
-                                    }
-                                    dragging_index.set(None);
-                                }
-                                EventPropagation::Stop
-                            } else {
-                                EventPropagation::Continue
-                            }
-                        })
-                        .on_event_stop(EventListener::DragLeave, move |_| {
+                        }
+                    })
+                    .on_event(EventListener::Drop, move |event| {
+                        if dragging_index.get_untracked().is_some() {
                             drag_over_left.set(None);
-                        })
-                        .style(move |s| {
-                            let config = config.get();
-                            s.width_full()
-                                .min_width(0.0)
-                                .items_center()
-                                .border_right(1.0)
-                                .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                                .apply_if(
-                                    cfg!(target_os = "macos") && index.get() == 0,
-                                    |s| s.border_left(1.0),
-                                )
-                        }),
+                            if let Event::PointerUp(pointer_event) = event {
+                                let left = pointer_event.pos.x
+                                    < tab_width.get_untracked() / 2.0;
+                                let index = index.get_untracked();
+                                let new_index = if left { index } else { index + 1 };
+                                if let Some(from_index) =
+                                    dragging_index.get_untracked()
+                                {
+                                    window_data.move_tab(
+                                        from_index.get_untracked(),
+                                        new_index,
+                                    );
+                                }
+                                dragging_index.set(None);
+                            }
+                            EventPropagation::Stop
+                        } else {
+                            EventPropagation::Continue
+                        }
+                    })
+                    .on_event_stop(EventListener::DragLeave, move |_| {
+                        drag_over_left.set(None);
+                    })
+                    .style(move |s| {
+                        let config = config.get();
+                        s.width_full()
+                            .min_width(0.0)
+                            .items_center()
+                            .border_right(1.0)
+                            .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                            .apply_if(
+                                cfg!(target_os = "macos") && index.get() == 0,
+                                |s| s.border_left(1.0),
+                            )
+                    }),
                     container(empty().style(move |s| {
                         s.size_full()
                             .apply_if(active.get() == index.get(), |s| {
@@ -3719,42 +3735,42 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
                                 ),
                             )
                     }))
-                        .style(move |s| {
-                            s.position(Position::Absolute)
-                                .padding_horiz(3.0)
-                                .size_full()
-                                .pointer_events_none()
-                        }),
+                    .style(move |s| {
+                        s.position(Position::Absolute)
+                            .padding_horiz(3.0)
+                            .size_full()
+                            .pointer_events_none()
+                    }),
                 ))
-                    .style(move |s| s.size_full().items_center())
+                .style(move |s| s.size_full().items_center())
             })
-                .draggable()
-                .on_event_stop(EventListener::DragStart, move |_| {
-                    dragging_index.set(Some(index));
-                })
-                .on_event_stop(EventListener::DragEnd, move |_| {
-                    dragging_index.set(None);
-                })
-                .dragging_style(move |s| {
-                    let config = config.get();
-                    s.border(1.0)
-                        .border_radius(6.0)
-                        .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                        .color(
-                            config
-                                .color(SparrowColor::EDITOR_FOREGROUND)
-                                .multiply_alpha(0.7),
-                        )
-                        .background(
-                            config
-                                .color(SparrowColor::PANEL_BACKGROUND)
-                                .multiply_alpha(0.7),
-                        )
-                })
-                .on_click_stop(move |_| {
-                    active.set(index.get_untracked());
-                })
-                .style(move |s| s.size_full()),
+            .draggable()
+            .on_event_stop(EventListener::DragStart, move |_| {
+                dragging_index.set(Some(index));
+            })
+            .on_event_stop(EventListener::DragEnd, move |_| {
+                dragging_index.set(None);
+            })
+            .dragging_style(move |s| {
+                let config = config.get();
+                s.border(1.0)
+                    .border_radius(6.0)
+                    .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                    .color(
+                        config
+                            .color(SparrowColor::EDITOR_FOREGROUND)
+                            .multiply_alpha(0.7),
+                    )
+                    .background(
+                        config
+                            .color(SparrowColor::PANEL_BACKGROUND)
+                            .multiply_alpha(0.7),
+                    )
+            })
+            .on_click_stop(move |_| {
+                active.set(index.get_untracked());
+            })
+            .style(move |s| s.size_full()),
             empty().style(move |s| {
                 let index = index.get();
                 s.absolute()
@@ -3779,7 +3795,7 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
                     .apply_if(drag_over_left.get().is_none(), move |s| s.hide())
             }),
         ))
-            .style(move |s| s.height_full().width(tab_width.get() as f32))
+        .style(move |s| s.height_full().width(tab_width.get() as f32))
     };
 
     stack((
@@ -3802,7 +3818,7 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
             |(_, tab)| tab.window_tab_id,
             view_fn,
         )
-            .style(|s| s.height_full()),
+        .style(|s| s.height_full()),
         container(clickable_icon(
             || SparrowIcons::ADD,
             move || {
@@ -3816,18 +3832,18 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
             || "New Workspace Tab",
             config.read_only(),
         ))
-            .on_resize(move |rect| {
-                let current = add_icon_width.get_untracked();
-                if rect.width() != current {
-                    add_icon_width.set(rect.width());
-                }
-            })
-            .style(|s| {
-                s.height_full()
-                    .padding_left(10.0)
-                    .padding_right(10.0)
-                    .items_center()
-            }),
+        .on_resize(move |rect| {
+            let current = add_icon_width.get_untracked();
+            if rect.width() != current {
+                add_icon_width.set(rect.width());
+            }
+        })
+        .style(|s| {
+            s.height_full()
+                .padding_left(10.0)
+                .padding_right(10.0)
+                .items_center()
+        }),
         drag_window_area(empty())
             .style(|s| s.height_full().flex_basis(0.0).flex_grow(1.0f32)),
         window_controls_view(
@@ -3837,36 +3853,36 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
             window_maximized,
             config.read_only(),
         )
-            .on_resize(move |rect| {
-                let width = rect.width();
-                if window_control_width.get_untracked() != width {
-                    window_control_width.set(width);
-                }
-            }),
-    ))
         .on_resize(move |rect| {
-            let current = available_width.get_untracked();
-            if rect.width() != current {
-                available_width.set(rect.width());
+            let width = rect.width();
+            if window_control_width.get_untracked() != width {
+                window_control_width.set(width);
             }
-            window_tab_header_height.set(rect.height());
-        })
-        .style(move |s| {
-            let config = config.get();
-            s.border_bottom(1.0)
-                .width_full()
-                .height(37.0)
-                .font_size(config.ui.font_size() as f32)
-                .apply_if(!config.ui.font_family.is_empty(), |s| {
-                    s.font_family(config.ui.font_family.clone())
-                })
-                .apply_if(tabs.with(|tabs| tabs.len() < 2), |s| s.hide())
-                .color(config.color(SparrowColor::EDITOR_FOREGROUND))
-                .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                .background(config.color(SparrowColor::PANEL_BACKGROUND))
-                .items_center()
-        })
-        .debug_name("Workspace Tab Header")
+        }),
+    ))
+    .on_resize(move |rect| {
+        let current = available_width.get_untracked();
+        if rect.width() != current {
+            available_width.set(rect.width());
+        }
+        window_tab_header_height.set(rect.height());
+    })
+    .style(move |s| {
+        let config = config.get();
+        s.border_bottom(1.0)
+            .width_full()
+            .height(37.0)
+            .font_size(config.ui.font_size() as f32)
+            .apply_if(!config.ui.font_family.is_empty(), |s| {
+                s.font_family(config.ui.font_family.clone())
+            })
+            .apply_if(tabs.with(|tabs| tabs.len() < 2), |s| s.hide())
+            .color(config.color(SparrowColor::EDITOR_FOREGROUND))
+            .border_color(config.color(SparrowColor::SPARROW_BORDER))
+            .background(config.color(SparrowColor::PANEL_BACKGROUND))
+            .items_center()
+    })
+    .debug_name("Workspace Tab Header")
 }
 
 fn window(window_data: WindowData) -> impl View {
@@ -3881,51 +3897,51 @@ fn window(window_data: WindowData) -> impl View {
     let ime_enabled = window_data.ime_enabled;
     let window_maximized = window_data.common.window_maximized;
 
-    tab(active, items, key, |(_, window_tab_data)| {
-        window_tab(window_tab_data)
+    tab(active, items, key, move |(_, window_tab_data)| {
+        window_tab(window_tab_data, window_tabs)
     })
-        .window_title(move || {
-            let active = active();
-            let window_tabs = window_tabs.get();
-            let workspace = window_tabs
-                .get(active)
-                .or_else(|| window_tabs.last())
-                .and_then(|(_, window_tab)| window_tab.workspace.display());
-            match workspace {
-                Some(workspace) => format!("{workspace} - Sparrow"),
-                None => "Sparrow".to_string(),
-            }
-        })
-        .on_event_stop(EventListener::ImeEnabled, move |_| {
-            ime_enabled.set(true);
-        })
-        .on_event_stop(EventListener::ImeDisabled, move |_| {
-            ime_enabled.set(false);
-        })
-        .on_event_cont(EventListener::WindowGotFocus, move |_| {
-            window_focus.set(true);
-        })
-        .on_event_cont(EventListener::WindowMaximizeChanged, move |event| {
-            if let Event::WindowMaximizeChanged(maximized) = event {
-                window_maximized.set(*maximized);
-            }
-        })
-        .window_menu(move || {
-            window_focus.track();
-            let active = active();
-            let window_tabs = window_tabs.get();
-            let window_tab = window_tabs.get(active).or_else(|| window_tabs.last());
-            if let Some((_, window_tab)) = window_tab {
-                window_tab.common.keypress.track();
-                let workbench_command = window_tab.common.workbench_command;
-                let sparrow_command = window_tab.common.sparrow_command;
-                window_menu(sparrow_command, workbench_command)
-            } else {
-                Menu::new("Sparrow")
-            }
-        })
-        .style(|s| s.size_full())
-        .debug_name("Window")
+    .window_title(move || {
+        let active = active();
+        let window_tabs = window_tabs.get();
+        let workspace = window_tabs
+            .get(active)
+            .or_else(|| window_tabs.last())
+            .and_then(|(_, window_tab)| window_tab.workspace.display());
+        match workspace {
+            Some(workspace) => format!("{workspace} - Sparrow"),
+            None => "Sparrow".to_string(),
+        }
+    })
+    .on_event_stop(EventListener::ImeEnabled, move |_| {
+        ime_enabled.set(true);
+    })
+    .on_event_stop(EventListener::ImeDisabled, move |_| {
+        ime_enabled.set(false);
+    })
+    .on_event_cont(EventListener::WindowGotFocus, move |_| {
+        window_focus.set(true);
+    })
+    .on_event_cont(EventListener::WindowMaximizeChanged, move |event| {
+        if let Event::WindowMaximizeChanged(maximized) = event {
+            window_maximized.set(*maximized);
+        }
+    })
+    .window_menu(move || {
+        window_focus.track();
+        let active = active();
+        let window_tabs = window_tabs.get();
+        let window_tab = window_tabs.get(active).or_else(|| window_tabs.last());
+        if let Some((_, window_tab)) = window_tab {
+            window_tab.common.keypress.track();
+            let workbench_command = window_tab.common.workbench_command;
+            let sparrow_command = window_tab.common.sparrow_command;
+            window_menu(sparrow_command, workbench_command)
+        } else {
+            Menu::new("Sparrow")
+        }
+    })
+    .style(|s| s.size_full())
+    .debug_name("Window")
 }
 
 pub fn launch() {
@@ -3943,12 +3959,12 @@ pub fn launch() {
         use floem::text::{FONT_SYSTEM, fontdb::Source};
 
         const FONT_DEJAVU_SANS_REGULAR: &[u8] = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../extra/fonts/DejaVu/DejaVuSans.ttf"
+            env!("CARGO_MANIFEST_DIR"),
+            "/../extra/fonts/DejaVu/DejaVuSans.ttf"
         ));
         const FONT_DEJAVU_SANS_MONO_REGULAR: &[u8] = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../extra/fonts/DejaVu/DejaVuSansMono.ttf"
+            env!("CARGO_MANIFEST_DIR"),
+            "/../extra/fonts/DejaVu/DejaVuSansMono.ttf"
         ));
 
         FONT_SYSTEM
@@ -4035,15 +4051,15 @@ pub fn launch() {
                         | std::io::ErrorKind::ConnectionRefused,
                     ) => {
                         trace!(
-                        TraceLevel::TRACE,
-                        "no existing Sparrow instance ({err:#})"
-                    );
+                            TraceLevel::TRACE,
+                            "no existing Sparrow instance ({err:#})"
+                        );
                         if let Some(path) = Directory::local_socket() {
                             if path.exists() {
                                 if let Err(rm) = std::fs::remove_file(&path) {
                                     tracing::warn!(
-                                    "could not remove stale socket {path:?}: {rm}"
-                                );
+                                        "could not remove stale socket {path:?}: {rm}"
+                                    );
                                 }
                             }
                         }
@@ -4277,7 +4293,7 @@ pub fn launch() {
             }
         }
     })
-        .run();
+    .run();
 }
 
 /// Uses a login shell to load the correct shell environment for the current user.
@@ -4505,7 +4521,9 @@ pub fn window_menu(
             .separator()
             .entry(MenuItem::new("Select All").action(move || {
                 sparrow_command.send(SparrowCommand {
-                    kind: CommandKind::MultiSelection(MultiSelectionCommand::SelectAllCurrent),
+                    kind: CommandKind::MultiSelection(
+                        MultiSelectionCommand::SelectAllCurrent,
+                    ),
                     data: None,
                 });
             }))

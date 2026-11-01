@@ -206,6 +206,9 @@ pub struct WindowTabData {
     pub common: Rc<CommonData>,
     pub widget_tree: WidgetTreeData,
     pub outline: OutlineData,
+    pub project_menu_visible: RwSignal<bool>,
+    pub branch_menu_visible: RwSignal<bool>,
+    pub device_menu_visible: RwSignal<bool>,
 }
 
 impl std::fmt::Debug for WindowTabData {
@@ -626,6 +629,9 @@ impl WindowTabData {
             progresses: cx.create_rw_signal(IndexMap::new()),
             messages: cx.create_rw_signal(Vec::new()),
             common,
+            project_menu_visible: cx.create_rw_signal(false),
+            branch_menu_visible: cx.create_rw_signal(false),
+            device_menu_visible: cx.create_rw_signal(false),
         };
 
         {
