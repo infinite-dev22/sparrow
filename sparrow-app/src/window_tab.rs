@@ -101,6 +101,7 @@ use crate::{
     window::WindowCommonData,
     workspace::{SparrowWorkspace, SparrowWorkspaceType, WorkspaceInfo},
 };
+use crate::debug::RunDebugConfigs;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Focus {
@@ -209,6 +210,9 @@ pub struct WindowTabData {
     pub project_menu_visible: RwSignal<bool>,
     pub branch_menu_visible: RwSignal<bool>,
     pub device_menu_visible: RwSignal<bool>,
+    pub run_configs: RwSignal<Vec<RunDebugConfig>>,
+    pub active_run_config_idx: RwSignal<usize>,
+    pub run_config_modal_visible: RwSignal<bool>,
 }
 
 impl std::fmt::Debug for WindowTabData {
@@ -593,6 +597,36 @@ impl WindowTabData {
         let about_data = AboutData::new(cx, common.focus);
         let alert_data = AlertBoxData::new(cx, common.clone());
 
+        let run_configs = cx.create_rw_signal(Vec::new());
+        let active_run_config_idx = cx.create_rw_signal(0);
+        let run_config_modal_visible = cx.create_rw_signal(false);
+
+        let mut loaded_configs = Vec::new();
+        if let Some(workspace_path) = &workspace.path {
+            let run_toml = workspace_path.join(".sparrow").join("run.toml");
+            if let Ok(content) = std::fs::read_to_string(&run_toml) {
+                if let Ok(parsed) = toml::from_str::<RunDebugConfigs>(&content) {
+                    loaded_configs = parsed.configs;
+                }
+            }
+        }
+        if loaded_configs.is_empty() {
+            loaded_configs.push(sparrow_rpc::dap_types::RunDebugConfig {
+                ty: Some("flutter".to_string()),
+                name: "Run Debug".to_string(),
+                program: "flutter".to_string(),
+                args: Some(vec!["run".to_string()]),
+                cwd: workspace.path.as_ref().map(|p| p.to_string_lossy().to_string()),
+                env: None,
+                prelaunch: None,
+                debug_command: None,
+                dap_id: Default::default(),
+                tracing_output: true,
+                config_source: Default::default(),
+            });
+        }
+        run_configs.set(loaded_configs);
+
         let window_tab_data = Self {
             scope: cx,
             window_tab_id: WindowTabId::next(),
@@ -632,6 +666,9 @@ impl WindowTabData {
             project_menu_visible: cx.create_rw_signal(false),
             branch_menu_visible: cx.create_rw_signal(false),
             device_menu_visible: cx.create_rw_signal(false),
+            run_configs,
+            active_run_config_idx,
+            run_config_modal_visible,
         };
 
         {

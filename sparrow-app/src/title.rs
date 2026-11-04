@@ -21,7 +21,7 @@ use sparrow_rpc::proxy::ProxyStatus;
 use std::path::Path;
 use std::{rc::Rc, sync::Arc};
 
-use crate::command::CommandKind;
+use crate::command::{CommandKind, InternalCommand};
 use crate::dart::hot_reload::FlutterDevice;
 use crate::text_input::TextInputBuilder;
 use crate::{
@@ -35,6 +35,7 @@ use crate::{
     window_tab::WindowTabData,
     workspace::SparrowWorkspace,
 };
+use crate::debug::RunDebugMode;
 
 fn left(
     workspace: Arc<SparrowWorkspace>,
@@ -431,6 +432,7 @@ fn right(
     hot_reload: FlutterHotReloadData,
     device_menu_visible: RwSignal<bool>,
     device_chip_origin: RwSignal<Point>,
+    window_tab_data: Rc<WindowTabData>,
 ) -> impl View {
     let latest_version = create_memo(move |_| {
         let latest_release = latest_release.get();
@@ -447,33 +449,85 @@ fn right(
 
     let has_update = move || latest_version.with(|v| v.is_some());
 
-    // Android Studio style green "Run" button.
-    let run_button = tooltip_label(
-        config,
-        container(svg(move || config.get().ui_svg(SparrowIcons::START)).style(
-            move |s| {
-                let config = config.get();
-                let size = config.ui.icon_size() as f32;
-                s.size(size, size)
-                    .color(config.color(SparrowColor::SPARROW_RUN_ICON))
+    // THE RUN CONFIG SELECTOR CHIP
+    let run_config_chip = {
+        let workbench_command = workbench_command;
+        container(
+            stack((
+                svg(move || config.get().ui_svg(SparrowIcons::FLUTTER))
+                    .style(move |s| {
+                        let size = config.get().ui.icon_size() as f32;
+                        s.size(size, size).margin_right(6.0)
+                    }),
+                label({
+                    let wt_data = window_tab_data.clone();
+                    move || {
+                    let idx = wt_data.active_run_config_idx.get();
+                    wt_data.run_configs.with(|c| c.get(idx).map(|c| c.name.clone()).unwrap_or_else(|| "Run Config".to_string()))
+                }})
+                    .style(move |s| s.selectable(false)),
+                svg(move || config.get().ui_svg(SparrowIcons::DROPDOWN_ARROW))
+                    .style(move |s| {
+                        let size = config.get().ui.icon_size() as f32;
+                        s.size(size, size).margin_left(4.0).color(config.get().color(SparrowColor::SPARROW_ICON_INACTIVE))
+                    }),
+            )).style(|s| s.items_center()),
+        )
+            .popout_menu({
+                let wt_data = window_tab_data.clone();
+                move || {
+                let mut menu = Menu::new("");
+                let configs = wt_data.run_configs.get_untracked();
+                let active = wt_data.active_run_config_idx.get_untracked();
+
+                // Config list
+                for (i, c) in configs.iter().enumerate() {
+                    let c_name = c.name.clone();
+                    let label = if i == active { format!("✓ {}", c_name) } else { format!("   {}", c_name) };
+                    let cmd = workbench_command;
+                    let wt_clone = wt_data.clone();
+                    menu = menu.entry(MenuItem::new(label).action(move || {
+                        wt_clone.active_run_config_idx.set(i);
+                    }));
+                }
+
+                menu = menu.separator();
+                let wt_clone = wt_data.clone();
+                menu = menu.entry(MenuItem::new("Edit Configurations...").action(move || {
+                    wt_clone.run_config_modal_visible.set(true);
+                }));
+                menu
+            }})
+            .style(move |s| {
+                s.height(28.0)
+                    .padding_horiz(10.0)
+                    .margin_horiz(6.0)
+                    .items_center()
+                    .border_radius(6.0)
+                    .hover(|s| s.cursor(CursorStyle::Pointer).background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND)))
+            })
+    };
+
+    // The Run button next to the chip
+    let run_button = {
+        let wt_data = window_tab_data.clone();
+        clickable_icon(
+            || SparrowIcons::START,
+            move || {
+                let idx = wt_data.active_run_config_idx.get_untracked();
+                if let Some(c) = wt_data.run_configs.with_untracked(|c| c.get(idx).cloned()) {
+                    wt_data.common.internal_command.send(InternalCommand::RunAndDebug {
+                        mode: RunDebugMode::Run,
+                        config: c,
+                    });
+                }
             },
-        ))
-        .on_click_stop(move |_| {
-            workbench_command.send(SparrowWorkbenchCommand::PaletteRunAndDebug);
-        })
-        .style(move |s| {
-            let config = config.get();
-            s.padding(4.0)
-                .margin_horiz(6.0)
-                .border_radius(6.0)
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer).background(
-                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-        }),
-        || "Run and Debug",
-    );
+            || false,
+            || false,
+            || "Run",
+            config,
+        ).style(move |s| s.margin_horiz(4.0).color(config.get().color(SparrowColor::SPARROW_RUN_ICON)))
+    };
 
     // Green bug button next to Run (opens the same Run and Debug palette).
     let debug_button = tooltip_label(
@@ -506,6 +560,7 @@ fn right(
             device_chip_origin,
             device_menu_visible,
         ),
+        run_config_chip,
         run_button,
         debug_button,
         clickable_icon(
@@ -650,6 +705,7 @@ pub fn title(
             window_tab_data.flutter_hot_reload.clone(),
             window_tab_data.device_menu_visible,
             device_chip_origin,
+            window_tab_data.clone(),
         ),
     ))
     .on_resize(move |rect| {

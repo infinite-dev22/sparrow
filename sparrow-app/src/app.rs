@@ -64,7 +64,7 @@ use crate::{
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use floem::{
+pub(crate) use floem::{
     IntoView, View,
     action::show_context_menu,
     event::{Event, EventListener, EventPropagation},
@@ -115,6 +115,7 @@ use sparrow_rpc::{
     file::PathObject,
 };
 use tracing_subscriber::{filter::Targets, reload::Handle};
+use crate::debug::{debug_floating_toolbar, run_config_modal};
 
 mod grammars;
 mod logging;
@@ -3558,6 +3559,9 @@ fn window_tab(
         palette(window_tab_data.clone()),
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
+
+        run_config_modal(window_tab_data.clone()),
+        debug_floating_toolbar(window_tab_data.clone()),
 
         project_switcher(window_tab_data.clone(), window_tabs, project_chip_origin),
         branch_switcher(window_tab_data.clone(), branch_chip_origin),
