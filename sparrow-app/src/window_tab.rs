@@ -852,6 +852,7 @@ impl WindowTabData {
                                 }
                             });
                         }
+                        _ => {}
                     }
                 });
             });

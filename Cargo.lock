@@ -5211,6 +5211,7 @@ dependencies = [
  "config",
  "criterion",
  "crossbeam-channel",
+ "directories",
  "dmg",
  "flate2",
  "floem",

@@ -78,6 +78,16 @@ pub enum Notification {
         version: i64,
         diagnostics: Vec<Diagnostic>,
     },
+    /// Flutter outline notification from Dart LSP (`dart/textDocument/publishFlutterOutline`).
+    FlutterOutline {
+        path: PathBuf,
+        outline: Value,
+    },
+    /// Standard Dart outline notification (`dart/textDocument/publishOutline`).
+    Outline {
+        path: PathBuf,
+        outline: Value,
+    },
     /// `window/logMessage` or parse noise.
     Log(String),
     /// Fatal — the server exited unexpectedly.
@@ -118,23 +128,29 @@ impl DartLspService {
             is_running: AtomicBool::new(false),
         });
 
-        if !dart_available() {
-            tracing::warn!(
-            "`dart` not on PATH — Dart diagnostics disabled. \
-             Install the Dart SDK to enable them."
-        );
-            return (
-                Self {
-                    tx: cmd_tx,
-                    state: state.clone(),
-                    last_sent,
-                    alive: Arc::new(()),
-                },
-                notif_rx,
-            );
-        }
+        let dart_bin = match crate::dart::sdk::find_dart_binary(Some(&workspace_root)) {
+            Some(bin) => bin,
+            None => {
+                tracing::warn!(
+                    "`dart` not found in SDK or PATH — Dart LSP disabled. \
+                     Install the Dart/Flutter SDK to enable."
+                );
+                return (
+                    Self {
+                        tx: cmd_tx,
+                        state: state.clone(),
+                        last_sent,
+                        alive: Arc::new(()),
+                    },
+                    notif_rx,
+                );
+            }
+        };
 
-        let mut child = match Command::new("dart")
+        // Bootstrap workspace in background (detect SDK, run pub get if needed)
+        crate::dart::bootstrap::bootstrap_workspace(&workspace_root);
+
+        let mut child = match Command::new(&dart_bin)
             .arg("language-server")
             .arg("--protocol=lsp")
             .current_dir(&workspace_root)
@@ -145,7 +161,7 @@ impl DartLspService {
         {
             Ok(c) => c,
             Err(e) => {
-                tracing::error!("failed to spawn `dart language-server`: {e}");
+                tracing::error!("failed to spawn `dart language-server` ({:?}): {e}", dart_bin);
                 return (
                     Self {
                         tx: cmd_tx,
@@ -993,79 +1009,120 @@ fn initialize(
 
     let root_uri = path_to_uri(workspace_root);
     let params = json!({
-            "processId": std::process::id(),
-            "clientInfo": { "name": "sparrow", "version": env!("CARGO_PKG_VERSION") },
-            "rootUri": root_uri,
-            "workspaceFolders": [{ "uri": root_uri, "name": workspace_root
-                .file_name().and_then(|s| s.to_str()).unwrap_or("workspace") }],
-            "capabilities": {
-                "textDocument": {
-                    "synchronization": {
-                        "dynamicRegistration": false,
-                        "didSave": false, "willSave": false, "willSaveWaitUntil": false
-                    },
-                    "publishDiagnostics": {
-                        "relatedInformation": true, "versionSupport": true,
-                        "tagSupport": { "valueSet": [1, 2] }
-                    },
-                    "documentSymbol": {
-                        "hierarchicalDocumentSymbolSupport": true,
-                        "symbolKind": { "valueSet": [1,2,3,4,5,6,7,8,9,10,11,12,
-                            13,14,15,16,17,18,19,20,21,22,23,24,25,26] }
-                    },
-                    "hover": { "contentFormat": ["markdown", "plaintext"] },
-                    "definition": { "linkSupport": true },
-                    "signatureHelp": {
-                        "contextSupport": true,
-                        "signatureInformation": {
-                            "documentationFormat": ["markdown", "plaintext"],
-                            "parameterInformation": {
-                                "labelOffsetSupport": true
-                            },
-                            "activeParameterSupport": true
+        "processId": std::process::id(),
+        "clientInfo": { "name": "sparrow", "version": env!("CARGO_PKG_VERSION") },
+        "rootUri": root_uri,
+        "workspaceFolders": [{ "uri": root_uri, "name": workspace_root
+            .file_name().and_then(|s| s.to_str()).unwrap_or("workspace") }],
+        "initializationOptions": {
+            "onlyAnalyzeProjectsWithOpenFiles": false,
+            "suggestFromUnimportedLibraries": true,
+            "closingLabels": true,
+            "flutterOutline": true,
+            "outline": true
+        },
+        "capabilities": {
+            "textDocument": {
+                "synchronization": {
+                    "dynamicRegistration": false,
+                    "didSave": false, "willSave": false, "willSaveWaitUntil": false
+                },
+                "publishDiagnostics": {
+                    "relatedInformation": true, "versionSupport": true,
+                    "tagSupport": { "valueSet": [1, 2] }
+                },
+                "documentSymbol": {
+                    "hierarchicalDocumentSymbolSupport": true,
+                    "symbolKind": { "valueSet": [1,2,3,4,5,6,7,8,9,10,11,12,
+                        13,14,15,16,17,18,19,20,21,22,23,24,25,26] }
+                },
+                "hover": { "contentFormat": ["markdown", "plaintext"] },
+                "definition": { "linkSupport": true },
+                "typeDefinition": { "linkSupport": true },
+                "implementation": { "linkSupport": true },
+                "formatting": { "dynamicRegistration": false },
+                "rangeFormatting": { "dynamicRegistration": false },
+                "rename": { "dynamicRegistration": false, "prepareSupport": true },
+                "codeAction": {
+                    "dynamicRegistration": false,
+                    "codeActionLiteralSupport": {
+                        "codeActionKind": {
+                            "valueSet": [
+                                "",
+                                "quickfix",
+                                "refactor",
+                                "refactor.extract",
+                                "refactor.inline",
+                                "refactor.rewrite",
+                                "source",
+                                "source.organizeImports",
+                                "source.fixAll"
+                            ]
                         }
                     },
-                    "completion": {
-                        "dynamicRegistration": false,
-                        "contextSupport": true,
-                        "completionItem": {
-                            "snippetSupport": true,
-                            "documentationFormat": ["markdown", "plaintext"],
-                            "resolveSupport": {
-                                "properties": [
-                                    "documentation",
-                                    "detail",
-                                    "additionalTextEdits",
-                                    "textEdit"
-                                ]
-                            },
-                            "insertReplaceSupport": true,
-                            "labelDetailsSupport": false
-                        }
-                    },
-                    "semanticTokens": {
-                        "dynamicRegistration": false,
-                        "requests": { "full": true, "range": false },
-                        "tokenTypes": [
-                            "namespace", "type", "class", "enum", "interface", "struct",
-                            "typeParameter", "parameter", "variable", "property", "enumMember",
-                            "event", "function", "method", "macro", "keyword", "modifier",
-                            "comment", "string", "number", "regexp", "operator", "decorator"
-                        ],
-                        "tokenModifiers": [
-                            "declaration", "definition", "readonly", "static", "deprecated",
-                            "abstract", "async", "modification", "documentation",
-                            "defaultLibrary"
-                        ],
-                        "formats": ["relative"],
-                        "overlappingTokenSupport": false,
-                        "multilineTokenSupport": false
+                    "isPreferredSupport": true,
+                    "dataSupport": true,
+                    "resolveSupport": {
+                        "properties": ["edit", "command"]
                     }
                 },
-                "workspace": { "workspaceFolders": true, "configuration": false },
-                "window": { "workDoneProgress": true }
-            }
-        });
+                "inlayHint": {
+                    "dynamicRegistration": false,
+                    "resolveSupport": {
+                        "properties": ["textEdits", "tooltip", "location", "command"]
+                    }
+                },
+                "signatureHelp": {
+                    "contextSupport": true,
+                    "signatureInformation": {
+                        "documentationFormat": ["markdown", "plaintext"],
+                        "parameterInformation": {
+                            "labelOffsetSupport": true
+                        },
+                        "activeParameterSupport": true
+                    }
+                },
+                "completion": {
+                    "dynamicRegistration": false,
+                    "contextSupport": true,
+                    "completionItem": {
+                        "snippetSupport": true,
+                        "documentationFormat": ["markdown", "plaintext"],
+                        "resolveSupport": {
+                            "properties": [
+                                "documentation",
+                                "detail",
+                                "additionalTextEdits",
+                                "textEdit"
+                            ]
+                        },
+                        "insertReplaceSupport": true,
+                        "labelDetailsSupport": false
+                    }
+                },
+                "semanticTokens": {
+                    "dynamicRegistration": false,
+                    "requests": { "full": true, "range": false },
+                    "tokenTypes": [
+                        "namespace", "type", "class", "enum", "interface", "struct",
+                        "typeParameter", "parameter", "variable", "property", "enumMember",
+                        "event", "function", "method", "macro", "keyword", "modifier",
+                        "comment", "string", "number", "regexp", "operator", "decorator"
+                    ],
+                    "tokenModifiers": [
+                        "declaration", "definition", "readonly", "static", "deprecated",
+                        "abstract", "async", "modification", "documentation",
+                        "defaultLibrary"
+                    ],
+                    "formats": ["relative"],
+                    "overlappingTokenSupport": false,
+                    "multilineTokenSupport": false
+                }
+            },
+            "workspace": { "workspaceFolders": true, "configuration": false },
+            "window": { "workDoneProgress": true }
+        }
+    });
 
     write_lsp_message(
         out,
@@ -1268,6 +1325,22 @@ fn dispatch(state: &SharedState, notif_tx: &NotifSender, msg: Value) {
                 diagnostics,
             });
         }
+        "dart/textDocument/publishFlutterOutline" => {
+            let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(path) = uri_to_path(uri) else { return };
+            let outline = params.get("outline").cloned().unwrap_or(Value::Null);
+            let _ = notif_tx.send(Notification::FlutterOutline { path, outline });
+        }
+        "dart/textDocument/publishOutline" => {
+            let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(path) = uri_to_path(uri) else { return };
+            let outline = params.get("outline").cloned().unwrap_or(Value::Null);
+            let _ = notif_tx.send(Notification::Outline { path, outline });
+        }
         "window/logMessage" | "window/showMessage" => {
             let text = params
                 .get("message")
@@ -1325,16 +1398,6 @@ fn path_to_uri(path: &Path) -> String {
 
 fn uri_to_path(uri: &str) -> Option<PathBuf> {
     url::Url::parse(uri).ok()?.to_file_path().ok()
-}
-
-fn dart_available() -> bool {
-    Command::new("dart")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }
 
 // ─────────────────────────────────────────────────────────────────────

@@ -105,7 +105,9 @@ pub fn build_test_command(
     file: &std::path::Path,
     test_name: &str,
 ) -> (String, Vec<String>) {
-    let program = "flutter".to_string();
+    let program = crate::dart::sdk::find_flutter_binary(None)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "flutter".to_string());
     let args = vec![
         "test".to_string(),
         file.display().to_string(),

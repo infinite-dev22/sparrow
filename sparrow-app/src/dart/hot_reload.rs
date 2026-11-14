@@ -129,8 +129,11 @@ impl FlutterHotReloadData {
             },
         );
 
+        let ws_path = self.common.workspace.path.clone();
         std::thread::spawn(move || {
-            let devices = std::process::Command::new("flutter")
+            let flutter_bin = crate::dart::sdk::find_flutter_binary(ws_path.as_deref())
+                .unwrap_or_else(|| std::path::PathBuf::from("flutter"));
+            let devices = std::process::Command::new(&flutter_bin)
                 .args(["devices", "--machine"])
                 .output()
                 .ok()
@@ -258,10 +261,14 @@ fn flutter_config(cwd: Option<String>, device_id: Option<String>) -> RunDebugCon
         args.push(id);
     }
 
+    let program = crate::dart::sdk::find_flutter_binary(cwd.as_ref().map(std::path::Path::new))
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| "flutter".to_string());
+
     RunDebugConfig {
         ty: None,
         name: "Flutter Run".to_string(),
-        program: "flutter".to_string(),
+        program,
         args: Some(args),
         cwd,
         env: None,

@@ -156,20 +156,17 @@ impl Worker {
 // ── dart executable plumbing ────────────────────────────────────────
 
 fn check_dart_available() -> bool {
-    Command::new("dart")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    crate::dart::sdk::is_dart_available(None)
 }
 
 fn run_dart_analyze(
     path: &PathBuf,
     _epoch: u64,
 ) -> Result<HashMap<PathBuf, Vec<Diagnostic>>, String> {
-    let output = Command::new("dart")
+    let dart_bin = crate::dart::sdk::find_dart_binary(None)
+        .unwrap_or_else(|| PathBuf::from("dart"));
+
+    let output = Command::new(&dart_bin)
         .arg("analyze")
         .arg("--format=json")
         .arg(path)

@@ -1,0 +1,414 @@
+//! Flutter & Dart workspace project bootstrapping and package management.
+//!
+//! Handles:
+//! 1. Project Type Classification (`pubspec.yaml` parsing for Flutter vs pure Dart)
+//! 2. Automated Package Resolution Check (`.dart_tool/package_config.json` timestamp comparison)
+//! 3. Non-blocking automated `pub get` execution with callback and logging.
+
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    thread,
+    time::SystemTime,
+};
+
+use crate::dart::sdk::{find_dart_binary, find_flutter_binary, find_flutter_sdk};
+
+/// Type of Dart / Flutter project detected in a workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectType {
+    /// Flutter application or package.
+    Flutter {
+        name: String,
+        pubspec_path: PathBuf,
+        dependencies: Vec<String>,
+    },
+    /// Pure Dart application or package.
+    PureDart {
+        name: String,
+        pubspec_path: PathBuf,
+        dependencies: Vec<String>,
+    },
+    /// No `pubspec.yaml` found or not a Dart workspace.
+    None,
+}
+
+impl ProjectType {
+    pub fn is_flutter(&self) -> bool {
+        matches!(self, ProjectType::Flutter { .. })
+    }
+
+    pub fn is_dart(&self) -> bool {
+        matches!(self, ProjectType::Flutter { .. } | ProjectType::PureDart { .. })
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            ProjectType::Flutter { name, .. } => Some(name),
+            ProjectType::PureDart { name, .. } => Some(name),
+            ProjectType::None => None,
+        }
+    }
+
+    pub fn pubspec_path(&self) -> Option<&Path> {
+        match self {
+            ProjectType::Flutter { pubspec_path, .. } => Some(pubspec_path),
+            ProjectType::PureDart { pubspec_path, .. } => Some(pubspec_path),
+            ProjectType::None => None,
+        }
+    }
+}
+
+/// Classifies a workspace directory by inspecting its `pubspec.yaml`.
+pub fn classify_project(workspace_root: &Path) -> ProjectType {
+    let pubspec_path = workspace_root.join("pubspec.yaml");
+    if !pubspec_path.is_file() {
+        return ProjectType::None;
+    }
+
+    let Ok(content) = fs::read_to_string(&pubspec_path) else {
+        return ProjectType::None;
+    };
+
+    parse_pubspec(&content, pubspec_path)
+}
+
+/// Checks if the workspace root contains a Flutter project.
+pub fn is_flutter_project(workspace_root: &Path) -> bool {
+    classify_project(workspace_root).is_flutter()
+}
+
+/// Checks if the workspace root contains either a Dart or Flutter project.
+pub fn is_dart_or_flutter_project(workspace_root: &Path) -> bool {
+    classify_project(workspace_root).is_dart()
+}
+
+/// Checks if package resolution (`pub get`) is needed.
+///
+/// Returns `true` if:
+/// - `pubspec.yaml` exists AND
+/// - `.dart_tool/package_config.json` does NOT exist OR is older than `pubspec.yaml`.
+pub fn is_package_resolution_needed(workspace_root: &Path) -> bool {
+    let pubspec_path = workspace_root.join("pubspec.yaml");
+    if !pubspec_path.is_file() {
+        return false;
+    }
+
+    let package_config = workspace_root
+        .join(".dart_tool")
+        .join("package_config.json");
+
+    if !package_config.is_file() {
+        return true;
+    }
+
+    let pubspec_mtime = get_mtime(&pubspec_path);
+    let config_mtime = get_mtime(&package_config);
+
+    match (pubspec_mtime, config_mtime) {
+        (Some(p_time), Some(c_time)) => p_time > c_time,
+        _ => true,
+    }
+}
+
+/// Run `pub get` in a background thread without blocking the UI.
+pub fn run_pub_get(
+    workspace_root: &Path,
+    on_complete: Option<Box<dyn FnOnce(Result<(), String>) + Send + 'static>>,
+) {
+    let project_type = classify_project(workspace_root);
+    if !project_type.is_dart() {
+        if let Some(cb) = on_complete {
+            cb(Err("Not a Dart/Flutter project (no pubspec.yaml)".into()));
+        }
+        return;
+    }
+
+    let root = workspace_root.to_path_buf();
+    let is_flutter = project_type.is_flutter();
+
+    thread::Builder::new()
+        .name("DartPubGet".into())
+        .spawn(move || {
+            let res = execute_pub_get(&root, is_flutter);
+            if let Some(cb) = on_complete {
+                cb(res);
+            }
+        })
+        .expect("spawn DartPubGet thread");
+}
+
+/// Bootstrap a workspace: inspect SDK, classify project, and trigger `pub get` if required.
+pub fn bootstrap_workspace(workspace_root: &Path) {
+    let project_type = classify_project(workspace_root);
+    if !project_type.is_dart() {
+        return;
+    }
+
+    tracing::info!(
+        "Bootstrapping workspace at {}: {:?}",
+        workspace_root.display(),
+        project_type
+    );
+
+    if let Some(flutter_sdk) = find_flutter_sdk(Some(workspace_root)) {
+        tracing::info!(
+            "Detected Flutter SDK at {}: version {:?}, channel {:?}",
+            flutter_sdk.root.display(),
+            flutter_sdk.version,
+            flutter_sdk.channel
+        );
+    } else if let Some(dart_bin) = find_dart_binary(Some(workspace_root)) {
+        tracing::info!("Detected standalone Dart binary at {}", dart_bin.display());
+    } else {
+        tracing::warn!(
+            "No Flutter or Dart SDK discovered for workspace at {}. Run/LSP features may be limited.",
+            workspace_root.display()
+        );
+    }
+
+    if is_package_resolution_needed(workspace_root) {
+        tracing::info!(
+            "Dependencies outdated or missing for {}; running background pub get...",
+            workspace_root.display()
+        );
+        run_pub_get(
+            workspace_root,
+            Some(Box::new(|res| match res {
+                Ok(()) => tracing::info!("pub get completed successfully."),
+                Err(err) => tracing::warn!("pub get failed: {err}"),
+            })),
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Internal Helpers
+// ─────────────────────────────────────────────────────────────────────
+
+fn execute_pub_get(workspace_root: &Path, is_flutter: bool) -> Result<(), String> {
+    let (program, args) = if is_flutter {
+        if let Some(flutter_bin) = find_flutter_binary(Some(workspace_root)) {
+            (flutter_bin.to_string_lossy().to_string(), vec!["pub", "get"])
+        } else if let Some(dart_bin) = find_dart_binary(Some(workspace_root)) {
+            (dart_bin.to_string_lossy().to_string(), vec!["pub", "get"])
+        } else {
+            ("flutter".to_string(), vec!["pub", "get"])
+        }
+    } else {
+        if let Some(dart_bin) = find_dart_binary(Some(workspace_root)) {
+            (dart_bin.to_string_lossy().to_string(), vec!["pub", "get"])
+        } else if let Some(flutter_bin) = find_flutter_binary(Some(workspace_root)) {
+            (flutter_bin.to_string_lossy().to_string(), vec!["pub", "get"])
+        } else {
+            ("dart".to_string(), vec!["pub", "get"])
+        }
+    };
+
+    let output = Command::new(&program)
+        .args(&args)
+        .current_dir(workspace_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to spawn `{program} pub get`: {e}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr);
+        Err(format!("`{program} pub get` failed: {}", err.trim()))
+    }
+}
+
+fn get_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// Parse `pubspec.yaml` content into `ProjectType`.
+fn parse_pubspec(content: &str, pubspec_path: PathBuf) -> ProjectType {
+    let mut project_name = String::new();
+    let mut is_flutter = false;
+    let mut dependencies = Vec::new();
+
+    let mut in_dependencies = false;
+    let mut in_dev_dependencies = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+
+        // Top level keys (no leading spaces)
+        if !line.starts_with(' ') && !line.starts_with('\t') {
+            in_dependencies = trimmed.starts_with("dependencies:");
+            in_dev_dependencies = trimmed.starts_with("dev_dependencies:");
+
+            if trimmed.starts_with("flutter:") {
+                is_flutter = true;
+            }
+
+            if let Some(rest) = trimmed.strip_prefix("name:") {
+                project_name = rest.trim().trim_matches(['\'', '"']).to_string();
+            }
+            continue;
+        }
+
+        // Nested lines
+        if in_dependencies || in_dev_dependencies {
+            if let Some((dep_name, _)) = trimmed.split_once(':') {
+                let dep = dep_name.trim().trim_matches(['\'', '"']).to_string();
+                if dep == "flutter" || dep == "flutter_test" || dep == "flutter_localizations" {
+                    is_flutter = true;
+                }
+                if !dependencies.contains(&dep) {
+                    dependencies.push(dep);
+                }
+            }
+        }
+    }
+
+    if project_name.is_empty() {
+        project_name = pubspec_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("unnamed")
+            .to_string();
+    }
+
+    if is_flutter {
+        ProjectType::Flutter {
+            name: project_name,
+            pubspec_path,
+            dependencies,
+        }
+    } else {
+        ProjectType::PureDart {
+            name: project_name,
+            pubspec_path,
+            dependencies,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_classify_flutter_project() {
+        let dir = tempdir().unwrap();
+        let pubspec = dir.path().join("pubspec.yaml");
+        let content = r#"
+name: my_flutter_app
+description: A new Flutter project.
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+"#;
+        fs::write(&pubspec, content).unwrap();
+
+        let pt = classify_project(dir.path());
+        assert!(pt.is_flutter());
+        assert_eq!(pt.name(), Some("my_flutter_app"));
+    }
+
+    #[test]
+    fn test_classify_pure_dart_project() {
+        let dir = tempdir().unwrap();
+        let pubspec = dir.path().join("pubspec.yaml");
+        let content = r#"
+name: my_dart_cli
+description: A pure Dart CLI.
+dependencies:
+  args: ^2.4.2
+  path: ^1.9.0
+"#;
+        fs::write(&pubspec, content).unwrap();
+
+        let pt = classify_project(dir.path());
+        assert!(!pt.is_flutter());
+        assert!(pt.is_dart());
+        assert_eq!(pt.name(), Some("my_dart_cli"));
+    }
+
+    #[test]
+    fn test_classify_flutter_with_flutter_section() {
+        let dir = tempdir().unwrap();
+        let pubspec = dir.path().join("pubspec.yaml");
+        let content = r#"
+name: custom_flutter_app
+flutter:
+  uses-material-design: true
+"#;
+        fs::write(&pubspec, content).unwrap();
+
+        let pt = classify_project(dir.path());
+        assert!(pt.is_flutter());
+        assert!(is_flutter_project(dir.path()));
+        assert!(is_dart_or_flutter_project(dir.path()));
+        assert_eq!(pt.name(), Some("custom_flutter_app"));
+        assert_eq!(pt.pubspec_path(), Some(pubspec.as_path()));
+    }
+
+    #[test]
+    fn test_classify_flutter_with_dev_dependency() {
+        let dir = tempdir().unwrap();
+        let pubspec = dir.path().join("pubspec.yaml");
+        let content = r#"
+name: plugin_test
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+"#;
+        fs::write(&pubspec, content).unwrap();
+
+        let pt = classify_project(dir.path());
+        assert!(pt.is_flutter());
+    }
+
+    #[test]
+    fn test_classify_non_dart_project() {
+        let dir = tempdir().unwrap();
+        let pt = classify_project(dir.path());
+        assert_eq!(pt, ProjectType::None);
+        assert!(!pt.is_flutter());
+        assert!(!pt.is_dart());
+        assert_eq!(pt.name(), None);
+        assert_eq!(pt.pubspec_path(), None);
+        assert!(!is_package_resolution_needed(dir.path()));
+    }
+
+    #[test]
+    fn test_package_resolution_needed_when_missing() {
+        let dir = tempdir().unwrap();
+        let pubspec = dir.path().join("pubspec.yaml");
+        fs::write(&pubspec, "name: test_app\n").unwrap();
+
+        assert!(is_package_resolution_needed(dir.path()));
+    }
+
+    #[test]
+    fn test_package_resolution_not_needed_when_fresh() {
+        let dir = tempdir().unwrap();
+        let pubspec = dir.path().join("pubspec.yaml");
+        fs::write(&pubspec, "name: test_app\n").unwrap();
+
+        let dart_tool = dir.path().join(".dart_tool");
+        fs::create_dir_all(&dart_tool).unwrap();
+        let pkg_cfg = dart_tool.join("package_config.json");
+        // Ensure timestamp is later
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        fs::write(&pkg_cfg, "{}").unwrap();
+
+        assert!(!is_package_resolution_needed(dir.path()));
+    }
+}
