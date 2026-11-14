@@ -40,7 +40,7 @@ impl PanelKind {
             PanelKind::Implementation => SparrowIcons::IMPLEMENTATION,
             PanelKind::WidgetTree => SparrowIcons::TYPE_HIERARCHY,
             PanelKind::DartOutline => SparrowIcons::DOCUMENT_SYMBOL,
-            PanelKind::FlutterInspector => SparrowIcons::DEBUG,
+            PanelKind::FlutterInspector => SparrowIcons::FLUTTER_INSPECTOR,
         }
     }
 

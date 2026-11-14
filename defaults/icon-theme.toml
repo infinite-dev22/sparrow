@@ -34,6 +34,15 @@ name = "sparrow Modern"
 "start"              = "player-play.svg"         # Tabler
 "run_errors"         = "circle-x.svg"            # Lucide: circle-x
 
+# ── Flutter / Dart execution & devices ─────────────────────────────────────
+"flutter_hot_reload"  = "zap.svg"                 # Lucide: zap
+"flutter_hot_restart" = "refresh-cw.svg"          # Lucide: refresh-cw
+"flutter_stop"        = "player-stop.svg"         # Tabler: player-stop
+"flutter_inspector"   = "network.svg"             # Lucide: network
+"device.mobile"       = "smartphone.svg"          # Lucide: smartphone
+"device.desktop"      = "screen-normal.svg"       # Codicons: screen-normal
+"device.web"          = "link.svg"                # Lucide: link
+
 # ── Windows ──────────────────────────────────────────────────────────────
 "window.close"     = "chrome-close.svg"          # Lucide: x
 "window.restore"   = "chrome-restore.svg"        # Lucide: square (restore variant)

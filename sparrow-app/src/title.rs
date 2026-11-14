@@ -524,9 +524,9 @@ fn right(
             },
             || false,
             || false,
-            || "Run",
+            || "Run (Shift+F10)",
             config,
-        ).style(move |s| s.margin_horiz(4.0).color(config.get().color(SparrowColor::SPARROW_RUN_ICON)))
+        ).style(move |s| s.margin_horiz(2.0).color(config.get().color(SparrowColor::SPARROW_RUN_ICON)))
     };
 
     // Green bug button next to Run (opens the same Run and Debug palette).
@@ -537,7 +537,7 @@ fn right(
                 let config = config.get();
                 let size = config.ui.icon_size() as f32;
                 s.size(size, size)
-                    .color(config.color(SparrowColor::SPARROW_RUN_ICON))
+                    .color(config.color(SparrowColor::SPARROW_DEBUG_ICON))
             },
         ))
         .on_click_stop(move |_| {
@@ -550,19 +550,130 @@ fn right(
                     .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
             })
         }),
-        || "Debug",
+        || "Debug (Shift+F9)",
     );
 
+    // Hot Reload button (amber flash bolt)
+    let hot_reload_button = {
+        let hr = hot_reload.clone();
+        tooltip_label(
+            config,
+            container(svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_HOT_RELOAD)).style(
+                move |s| {
+                    let config = config.get();
+                    let size = config.ui.icon_size() as f32;
+                    s.size(size, size)
+                        .color(config.color(SparrowColor::SPARROW_HOT_RELOAD_ICON))
+                },
+            ))
+            .on_click_stop(move |_| {
+                hr.hot_reload();
+            })
+            .style(move |s| {
+                let config = config.get();
+                s.padding(4.0).margin_horiz(2.0).border_radius(6.0).hover(|s| {
+                    s.cursor(CursorStyle::Pointer)
+                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                })
+            }),
+            || "Hot Reload (Ctrl+\\)",
+        )
+    };
+
+    // Hot Restart button (blue cyclical restart)
+    let hot_restart_button = {
+        let hr = hot_reload.clone();
+        tooltip_label(
+            config,
+            container(svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_HOT_RESTART)).style(
+                move |s| {
+                    let config = config.get();
+                    let size = config.ui.icon_size() as f32;
+                    s.size(size, size)
+                        .color(config.color(SparrowColor::SPARROW_HOT_RESTART_ICON))
+                },
+            ))
+            .on_click_stop(move |_| {
+                hr.hot_restart();
+            })
+            .style(move |s| {
+                let config = config.get();
+                s.padding(4.0).margin_horiz(2.0).border_radius(6.0).hover(|s| {
+                    s.cursor(CursorStyle::Pointer)
+                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                })
+            }),
+            || "Hot Restart (Ctrl+Shift+\\)",
+        )
+    };
+
+    // Stop button (crimson red stop square)
+    let stop_button = {
+        let hr = hot_reload.clone();
+        tooltip_label(
+            config,
+            container(svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_STOP)).style(
+                move |s| {
+                    let config = config.get();
+                    let size = config.ui.icon_size() as f32;
+                    s.size(size, size)
+                        .color(config.color(SparrowColor::SPARROW_STOP_ICON))
+                },
+            ))
+            .on_click_stop(move |_| {
+                hr.stop();
+            })
+            .style(move |s| {
+                let config = config.get();
+                s.padding(4.0).margin_horiz(2.0).border_radius(6.0).hover(|s| {
+                    s.cursor(CursorStyle::Pointer)
+                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                })
+            }),
+            || "Stop (Ctrl+F2)",
+        )
+    };
+
+    // Flutter Inspector toggle button
+    let inspector_button = {
+        let wt_data = window_tab_data.clone();
+        tooltip_label(
+            config,
+            container(svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_INSPECTOR)).style(
+                move |s| {
+                    let config = config.get();
+                    let size = config.ui.icon_size() as f32;
+                    s.size(size, size)
+                        .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
+                },
+            ))
+            .on_click_stop(move |_| {
+                wt_data.toggle_panel_visual(crate::panel::kind::PanelKind::FlutterInspector);
+            })
+            .style(move |s| {
+                let config = config.get();
+                s.padding(4.0).margin_horiz(2.0).border_radius(6.0).hover(|s| {
+                    s.cursor(CursorStyle::Pointer)
+                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                })
+            }),
+            || "Flutter Inspector",
+        )
+    };
+
     stack((
+        run_config_chip,
         device_selector(
             hot_reload.clone(),
             config,
             device_chip_origin,
             device_menu_visible,
         ),
-        run_config_chip,
         run_button,
         debug_button,
+        hot_reload_button,
+        hot_restart_button,
+        stop_button,
         clickable_icon(
             || SparrowIcons::SEARCH,
             move || {
@@ -570,9 +681,10 @@ fn right(
             },
             || false,
             || false,
-            || "Search Everywhere",
+            || "Search Everywhere (Double Shift)",
             config,
         ),
+        inspector_button,
         stack((
             not_clickable_icon(
                 || SparrowIcons::SETTINGS,
@@ -805,28 +917,15 @@ fn device_selector(
 
     container(
         stack((
-            // Device icon on the chip
+            // Device platform icon on the chip
             svg(move || {
                 let c = config.get();
-                let icon_name = if let Some(dev) = hot_reload.selected_device.get() {
-                    if let Some(platform) = dev.target_platform {
-                        if platform.contains("web") {
-                            "browser.svg"
-                        } else if platform.contains("android")
-                            || platform.contains("ios")
-                        {
-                            "device-mobile.svg"
-                        } else {
-                            "device-desktop.svg"
-                        }
-                    } else {
-                        "device-desktop.svg"
-                    }
+                let icon_key = if let Some(dev) = hot_reload.selected_device.get() {
+                    crate::dart::hot_reload::device_platform_icon(dev.target_platform.as_deref())
                 } else {
-                    "device-desktop.svg"
+                    SparrowIcons::DEVICE_DESKTOP
                 };
-                // Fallback to a standard icon if your theme doesn't have these yet
-                c.ui_svg(SparrowIcons::TERMINAL)
+                c.ui_svg(icon_key)
             })
             .style(move |s| {
                 let c = config.get();
@@ -1540,19 +1639,6 @@ pub fn device_selector_overlay(
         move || visible.set(false)
     };
 
-    // Helper to get the correct icon based on the platform
-    let get_platform_icon = move |platform: &Option<String>| -> &'static str {
-        if let Some(p) = platform {
-            if p.contains("web") {
-                return "browser.svg";
-            } // You should add this to your icon theme
-            if p.contains("android") || p.contains("ios") {
-                return "device-mobile.svg";
-            } // Add this
-        }
-        "device-desktop.svg" // Add this
-    };
-
     let value = hot_reload.clone();
     let device_row = move |dev: FlutterDevice, is_current: bool| {
         let dev_clone = dev.clone();
@@ -1560,15 +1646,15 @@ pub fn device_selector_overlay(
         let close = close_menu.clone();
         let config_get = config;
 
-        let icon_str = get_platform_icon(&dev.target_platform);
+        let icon_key = crate::dart::hot_reload::device_platform_icon(dev.target_platform.as_deref());
+        let platform_desc = dev.target_platform.clone().unwrap_or_else(|| "desktop".to_string());
 
         container(
             stack((
                 // Icon
                 svg(move || {
                     let c = config_get.get();
-                    // Fallback to terminal if custom icons aren't in the theme yet
-                    c.ui_svg(SparrowIcons::TERMINAL)
+                    c.ui_svg(icon_key)
                 })
                 .style(move |s| {
                     let c = config_get.get();
@@ -1579,24 +1665,38 @@ pub fn device_selector_overlay(
                         c.color(SparrowColor::EDITOR_DIM)
                     })
                 }),
-                // Device Name
-                label(move || dev_clone.name.clone()).style(move |s| {
+                // Device Name & target platform
+                stack((
+                    label(move || dev_clone.name.clone()).style(move |s| {
+                        let c = config_get.get();
+                        s.font_size(13.0)
+                            .font_weight(if is_current {
+                                Weight::BOLD
+                            } else {
+                                Weight::NORMAL
+                            })
+                            .color(c.color(SparrowColor::EDITOR_FOREGROUND))
+                    }),
+                    label(move || format!("• {}", platform_desc)).style(move |s| {
+                        let c = config_get.get();
+                        s.font_size(11.0)
+                            .margin_left(6.0)
+                            .color(c.color(SparrowColor::PANEL_FOREGROUND_DIM))
+                    }),
+                ))
+                .style(|s| s.items_center().flex_row().flex_grow(1.0_f32)),
+                // Checkmark if current
+                label(move || if is_current { "✓" } else { "" }).style(move |s| {
                     let c = config_get.get();
                     s.font_size(13.0)
-                        .font_weight(if is_current {
-                            Weight::BOLD
-                        } else {
-                            Weight::NORMAL
-                        })
+                        .font_weight(Weight::BOLD)
                         .color(c.color(SparrowColor::EDITOR_FOREGROUND))
                 }),
             ))
-            .style(|s| s.items_center()),
+            .style(|s| s.items_center().width_full()),
         )
         .on_click_stop(move |_| {
             hr.selected_device.set(Some(dev.clone()));
-            // If Flutter is already running, you might want to stop and restart it here,
-            // or just let the user click "Run" again.
             close();
         })
         .style(move |s| {
@@ -1605,13 +1705,61 @@ pub fn device_selector_overlay(
                 .height(32.0)
                 .padding_horiz(10.0)
                 .items_center()
-                // Exact Android Studio Blue highlight for the current device
                 .apply_if(is_current, |s| {
                     s.background(
                         c.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND)
-                            .multiply_alpha(0.8),
+                            .multiply_alpha(0.25),
                     )
                 })
+                .hover(|s| {
+                    s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                        .cursor(CursorStyle::Pointer)
+                })
+        })
+    };
+
+    let emu_value = hot_reload.clone();
+    let emulator_row = move |emu: crate::dart::hot_reload::FlutterEmulator| {
+        let emu_clone = emu.clone();
+        let hr = emu_value.clone();
+        let close = close_menu.clone();
+        let config_get = config;
+
+        container(
+            stack((
+                svg(move || config_get.get().ui_svg(SparrowIcons::DEVICE_MOBILE))
+                    .style(move |s| {
+                        let c = config_get.get();
+                        let size = c.ui.icon_size() as f32;
+                        s.size(size, size)
+                            .margin_right(10.0)
+                            .color(c.color(SparrowColor::EDITOR_DIM))
+                    }),
+                label(move || emu_clone.name.clone()).style(move |s| {
+                    let c = config_get.get();
+                    s.font_size(13.0)
+                        .color(c.color(SparrowColor::EDITOR_FOREGROUND))
+                        .flex_grow(1.0_f32)
+                }),
+                label(|| "Launch".to_string()).style(move |s| {
+                    let c = config_get.get();
+                    s.font_size(11.0)
+                        .font_weight(Weight::BOLD)
+                        .color(c.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))
+                }),
+            ))
+            .style(|s| s.items_center().width_full()),
+        )
+        .on_click_stop(move |_| {
+            hr.launch_emulator(&emu.id);
+            close();
+        })
+        .style(move |s| {
+            let c = config_get.get();
+            s.width_full()
+                .height(32.0)
+                .padding_horiz(10.0)
+                .items_center()
                 .hover(|s| {
                     s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
                         .cursor(CursorStyle::Pointer)
@@ -1628,6 +1776,15 @@ pub fn device_selector_overlay(
         container(
             scroll(
                 stack((
+                    // Section header: Running Devices
+                    label(|| "Running Devices".to_string()).style(move |s| {
+                        let c = config.get();
+                        s.font_size(11.0)
+                            .font_weight(Weight::BOLD)
+                            .padding_horiz(10.0)
+                            .padding_vert(4.0)
+                            .color(c.color(SparrowColor::PANEL_FOREGROUND_DIM))
+                    }),
                     // Device List
                     dyn_stack(
                         move || hot_reload.devices.get(),
@@ -1642,13 +1799,102 @@ pub fn device_selector_overlay(
                         },
                     )
                     .style(|s| s.flex_col().width_full()),
+                    // If no devices found
+                    label(|| "No running devices detected".to_string()).style({
+                        let hr = hot_reload.clone();
+                        move |s| {
+                            let c = config.get();
+                            let is_empty = hr.devices.get().is_empty();
+                            s.font_size(12.0)
+                                .padding_horiz(10.0)
+                                .padding_vert(4.0)
+                                .color(c.color(SparrowColor::EDITOR_DIM))
+                                .apply_if(!is_empty, |s| s.hide())
+                        }
+                    }),
+                    // Emulators section (if any available)
+                    stack((
+                        empty().style(move |s| {
+                            s.height(1.0).margin_vert(6.0).background(
+                                config.get().color(SparrowColor::SPARROW_BORDER),
+                            )
+                        }),
+                        label(|| "Available Emulators".to_string()).style(move |s| {
+                            let c = config.get();
+                            s.font_size(11.0)
+                                .font_weight(Weight::BOLD)
+                                .padding_horiz(10.0)
+                                .padding_vert(4.0)
+                                .color(c.color(SparrowColor::PANEL_FOREGROUND_DIM))
+                        }),
+                        dyn_stack(
+                            {
+                                let hr = hot_reload.clone();
+                                move || hr.emulators.get()
+                            },
+                            |emu| emu.id.clone(),
+                            move |emu| emulator_row(emu),
+                        )
+                        .style(|s| s.flex_col().width_full()),
+                    ))
+                    .style({
+                        let hr = hot_reload.clone();
+                        move |s| {
+                            let is_empty = hr.emulators.get().is_empty();
+                            s.flex_col().width_full().apply_if(is_empty, |s| s.hide())
+                        }
+                    }),
                     // Divider
                     empty().style(move |s| {
                         s.height(1.0).margin_vert(6.0).background(
                             config.get().color(SparrowColor::SPARROW_BORDER),
                         )
                     }),
-                    // Restart Flutter Daemon
+                    // Refresh Devices Action
+                    container(
+                        stack((
+                            svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_HOT_RESTART))
+                                .style(move |s| {
+                                    let c = config.get();
+                                    let size = c.ui.icon_size() as f32;
+                                    s.size(size, size).margin_right(10.0).color(
+                                        c.color(SparrowColor::EDITOR_FOREGROUND),
+                                    )
+                                }),
+                            label(|| "Refresh Devices".to_string()).style(
+                                move |s| {
+                                    s.font_size(13.0).color(
+                                        config
+                                            .get()
+                                            .color(SparrowColor::EDITOR_FOREGROUND),
+                                    )
+                                },
+                            ),
+                        ))
+                        .style(|s| s.items_center()),
+                    )
+                    .on_click_stop({
+                        let hr = hot_reload.clone();
+                        let close = close_menu.clone();
+                        move |_| {
+                            hr.fetch_devices();
+                            close();
+                        }
+                    })
+                    .style(move |s| {
+                        let c = config.get();
+                        s.width_full()
+                            .height(32.0)
+                            .padding_horiz(10.0)
+                            .items_center()
+                            .hover(|s| {
+                                s.background(
+                                    c.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                                )
+                                .cursor(CursorStyle::Pointer)
+                            })
+                    }),
+                    // Restart Flutter Daemon Action
                     container(
                         stack((
                             svg(move || config.get().ui_svg(SparrowIcons::FLUTTER))
@@ -1703,7 +1949,7 @@ pub fn device_selector_overlay(
                 .margin_left(pt.x as f32)
                 // Anchor perfectly below the title bar, offset slightly to align with the chip
                 .margin_top(th as f32 + 2.0)
-                .width(280.0)
+                .width(300.0)
                 .padding(4.0)
                 .background(c.color(SparrowColor::PANEL_BACKGROUND))
                 .border(1.0)

@@ -39,6 +39,10 @@ impl SparrowColor {
         "sparrow.tab.active.foreground";
     pub const SPARROW_WINDOW_BACKGROUND: &'static str = "sparrow.window.background";
     pub const SPARROW_RUN_ICON: &'static str = "sparrow.run.icon";
+    pub const SPARROW_DEBUG_ICON: &'static str = "sparrow.debug.icon";
+    pub const SPARROW_HOT_RELOAD_ICON: &'static str = "sparrow.hot_reload.icon";
+    pub const SPARROW_HOT_RESTART_ICON: &'static str = "sparrow.hot_restart.icon";
+    pub const SPARROW_STOP_ICON: &'static str = "sparrow.stop.icon";
     pub const SPARROW_TAB_ACTIVE_BORDER: &'static str = "sparrow.tab.active.border";
     pub const SPARROW_TAB_ACTIVE_UNDERLINE: &'static str =
         "sparrow.tab.active.underline";

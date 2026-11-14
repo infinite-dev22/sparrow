@@ -92,6 +92,10 @@ dim-text = "#6F737A"
 
 "sparrow.window.background" = "#26282C"
 "sparrow.run.icon" = "#57955C"
+"sparrow.debug.icon" = "#57955C"
+"sparrow.hot_reload.icon" = "#EDA200"
+"sparrow.hot_restart.icon" = "#3574F0"
+"sparrow.stop.icon" = "#DB5860"
 
 "sparrow.button.primary.background" = "#3574F0"
 "sparrow.button.primary.foreground" = "#FFFFFF"

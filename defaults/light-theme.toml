@@ -105,7 +105,11 @@ dim-text = "#A0A1A7"
 "sparrow.tab.inactive.underline" = "#528BFF77"
 
 "sparrow.window.background" = "$secondary-background"
-"sparrow.run.icon" = "#50A14F"
+"sparrow.run.icon" = "#499C54"
+"sparrow.debug.icon" = "#499C54"
+"sparrow.hot_reload.icon" = "#EDA200"
+"sparrow.hot_restart.icon" = "#3574F0"
+"sparrow.stop.icon" = "#DB5860"
 "sparrow.tab.active.border" = "$secondary-background"
 
 "sparrow.tab.separator" = "#B4B4B4"

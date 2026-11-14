@@ -48,6 +48,34 @@ pub struct FlutterDevice {
     pub sdk: Option<String>,
 }
 
+#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FlutterEmulator {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub platform_type: Option<String>,
+}
+
+/// Map a device target platform string to the corresponding theme icon constant.
+pub fn device_platform_icon(platform: Option<&str>) -> &'static str {
+    match platform {
+        Some(p) => {
+            let lower = p.to_lowercase();
+            if lower.contains("android") || lower.contains("ios") || lower.contains("mobile") {
+                crate::config::icon::SparrowIcons::DEVICE_MOBILE
+            } else if lower.contains("web") || lower.contains("browser") || lower.contains("chrome") {
+                crate::config::icon::SparrowIcons::DEVICE_WEB
+            } else {
+                crate::config::icon::SparrowIcons::DEVICE_DESKTOP
+            }
+        }
+        None => crate::config::icon::SparrowIcons::DEVICE_DESKTOP,
+    }
+}
+
 #[derive(Clone)]
 pub struct FlutterHotReloadData {
     pub state: RwSignal<FlutterRunState>,
@@ -55,6 +83,7 @@ pub struct FlutterHotReloadData {
     pub message: RwSignal<Option<String>>,
     pub devices: RwSignal<Vec<FlutterDevice>>,
     pub selected_device: RwSignal<Option<FlutterDevice>>,
+    pub emulators: RwSignal<Vec<FlutterEmulator>>,
     pub is_fetching_devices: RwSignal<bool>,
     pub common: Rc<CommonData>,
     pub terminal: TerminalPanelData,
@@ -72,6 +101,7 @@ impl FlutterHotReloadData {
             message: cx.create_rw_signal(None),
             devices: cx.create_rw_signal(Vec::new()),
             selected_device: cx.create_rw_signal(None),
+            emulators: cx.create_rw_signal(Vec::new()),
             is_fetching_devices: cx.create_rw_signal(false),
             common,
             terminal,
@@ -89,7 +119,7 @@ impl FlutterHotReloadData {
             .unwrap_or(false)
     }
 
-    /// Asynchronously fetch available Flutter devices
+    /// Asynchronously fetch available Flutter devices and emulators.
     pub fn fetch_devices(&self) {
         if !self.is_flutter_project() {
             return;
@@ -102,12 +132,13 @@ impl FlutterHotReloadData {
         let scope = self.common.scope;
         let devices_signal = self.devices;
         let selected_signal = self.selected_device;
+        let emulators_signal = self.emulators;
         let fetching_signal = self.is_fetching_devices;
 
         // Runs on the UI thread: Scope and signals never cross threads.
         let send = floem::ext_event::create_ext_action(
             scope,
-            move |devs: Vec<FlutterDevice>| {
+            move |(devs, emus): (Vec<FlutterDevice>, Vec<FlutterEmulator>)| {
                 fetching_signal.set(false);
                 if !devs.is_empty() {
                     match selected_signal.get_untracked() {
@@ -126,6 +157,7 @@ impl FlutterHotReloadData {
                     selected_signal.set(None);
                 }
                 devices_signal.set(devs);
+                emulators_signal.set(emus);
             },
         );
 
@@ -133,6 +165,7 @@ impl FlutterHotReloadData {
         std::thread::spawn(move || {
             let flutter_bin = crate::dart::sdk::find_flutter_binary(ws_path.as_deref())
                 .unwrap_or_else(|| std::path::PathBuf::from("flutter"));
+
             let devices = std::process::Command::new(&flutter_bin)
                 .args(["devices", "--machine"])
                 .output()
@@ -150,7 +183,44 @@ impl FlutterHotReloadData {
                 })
                 .unwrap_or_default();
 
-            send(devices); // only `send` and `devices` cross the thread boundary
+            let emulators = std::process::Command::new(&flutter_bin)
+                .args(["emulators", "--machine"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| {
+                    let stdout = String::from_utf8_lossy(&o.stdout);
+                    let json_str = stdout.trim_start_matches('\u{feff}');
+                    serde_json::from_str::<Vec<FlutterEmulator>>(json_str)
+                        .unwrap_or_default()
+                })
+                .unwrap_or_default();
+
+            send((devices, emulators));
+        });
+    }
+
+    /// Launch a cold emulator by ID using `flutter emulators --launch <id>`.
+    pub fn launch_emulator(&self, emulator_id: &str) {
+        let id = emulator_id.to_string();
+        let ws_path = self.common.workspace.path.clone();
+        let scope = self.common.scope;
+        let this = self.clone();
+
+        let trigger_refresh = floem::ext_event::create_ext_action(scope, move |()| {
+            this.fetch_devices();
+        });
+
+        std::thread::spawn(move || {
+            let flutter_bin = crate::dart::sdk::find_flutter_binary(ws_path.as_deref())
+                .unwrap_or_else(|| std::path::PathBuf::from("flutter"));
+            let _ = std::process::Command::new(&flutter_bin)
+                .args(["emulators", "--launch", &id])
+                .output();
+
+            // Give the emulator a short moment to start, then refresh devices
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            trigger_refresh(());
         });
     }
 
@@ -277,5 +347,79 @@ fn flutter_config(cwd: Option<String>, device_id: Option<String>) -> RunDebugCon
         dap_id: Default::default(),
         tracing_output: false,
         config_source: ConfigSource::Palette,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_device_platform_icon_mapping() {
+        assert_eq!(
+            device_platform_icon(Some("android-arm64")),
+            crate::config::icon::SparrowIcons::DEVICE_MOBILE
+        );
+        assert_eq!(
+            device_platform_icon(Some("ios")),
+            crate::config::icon::SparrowIcons::DEVICE_MOBILE
+        );
+        assert_eq!(
+            device_platform_icon(Some("web-javascript")),
+            crate::config::icon::SparrowIcons::DEVICE_WEB
+        );
+        assert_eq!(
+            device_platform_icon(Some("chrome")),
+            crate::config::icon::SparrowIcons::DEVICE_WEB
+        );
+        assert_eq!(
+            device_platform_icon(Some("darwin-arm64")),
+            crate::config::icon::SparrowIcons::DEVICE_DESKTOP
+        );
+        assert_eq!(
+            device_platform_icon(Some("linux-x64")),
+            crate::config::icon::SparrowIcons::DEVICE_DESKTOP
+        );
+        assert_eq!(
+            device_platform_icon(None),
+            crate::config::icon::SparrowIcons::DEVICE_DESKTOP
+        );
+    }
+
+    #[test]
+    fn test_flutter_device_deserialize() {
+        let json = r#"[
+            {
+                "name": "Pixel 7 Pro",
+                "id": "emulator-5554",
+                "isSupported": true,
+                "targetPlatform": "android-arm64",
+                "emulator": true,
+                "sdk": "Android 14.0"
+            }
+        ]"#;
+        let devices: Vec<FlutterDevice> = serde_json::from_str(json).unwrap();
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].name, "Pixel 7 Pro");
+        assert_eq!(devices[0].id, "emulator-5554");
+        assert!(devices[0].is_supported);
+        assert_eq!(devices[0].target_platform.as_deref(), Some("android-arm64"));
+    }
+
+    #[test]
+    fn test_flutter_emulator_deserialize() {
+        let json = r#"[
+            {
+                "id": "pixel_7",
+                "name": "Pixel 7 Pro API 34",
+                "category": "mobile",
+                "platformType": "android"
+            }
+        ]"#;
+        let emus: Vec<FlutterEmulator> = serde_json::from_str(json).unwrap();
+        assert_eq!(emus.len(), 1);
+        assert_eq!(emus[0].id, "pixel_7");
+        assert_eq!(emus[0].name, "Pixel 7 Pro API 34");
+        assert_eq!(emus[0].platform_type.as_deref(), Some("android"));
     }
 }

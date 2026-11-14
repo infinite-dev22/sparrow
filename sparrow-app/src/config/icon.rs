@@ -199,10 +199,16 @@ impl SparrowIcons {
     pub const DART_STREAM:       &'static str = "dart_stream";
     pub const DART_ISOLATE:      &'static str = "dart_isolate";
 
-    // ── Flutter dev tools ──
-    pub const FLUTTER_HOT_RELOAD: &'static str = "flutter_hot_reload";
-    pub const FLUTTER_ATTACH:     &'static str = "flutter_attach";
-    pub const FLUTTER_DEVICE:     &'static str = "flutter_device";
-    pub const FLUTTER_INSPECTOR:  &'static str = "flutter_inspector";
-    pub const FLUTTER_OUTLINE:    &'static str = "flutter_outline";
+    // ── Flutter dev tools & devices ──
+    pub const FLUTTER_HOT_RELOAD:  &'static str = "flutter_hot_reload";
+    pub const FLUTTER_HOT_RESTART: &'static str = "flutter_hot_restart";
+    pub const FLUTTER_STOP:        &'static str = "flutter_stop";
+    pub const FLUTTER_ATTACH:      &'static str = "flutter_attach";
+    pub const FLUTTER_DEVICE:      &'static str = "flutter_device";
+    pub const FLUTTER_INSPECTOR:   &'static str = "flutter_inspector";
+    pub const FLUTTER_OUTLINE:     &'static str = "flutter_outline";
+
+    pub const DEVICE_MOBILE:       &'static str = "device.mobile";
+    pub const DEVICE_DESKTOP:      &'static str = "device.desktop";
+    pub const DEVICE_WEB:          &'static str = "device.web";
 }
