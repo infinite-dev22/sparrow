@@ -2679,37 +2679,65 @@ impl EditorData {
         });
 
         // ── Dart fast path ─────────────────────────────────────────────
-        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+        if crate::dart::is_dart_path(&path) {
             use floem::ext_event::create_ext_action;
             use sparrow_rpc::plugin::PluginId;
 
-            // Seed with empty so `show_code_actions` can find the entry while
-            // the request is in flight.
-            doc.code_actions().update(|c| {
-                c.insert(offset, (PluginId(0), im::Vector::new()));
-            });
-
-            let editor = self.clone();
-            let trigger = create_ext_action(
-                self.scope,
-                move |actions: Vec<lsp_types::CodeActionOrCommand>| {
-                    let doc = editor.doc();
-                    doc.code_actions().update(|c| {
-                        c.insert(
-                            offset,
-                            (PluginId(0), actions.into_iter().collect()),
-                        );
-                    });
-                },
-            );
-            self.common.dart_lsp.code_actions(
+            let content = doc.buffer.with_untracked(|b| b.to_string());
+            let local_actions = crate::dart::generate_flutter_code_actions(
                 &path,
-                position.line,
-                position.character,
-                &diagnostics,
-                move |actions| trigger(actions),
+                &content,
+                position.line as usize,
+                position.character as usize,
             );
-            return;
+
+            if self.common.dart_lsp.is_available() {
+                let editor = self.clone();
+                let trigger = create_ext_action(
+                    self.scope,
+                    move |actions: Vec<lsp_types::CodeActionOrCommand>| {
+                        let doc = editor.doc();
+                        let mut combined = local_actions;
+                        for act in actions {
+                            let title = match &act {
+                                lsp_types::CodeActionOrCommand::CodeAction(c) => &c.title,
+                                lsp_types::CodeActionOrCommand::Command(c) => &c.title,
+                            };
+                            if !combined.iter().any(|existing| {
+                                let t = match existing {
+                                    lsp_types::CodeActionOrCommand::CodeAction(c) => &c.title,
+                                    lsp_types::CodeActionOrCommand::Command(c) => &c.title,
+                                };
+                                t == title
+                            }) {
+                                combined.push(act);
+                            }
+                        }
+                        doc.code_actions().update(|c| {
+                            c.insert(
+                                offset,
+                                (PluginId(0), combined.into_iter().collect()),
+                            );
+                        });
+                    },
+                );
+                self.common.dart_lsp.code_actions(
+                    &path,
+                    position.line,
+                    position.character,
+                    &diagnostics,
+                    move |actions| trigger(actions),
+                );
+                return;
+            } else if !local_actions.is_empty() {
+                doc.code_actions().update(|c| {
+                    c.insert(
+                        offset,
+                        (PluginId(0), local_actions.into_iter().collect()),
+                    );
+                });
+                return;
+            }
         }
 
         let send = create_ext_action(

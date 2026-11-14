@@ -784,6 +784,8 @@ impl WindowTabData {
                 let _ = doc.loaded.get();
                 let version = doc.buffer.with(|b| b.rev() as i64);
                 let content = doc.buffer.with(|b| b.to_string());
+                let closing = crate::dart::extract_closing_labels_from_source(&content);
+                doc.closing_labels.set(Some(closing));
                 dart_lsp.send_change(path, content, version);
             });
         }
@@ -835,6 +837,15 @@ impl WindowTabData {
                                     .collect::<im::Vector<_>>(),
                             );
                             doc.init_diagnostics();
+                        }
+                        DartNotification::ClosingLabels { path, labels } => {
+                            if let Some(doc) = main_split_apply
+                                .docs
+                                .with_untracked(|docs| docs.get(path).cloned())
+                            {
+                                doc.closing_labels.set(Some(labels.clone()));
+                                doc.clear_text_cache();
+                            }
                         }
                         DartNotification::Log(msg) => {
                             debug!("dart lsp: {msg}");

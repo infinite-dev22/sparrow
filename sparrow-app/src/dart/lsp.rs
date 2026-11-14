@@ -63,6 +63,8 @@ const INIT_TIMEOUT: Duration = Duration::from_secs(30);
 //  Public API
 // ─────────────────────────────────────────────────────────────────────
 
+use super::closing_labels::ClosingLabel;
+
 /// Events emitted from the server to the UI.
 #[derive(Debug, Clone)]
 pub enum Notification {
@@ -77,6 +79,11 @@ pub enum Notification {
         path: PathBuf,
         version: i64,
         diagnostics: Vec<Diagnostic>,
+    },
+    /// Closing labels notification from Dart LSP (`dart/textDocument/publishClosingLabels`).
+    ClosingLabels {
+        path: PathBuf,
+        labels: Vec<ClosingLabel>,
     },
     /// Flutter outline notification from Dart LSP (`dart/textDocument/publishFlutterOutline`).
     FlutterOutline {
@@ -1324,6 +1331,19 @@ fn dispatch(state: &SharedState, notif_tx: &NotifSender, msg: Value) {
                 version,
                 diagnostics,
             });
+        }
+        "dart/textDocument/publishClosingLabels" => {
+            let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(path) = uri_to_path(uri) else { return };
+            let labels = params
+                .get("labels")
+                .and_then(|v| {
+                    serde_json::from_value::<Vec<ClosingLabel>>(v.clone()).ok()
+                })
+                .unwrap_or_default();
+            let _ = notif_tx.send(Notification::ClosingLabels { path, labels });
         }
         "dart/textDocument/publishFlutterOutline" => {
             let Some(uri) = params.get("uri").and_then(Value::as_str) else {

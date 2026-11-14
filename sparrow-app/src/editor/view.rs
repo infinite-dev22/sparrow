@@ -1063,6 +1063,66 @@ impl EditorView {
             }
         }
     }
+
+    fn paint_flutter_widget_guides(
+        &self,
+        cx: &mut PaintCx,
+        viewport: Rect,
+        screen_lines: &ScreenLines,
+        config: &SparrowConfig,
+    ) {
+        let e_data = &self.editor;
+        let doc = e_data.doc();
+        let path = doc.content.with_untracked(|c| c.path().cloned());
+        let Some(path) = path else { return };
+        if !crate::dart::is_dart_path(&path) {
+            return;
+        }
+
+        let editor = &e_data.editor;
+        let line_height = config.editor.line_height() as f64;
+        let brush = config.color(SparrowColor::EDITOR_INDENT_GUIDE);
+
+        let content = doc.buffer.with_untracked(|b| b.to_string());
+        let guides = crate::dart::extract_widget_guides(&content);
+
+        for guide in guides {
+            let start_rvline = editor.rvline_of_line(guide.start_line);
+            let end_rvline = editor.rvline_of_line(guide.end_line);
+
+            let start_info = screen_lines.info(start_rvline);
+            let end_info = screen_lines.info(end_rvline);
+
+            if start_info.is_none() && end_info.is_none() {
+                continue;
+            }
+
+            let y0 = start_info.as_ref().map(|i| i.vline_y + line_height).unwrap_or(viewport.min_y());
+            let y1 = end_info.as_ref().map(|i| i.vline_y).unwrap_or(viewport.max_y());
+
+            if y1 <= y0 {
+                continue;
+            }
+
+            let start_pt = editor.line_point_of_line_col(
+                guide.start_line,
+                guide.start_col,
+                CursorAffinity::Forward,
+                true,
+            );
+
+            let x = start_pt.x + 4.0;
+            let line = Line::new(Point::new(x, y0), Point::new(x, y1));
+            cx.stroke(&line, brush, &Stroke::new(1.0));
+
+            // Small horizontal tick / elbow pointing towards closing paren
+            if let Some(end_info) = end_info {
+                let end_y = end_info.vline_y + line_height / 2.0;
+                let elbow = Line::new(Point::new(x, end_y), Point::new(x + 6.0, end_y));
+                cx.stroke(&elbow, brush, &Stroke::new(1.0));
+            }
+        }
+    }
 }
 
 impl View for EditorView {
@@ -1198,6 +1258,8 @@ impl View for EditorView {
         self.paint_document_highlights(cx, &screen_lines);
         let screen_lines = ed.screen_lines.get_untracked();
         self.paint_bracket_highlights_scope_lines(cx, viewport, &screen_lines);
+        let screen_lines = ed.screen_lines.get_untracked();
+        self.paint_flutter_widget_guides(cx, viewport, &screen_lines, &config);
         let screen_lines = ed.screen_lines.get_untracked();
         FloemEditorView::paint_text(
             cx,

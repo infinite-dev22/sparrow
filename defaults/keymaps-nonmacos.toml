@@ -247,6 +247,10 @@ mode = "i"
 key = "ctrl+."
 command = "show_code_actions"
 
+[[keymaps]]
+key = "alt+enter"
+command = "show_code_actions"
+
 # --------------------------------- Display -------------------------------------------
 
 [[keymaps]]

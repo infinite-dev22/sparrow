@@ -106,6 +106,69 @@ impl EditorGutterView {
             0.0,
         );
     }
+
+    fn paint_flutter_swatches(
+        &self,
+        cx: &mut floem::context::PaintCx,
+        viewport: Rect,
+        is_normal: bool,
+        config: &SparrowConfig,
+    ) {
+        if !is_normal {
+            return;
+        }
+
+        let doc = self.editor.doc();
+        let path = doc.content.with_untracked(|c| c.path().cloned());
+        let Some(path) = path else { return };
+        if !crate::dart::is_dart_path(&path) {
+            return;
+        }
+
+        let content = doc.buffer.with_untracked(|b| b.to_string());
+        let (colors, icons) = crate::dart::extract_swatches(&content);
+        let line_height = config.editor.line_height() as f64;
+        let screen_lines = self.editor.screen_lines();
+
+        screen_lines.with_untracked(|screen_lines| {
+            for (line, y) in screen_lines.iter_lines_y() {
+                let line_y = y - viewport.y0;
+
+                // Color swatches for this line
+                for swatch in colors.iter().filter(|c| c.line == line) {
+                    let size = 10.0;
+                    let x = 3.0;
+                    let swatch_y = line_y + (line_height - size) / 2.0;
+                    let rect = Rect::from_origin_size(Point::new(x, swatch_y), Size::new(size, size));
+                    let color = floem::peniko::Color::from_rgba8(
+                        swatch.rgba[0],
+                        swatch.rgba[1],
+                        swatch.rgba[2],
+                        swatch.rgba[3],
+                    );
+                    cx.fill(&rect, color, 2.0);
+                    cx.stroke(
+                        &rect,
+                        floem::peniko::Color::from_rgba8(255, 255, 255, 80),
+                        &floem::peniko::kurbo::Stroke::new(1.0),
+                    );
+                }
+
+                // Icon badges for this line
+                for _icon in icons.iter().filter(|i| i.line == line) {
+                    let size = 8.0;
+                    let x = 4.0;
+                    let icon_y = line_y + (line_height - size) / 2.0;
+                    let rect = Rect::from_origin_size(Point::new(x, icon_y), Size::new(size, size));
+                    cx.fill(
+                        &rect,
+                        config.color(SparrowColor::EDITOR_FOREGROUND),
+                        1.5,
+                    );
+                }
+            }
+        });
+    }
 }
 
 impl View for EditorGutterView {
@@ -203,6 +266,7 @@ impl View for EditorGutterView {
         });
 
         self.paint_head_changes(cx, &self.editor, viewport, kind_is_normal, &config);
+        self.paint_flutter_swatches(cx, viewport, kind_is_normal, &config);
         self.paint_sticky_headers(cx, kind_is_normal, &config);
     }
 

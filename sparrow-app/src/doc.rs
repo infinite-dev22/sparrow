@@ -219,6 +219,8 @@ pub struct Doc {
     semantic_styles: RwSignal<Option<Spans<Style>>>,
     /// Inlay hints for the document
     pub inlay_hints: RwSignal<Option<Spans<InlayHint>>>,
+    /// Closing labels for Flutter/Dart widget trees
+    pub closing_labels: RwSignal<Option<Vec<crate::dart::ClosingLabel>>>,
     /// Current completion lens text, if any.
     /// This will be displayed even on views that are not focused.
     pub completion_lens: RwSignal<Option<String>>,
@@ -287,6 +289,7 @@ impl Doc {
             ))),
             semantic_styles: cx.create_rw_signal(None),
             inlay_hints: cx.create_rw_signal(None),
+            closing_labels: cx.create_rw_signal(None),
             diagnostics,
             completion_lens: cx.create_rw_signal(None),
             completion_pos: cx.create_rw_signal((0, 0)),
@@ -340,6 +343,7 @@ impl Doc {
             ))),
             semantic_styles: cx.create_rw_signal(None),
             inlay_hints: cx.create_rw_signal(None),
+            closing_labels: cx.create_rw_signal(None),
             diagnostics: DiagnosticData {
                 expanded: cx.create_rw_signal(true),
                 diagnostics: cx.create_rw_signal(im::Vector::new()),
@@ -394,6 +398,7 @@ impl Doc {
             ))),
             semantic_styles: cx.create_rw_signal(None),
             inlay_hints: cx.create_rw_signal(None),
+            closing_labels: cx.create_rw_signal(None),
             diagnostics: DiagnosticData {
                 expanded: cx.create_rw_signal(true),
                 diagnostics: cx.create_rw_signal(im::Vector::new()),
@@ -1968,6 +1973,25 @@ impl DocumentPhantom for Doc {
             });
 
         text.append(&mut diag_text);
+
+        // ── Flutter / Dart Closing Labels ─────────────────────────────
+        if let Some(labels) = self.closing_labels.get_untracked() {
+            for label in labels {
+                if label.range.end.line as usize == line {
+                    let col = label.range.end.character as usize;
+                    text.push(PhantomText {
+                        kind: PhantomTextKind::InlayHint,
+                        col,
+                        text: format!(" // {}", label.label),
+                        affinity: Some(CursorAffinity::Forward),
+                        fg: Some(config.color(SparrowColor::INLAY_HINT_FOREGROUND)),
+                        font_size: Some(config.editor.inlay_hint_font_size()),
+                        bg: None,
+                        under_line: None,
+                    });
+                }
+            }
+        }
 
         let (completion_line, completion_col) = self.completion_pos.get_untracked();
         let completion_text = config
