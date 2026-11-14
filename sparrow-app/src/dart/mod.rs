@@ -1,5 +1,6 @@
 pub mod analyzer;
 pub mod bootstrap;
+pub mod daemon;
 pub mod hot_reload;
 pub mod lsp;
 pub mod regex;
@@ -14,6 +15,7 @@ pub use bootstrap::{
     bootstrap_workspace, classify_project, is_dart_or_flutter_project,
     is_flutter_project, is_package_resolution_needed, run_pub_get, ProjectType,
 };
+pub use daemon::{DaemonCommand, DaemonNotification, FlutterDaemonService};
 pub use hot_reload::{FlutterHotReloadData, FlutterRunState};
 pub use lsp::{DartLspService, Notification as DartNotification};
 pub use regex::{analyze_dart_file, ClassInfo, DartAnalysis};

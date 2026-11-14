@@ -964,6 +964,24 @@ impl WindowTabData {
             });
         }
 
+        // ── Flutter inspector: connect when VM Service URL is received from daemon ──
+        {
+            let inspector = flutter_inspector.clone();
+            let hot_reload = flutter_hot_reload.clone();
+            cx.create_effect(move |_| {
+                if let Some(ws_uri) = hot_reload.ws_uri.get() {
+                    let running = hot_reload.state.get() == crate::dart::FlutterRunState::Running;
+                    if running && !ws_uri.is_empty() {
+                        let term_id = hot_reload
+                            .active_term
+                            .get_untracked()
+                            .unwrap_or(sparrow_rpc::terminal::TermId(0));
+                        inspector.on_vm_url(term_id, ws_uri);
+                    }
+                }
+            });
+        }
+
         window_tab_data
     }
 

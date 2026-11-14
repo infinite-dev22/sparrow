@@ -16,6 +16,7 @@ use sparrow_rpc::{
     terminal::TermId,
 };
 
+use super::daemon::{DaemonNotification, FlutterDaemonService};
 use crate::{
     debug::{RunDebugMode, RunDebugProcess},
     panel::kind::PanelKind,
@@ -85,6 +86,10 @@ pub struct FlutterHotReloadData {
     pub selected_device: RwSignal<Option<FlutterDevice>>,
     pub emulators: RwSignal<Vec<FlutterEmulator>>,
     pub is_fetching_devices: RwSignal<bool>,
+    pub daemon: RwSignal<Option<FlutterDaemonService>>,
+    pub active_app_id: RwSignal<Option<String>>,
+    pub progress_message: RwSignal<Option<String>>,
+    pub ws_uri: RwSignal<Option<String>>,
     pub common: Rc<CommonData>,
     pub terminal: TerminalPanelData,
 }
@@ -95,7 +100,7 @@ impl FlutterHotReloadData {
         common: Rc<CommonData>,
         terminal: TerminalPanelData,
     ) -> Self {
-        Self {
+        let this = Self {
             state: cx.create_rw_signal(FlutterRunState::Idle),
             active_term: cx.create_rw_signal(None),
             message: cx.create_rw_signal(None),
@@ -103,8 +108,143 @@ impl FlutterHotReloadData {
             selected_device: cx.create_rw_signal(None),
             emulators: cx.create_rw_signal(Vec::new()),
             is_fetching_devices: cx.create_rw_signal(false),
+            daemon: cx.create_rw_signal(None),
+            active_app_id: cx.create_rw_signal(None),
+            progress_message: cx.create_rw_signal(None),
+            ws_uri: cx.create_rw_signal(None),
             common,
             terminal,
+        };
+
+        if this.is_flutter_project() {
+            this.init_daemon();
+        }
+
+        this
+    }
+
+    /// Initialize the persistent Flutter daemon service.
+    pub fn init_daemon(&self) {
+        if !self.is_flutter_project() {
+            return;
+        }
+        if self.daemon.get_untracked().is_some() {
+            return;
+        }
+
+        let (daemon_svc, daemon_rx) = FlutterDaemonService::new(self.common.workspace.path.as_deref());
+        self.daemon.set(Some(daemon_svc));
+
+        let notif_signal = floem::ext_event::create_signal_from_channel(daemon_rx);
+        let this = self.clone();
+        self.common.scope.create_effect(move |_| {
+            if let Some(notif) = notif_signal.get() {
+                this.apply_daemon_notification(notif);
+            }
+        });
+    }
+
+    /// Process a notification event from the Flutter daemon client.
+    pub fn apply_daemon_notification(&self, notif: DaemonNotification) {
+        match notif {
+            DaemonNotification::Connected { version, pid } => {
+                tracing::info!("Flutter daemon connected: v{}, pid={}", version, pid);
+            }
+            DaemonNotification::DeviceAdded(dev) => {
+                self.devices.update(|devs| {
+                    if let Some(pos) = devs.iter().position(|d| d.id == dev.id) {
+                        devs[pos] = dev.clone();
+                    } else {
+                        devs.push(dev.clone());
+                    }
+                });
+                if self.selected_device.get_untracked().is_none() {
+                    self.selected_device.set(Some(dev));
+                }
+            }
+            DaemonNotification::DeviceRemoved { id } => {
+                self.devices.update(|devs| {
+                    devs.retain(|d| d.id != id);
+                });
+                if let Some(sel) = self.selected_device.get_untracked() {
+                    if sel.id == id {
+                        let next = self.devices.with_untracked(|d| d.first().cloned());
+                        self.selected_device.set(next);
+                    }
+                }
+            }
+            DaemonNotification::DeviceChanged(dev) => {
+                self.devices.update(|devs| {
+                    if let Some(pos) = devs.iter().position(|d| d.id == dev.id) {
+                        devs[pos] = dev.clone();
+                    }
+                });
+                if let Some(sel) = self.selected_device.get_untracked() {
+                    if sel.id == dev.id {
+                        self.selected_device.set(Some(dev));
+                    }
+                }
+            }
+            DaemonNotification::DeviceList(devs) => {
+                if !devs.is_empty() {
+                    match self.selected_device.get_untracked() {
+                        None => self.selected_device.set(Some(devs[0].clone())),
+                        Some(current) => {
+                            let next = devs
+                                .iter()
+                                .find(|d| d.id == current.id)
+                                .unwrap_or(&devs[0])
+                                .clone();
+                            self.selected_device.set(Some(next));
+                        }
+                    }
+                } else {
+                    self.selected_device.set(None);
+                }
+                self.devices.set(devs);
+                self.is_fetching_devices.set(false);
+            }
+            DaemonNotification::EmulatorList(emus) => {
+                self.emulators.set(emus);
+            }
+            DaemonNotification::AppStarting { app_id, .. } => {
+                self.active_app_id.set(Some(app_id));
+                self.state.set(FlutterRunState::Running);
+            }
+            DaemonNotification::AppStarted { app_id } => {
+                self.active_app_id.set(Some(app_id));
+                self.state.set(FlutterRunState::Running);
+                self.progress_message.set(None);
+            }
+            DaemonNotification::AppDebugPort { ws_uri, .. } => {
+                self.ws_uri.set(Some(ws_uri));
+            }
+            DaemonNotification::AppProgress { message, finished } => {
+                if !finished {
+                    self.progress_message.set(Some(message));
+                } else {
+                    self.progress_message.set(None);
+                }
+            }
+            DaemonNotification::AppRestartResult { message, .. } => {
+                self.message.set(Some(message));
+            }
+            DaemonNotification::AppStopped { app_id: _, error } => {
+                self.active_app_id.set(None);
+                self.state.set(FlutterRunState::Idle);
+                self.progress_message.set(None);
+                self.ws_uri.set(None);
+                if let Some(err) = error {
+                    self.message.set(Some(err));
+                }
+            }
+            DaemonNotification::AppLog { .. } => {}
+            DaemonNotification::Error(err) => {
+                self.message.set(Some(err));
+            }
+            DaemonNotification::Exited => {
+                self.daemon.set(None);
+            }
         }
     }
 
@@ -124,6 +264,15 @@ impl FlutterHotReloadData {
         if !self.is_flutter_project() {
             return;
         }
+
+        if let Some(daemon) = self.daemon.get_untracked() {
+            if daemon.is_running() {
+                daemon.get_devices();
+                daemon.get_emulators();
+                return;
+            }
+        }
+
         if self.is_fetching_devices.get_untracked() {
             return;
         }
@@ -202,6 +351,13 @@ impl FlutterHotReloadData {
 
     /// Launch a cold emulator by ID using `flutter emulators --launch <id>`.
     pub fn launch_emulator(&self, emulator_id: &str) {
+        if let Some(daemon) = self.daemon.get_untracked() {
+            if daemon.is_running() {
+                daemon.launch_emulator(emulator_id);
+                return;
+            }
+        }
+
         let id = emulator_id.to_string();
         let ws_path = self.common.workspace.path.clone();
         let scope = self.common.scope;
@@ -240,6 +396,21 @@ impl FlutterHotReloadData {
 
         // Fetch device ID if one is selected
         let device_id = self.selected_device.get_untracked().map(|d| d.id);
+
+        // If daemon is active and we have a workspace path, also dispatch start_app via daemon
+        if let Some(daemon) = self.daemon.get_untracked() {
+            if daemon.is_running() {
+                if let Some(ref path) = self.common.workspace.path {
+                    daemon.start_app(
+                        path.clone(),
+                        device_id.clone(),
+                        Some("debug".to_string()),
+                        None,
+                        None,
+                    );
+                }
+            }
+        }
 
         // Reuse the existing terminal if it's still alive but stopped.
         if let Some(term_id) = self.active_term.get_untracked() {
@@ -290,37 +461,59 @@ impl FlutterHotReloadData {
         }
     }
 
-    /// Send `r` to the running `flutter run` — hot reload.
+    /// Send hot reload command to daemon or active terminal.
     pub fn hot_reload(&self) {
-        let Some(term_id) = self.active_term.get_untracked() else {
-            return self.launch();
-        };
-        self.common.proxy.terminal_write(term_id, "r".to_string());
+        if let Some(daemon) = self.daemon.get_untracked() {
+            if let Some(app_id) = self.active_app_id.get_untracked() {
+                daemon.restart_app(&app_id, false);
+            }
+        }
+
+        if let Some(term_id) = self.active_term.get_untracked() {
+            self.common.proxy.terminal_write(term_id, "r".to_string());
+        } else if self.active_app_id.get_untracked().is_none() {
+            self.launch();
+        }
     }
 
-    /// Send `R` to the running `flutter run` — hot restart.
+    /// Send hot restart command to daemon or active terminal.
     pub fn hot_restart(&self) {
-        let Some(term_id) = self.active_term.get_untracked() else {
-            return self.launch();
-        };
-        self.common.proxy.terminal_write(term_id, "R".to_string());
+        if let Some(daemon) = self.daemon.get_untracked() {
+            if let Some(app_id) = self.active_app_id.get_untracked() {
+                daemon.restart_app(&app_id, true);
+            }
+        }
+
+        if let Some(term_id) = self.active_term.get_untracked() {
+            self.common.proxy.terminal_write(term_id, "R".to_string());
+        } else if self.active_app_id.get_untracked().is_none() {
+            self.launch();
+        }
     }
 
+    /// Re-initialize the daemon and refresh devices.
     pub fn restart_daemon(&self) {
-        // Force a refresh of the devices.
+        if let Some(daemon) = self.daemon.get_untracked() {
+            daemon.shutdown();
+        }
+        self.daemon.set(None);
         self.devices.set(Vec::new());
         self.selected_device.set(None);
+        self.init_daemon();
         self.fetch_devices();
     }
 
-    /// Send `q` to the running `flutter run` — graceful shutdown.
-    /// The terminal-exit effect will transition state back to Idle
-    /// shortly after.
+    /// Send stop command to daemon or active terminal.
     pub fn stop(&self) {
-        let Some(term_id) = self.active_term.get_untracked() else {
-            return;
-        };
-        self.common.proxy.terminal_write(term_id, "q".to_string());
+        if let Some(daemon) = self.daemon.get_untracked() {
+            if let Some(app_id) = self.active_app_id.get_untracked() {
+                daemon.stop_app(&app_id);
+            }
+        }
+
+        if let Some(term_id) = self.active_term.get_untracked() {
+            self.common.proxy.terminal_write(term_id, "q".to_string());
+        }
     }
 }
 
