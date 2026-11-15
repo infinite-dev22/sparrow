@@ -562,6 +562,27 @@ fn panel_view(
                     )
                         .into_any()
                 }
+                PanelKind::FlutterRun => {
+                    crate::panel::flutter_run_view::flutter_run_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
+                PanelKind::DeviceManager => {
+                    crate::panel::device_manager_view::device_manager_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
+                PanelKind::FlutterPerformance => {
+                    crate::panel::flutter_performance_view::flutter_performance_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
             };
             view.style(|s| s.size_pct(100.0, 100.0))
         },
@@ -662,6 +683,9 @@ fn stripe_picker(
                 PanelKind::WidgetTree => "Widget Tree",
                 PanelKind::DartOutline => "Outline",
                 PanelKind::FlutterInspector => "Flutter Inspector",
+                PanelKind::FlutterRun => "Run / Flutter Logs",
+                PanelKind::DeviceManager => "Device Manager",
+                PanelKind::FlutterPerformance => "Flutter Performance",
             };
             let icon = p.svg_name();
             let is_active = {

@@ -84,6 +84,7 @@ pub struct InspectorNode {
     pub description: String,
     pub type_name: String,
     pub value_id: String,
+    pub properties: Vec<(String, String)>,
     pub children: Vec<InspectorNode>,
 }
 
@@ -120,6 +121,69 @@ impl VmServiceClient {
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Relaxed)
     }
+
+    /// Invoke a Flutter service extension (e.g. `ext.flutter.debugPaint`, `ext.flutter.showPerformanceOverlay`).
+    pub fn call_service_extension(&self, method: impl Into<String>, params: Value) {
+        let _ = self.tx.send(Command::CallServiceExtension {
+            method: method.into(),
+            params,
+        });
+    }
+
+    /// Toggle Flutter debug paint visual bounds.
+    pub fn set_debug_paint(&self, isolate_id: Option<&str>, enabled: bool) {
+        let mut params = json!({ "enabled": if enabled { "true" } else { "false" } });
+        if let Some(id) = isolate_id {
+            if let Some(map) = params.as_object_mut() {
+                map.insert("isolateId".to_string(), json!(id));
+            }
+        }
+        self.call_service_extension("ext.flutter.debugPaint", params);
+    }
+
+    /// Toggle Flutter performance overlay.
+    pub fn set_performance_overlay(&self, isolate_id: Option<&str>, enabled: bool) {
+        let mut params = json!({ "enabled": if enabled { "true" } else { "false" } });
+        if let Some(id) = isolate_id {
+            if let Some(map) = params.as_object_mut() {
+                map.insert("isolateId".to_string(), json!(id));
+            }
+        }
+        self.call_service_extension("ext.flutter.showPerformanceOverlay", params);
+    }
+
+    /// Toggle Flutter slow animations (5.0x dilation).
+    pub fn set_slow_animations(&self, isolate_id: Option<&str>, enabled: bool) {
+        let mut params = json!({ "timeDilation": if enabled { 5.0 } else { 1.0 } });
+        if let Some(id) = isolate_id {
+            if let Some(map) = params.as_object_mut() {
+                map.insert("isolateId".to_string(), json!(id));
+            }
+        }
+        self.call_service_extension("ext.flutter.timeDilation", params);
+    }
+
+    /// Toggle Flutter repaint rainbow.
+    pub fn set_repaint_rainbow(&self, isolate_id: Option<&str>, enabled: bool) {
+        let mut params = json!({ "enabled": if enabled { "true" } else { "false" } });
+        if let Some(id) = isolate_id {
+            if let Some(map) = params.as_object_mut() {
+                map.insert("isolateId".to_string(), json!(id));
+            }
+        }
+        self.call_service_extension("ext.flutter.repaintRainbow", params);
+    }
+
+    /// Force Flutter widget tree reassembly.
+    pub fn reassemble(&self, isolate_id: Option<&str>) {
+        let mut params = json!({});
+        if let Some(id) = isolate_id {
+            if let Some(map) = params.as_object_mut() {
+                map.insert("isolateId".to_string(), json!(id));
+            }
+        }
+        self.call_service_extension("ext.flutter.reassemble", params);
+    }
 }
 
 impl Drop for VmServiceClient {
@@ -136,6 +200,7 @@ enum Command {
     Connect(String),
     Disconnect,
     Shutdown,
+    CallServiceExtension { method: String, params: Value },
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -154,7 +219,7 @@ impl ConnectionWorker {
             // Wait for a Connect / Disconnect / Shutdown while idle.
             let url = match self.rx.recv() {
                 Ok(Command::Connect(url)) => url,
-                Ok(Command::Disconnect) | Ok(Command::Shutdown) => continue,
+                Ok(Command::Disconnect) | Ok(Command::Shutdown) | Ok(Command::CallServiceExtension { .. }) => continue,
                 Err(_) => return,
             };
 
@@ -187,6 +252,9 @@ impl ConnectionWorker {
                         return Ok(());
                     }
                     Command::Disconnect | Command::Shutdown => return Ok(()),
+                    Command::CallServiceExtension { method, params } => {
+                        let _ = self.send_nonblocking(&mut socket, 100, &method, params);
+                    }
                 }
             }
 
@@ -279,6 +347,27 @@ impl ConnectionWorker {
         );
 
         Ok((socket, isolate_id))
+    }
+
+    fn send_nonblocking(
+        &self,
+        socket: &mut WebSocket<TcpStream>,
+        id: i64,
+        method: &str,
+        params: Value,
+    ) -> Result<(), String> {
+        let req = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        let text = serde_json::to_string(&req)
+            .map_err(|e| format!("serialize {method}: {e}"))?;
+        socket
+            .send(Message::Text(text.into()))
+            .map_err(|e| format!("send {method}: {e}"))?;
+        Ok(())
     }
 
     /// Send a JSON-RPC request and read until its response arrives.
@@ -443,11 +532,24 @@ fn parse_node(v: &Value) -> Option<InspectorNode> {
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
-    let children = root
-        .get("children")
-        .and_then(|x| x.as_array())
-        .map(|arr| arr.iter().filter_map(parse_node).collect())
-        .unwrap_or_default();
+    let mut properties = Vec::new();
+    if let Some(props) = root.get("properties").and_then(|x| x.as_array()) {
+        for prop in props {
+            let name = prop
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let desc = prop
+                .get("description")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            if !name.is_empty() && !desc.is_empty() {
+                properties.push((name, desc));
+            }
+        }
+    }
 
     if description.is_empty() {
         return None;
@@ -456,6 +558,7 @@ fn parse_node(v: &Value) -> Option<InspectorNode> {
         description,
         type_name,
         value_id,
+        properties,
         children,
     })
 }

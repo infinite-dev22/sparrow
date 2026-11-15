@@ -22,6 +22,9 @@ pub enum PanelKind {
     WidgetTree,
     DartOutline,
     FlutterInspector,
+    FlutterRun,
+    DeviceManager,
+    FlutterPerformance,
 }
 
 impl PanelKind {
@@ -38,9 +41,12 @@ impl PanelKind {
             PanelKind::DocumentSymbol => SparrowIcons::DOCUMENT_SYMBOL,
             PanelKind::References => SparrowIcons::REFERENCES,
             PanelKind::Implementation => SparrowIcons::IMPLEMENTATION,
-            PanelKind::WidgetTree => SparrowIcons::TYPE_HIERARCHY,
+            PanelKind::WidgetTree => SparrowIcons::FLUTTER_OUTLINE,
             PanelKind::DartOutline => SparrowIcons::DOCUMENT_SYMBOL,
             PanelKind::FlutterInspector => SparrowIcons::FLUTTER_INSPECTOR,
+            PanelKind::FlutterRun => SparrowIcons::FLUTTER_RUN,
+            PanelKind::DeviceManager => SparrowIcons::DEVICE_MANAGER,
+            PanelKind::FlutterPerformance => SparrowIcons::FLUTTER_PERFORMANCE,
         }
     }
 
@@ -67,9 +73,12 @@ impl PanelKind {
             PanelKind::DocumentSymbol => PanelPosition::RightTop,
             PanelKind::References => PanelPosition::BottomLeft,
             PanelKind::Implementation => PanelPosition::BottomLeft,
-            PanelKind::WidgetTree => PanelPosition::RightTop,
-            PanelKind::DartOutline => PanelPosition::RightTop,
-            PanelKind::FlutterInspector => PanelPosition::RightBottom,
+            PanelKind::WidgetTree => PanelPosition::LeftTop,
+            PanelKind::DartOutline => PanelPosition::LeftTop,
+            PanelKind::FlutterInspector => PanelPosition::RightTop,
+            PanelKind::FlutterRun => PanelPosition::BottomLeft,
+            PanelKind::DeviceManager => PanelPosition::RightTop,
+            PanelKind::FlutterPerformance => PanelPosition::RightTop,
         }
     }
 }

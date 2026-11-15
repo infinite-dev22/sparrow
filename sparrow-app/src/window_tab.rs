@@ -3156,6 +3156,9 @@ impl WindowTabData {
             | PanelKind::DartOutline
             | PanelKind::DocumentSymbol
             | PanelKind::FlutterInspector
+            | PanelKind::FlutterRun
+            | PanelKind::DeviceManager
+            | PanelKind::FlutterPerformance
             | PanelKind::FileExplorer => self.is_panel_focused(kind),
         };
         if should_hide {

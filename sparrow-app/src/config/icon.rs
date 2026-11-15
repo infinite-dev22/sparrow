@@ -207,6 +207,9 @@ impl SparrowIcons {
     pub const FLUTTER_DEVICE:      &'static str = "flutter_device";
     pub const FLUTTER_INSPECTOR:   &'static str = "flutter_inspector";
     pub const FLUTTER_OUTLINE:     &'static str = "flutter_outline";
+    pub const FLUTTER_PERFORMANCE: &'static str = "flutter_performance";
+    pub const FLUTTER_RUN:         &'static str = "flutter_run";
+    pub const DEVICE_MANAGER:      &'static str = "device_manager";
 
     pub const DEVICE_MOBILE:       &'static str = "device.mobile";
     pub const DEVICE_DESKTOP:      &'static str = "device.desktop";

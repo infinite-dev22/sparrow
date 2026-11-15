@@ -90,6 +90,7 @@ pub struct FlutterHotReloadData {
     pub active_app_id: RwSignal<Option<String>>,
     pub progress_message: RwSignal<Option<String>>,
     pub ws_uri: RwSignal<Option<String>>,
+    pub run_logs: RwSignal<im::Vector<String>>,
     pub common: Rc<CommonData>,
     pub terminal: TerminalPanelData,
 }
@@ -112,6 +113,7 @@ impl FlutterHotReloadData {
             active_app_id: cx.create_rw_signal(None),
             progress_message: cx.create_rw_signal(None),
             ws_uri: cx.create_rw_signal(None),
+            run_logs: cx.create_rw_signal(im::Vector::new()),
             common,
             terminal,
         };
@@ -210,24 +212,29 @@ impl FlutterHotReloadData {
             DaemonNotification::AppStarting { app_id, .. } => {
                 self.active_app_id.set(Some(app_id));
                 self.state.set(FlutterRunState::Running);
+                self.add_log("⚡ Launching Flutter application...");
             }
             DaemonNotification::AppStarted { app_id } => {
                 self.active_app_id.set(Some(app_id));
                 self.state.set(FlutterRunState::Running);
                 self.progress_message.set(None);
+                self.add_log("✔ Flutter application started.");
             }
             DaemonNotification::AppDebugPort { ws_uri, .. } => {
-                self.ws_uri.set(Some(ws_uri));
+                self.ws_uri.set(Some(ws_uri.clone()));
+                self.add_log(format!("🔗 Dart VM service listening on {ws_uri}"));
             }
             DaemonNotification::AppProgress { message, finished } => {
                 if !finished {
-                    self.progress_message.set(Some(message));
+                    self.progress_message.set(Some(message.clone()));
+                    self.add_log(format!("⏳ {message}"));
                 } else {
                     self.progress_message.set(None);
                 }
             }
             DaemonNotification::AppRestartResult { message, .. } => {
-                self.message.set(Some(message));
+                self.message.set(Some(message.clone()));
+                self.add_log(format!("⚡ {message}"));
             }
             DaemonNotification::AppStopped { app_id: _, error } => {
                 self.active_app_id.set(None);
@@ -235,17 +242,33 @@ impl FlutterHotReloadData {
                 self.progress_message.set(None);
                 self.ws_uri.set(None);
                 if let Some(err) = error {
-                    self.message.set(Some(err));
+                    self.message.set(Some(err.clone()));
+                    self.add_log(format!("❌ Application stopped with error: {err}"));
+                } else {
+                    self.add_log("⏹ Application stopped.");
                 }
             }
-            DaemonNotification::AppLog { .. } => {}
+            DaemonNotification::AppLog { log, is_error, .. } => {
+                let prefix = if is_error { "⚠ " } else { "" };
+                self.add_log(format!("{prefix}{log}"));
+            }
             DaemonNotification::Error(err) => {
-                self.message.set(Some(err));
+                self.message.set(Some(err.clone()));
+                self.add_log(format!("❌ Error: {err}"));
             }
             DaemonNotification::Exited => {
                 self.daemon.set(None);
+                self.add_log("⏹ Flutter daemon exited.");
             }
         }
+    }
+
+    pub fn add_log(&self, line: impl Into<String>) {
+        self.run_logs.update(|l| l.push_back(line.into()));
+    }
+
+    pub fn clear_logs(&self) {
+        self.run_logs.set(im::Vector::new());
     }
 
     /// True if the workspace root contains a `pubspec.yaml` (i.e. this is

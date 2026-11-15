@@ -26,6 +26,8 @@ pub fn default_panel_order() -> PanelOrder {
         PanelPosition::LeftTop,
         im::vector![
             PanelKind::FileExplorer,
+            PanelKind::WidgetTree,
+            PanelKind::DartOutline,
             PanelKind::Plugin,
             PanelKind::SourceControl,
             PanelKind::Debug,
@@ -34,26 +36,28 @@ pub fn default_panel_order() -> PanelOrder {
     order.insert(
         PanelPosition::BottomLeft,
         im::vector![
+            PanelKind::FlutterRun,
+            PanelKind::Problem,
             PanelKind::Terminal,
             PanelKind::Search,
-            PanelKind::Problem,
             PanelKind::CallHierarchy,
             PanelKind::References,
-            PanelKind::Implementation
+            PanelKind::Implementation,
         ],
     );
     order.insert(
         PanelPosition::RightTop,
         im::vector![
-            PanelKind::DartOutline,
+            PanelKind::FlutterInspector,
+            PanelKind::FlutterPerformance,
+            PanelKind::DeviceManager,
             PanelKind::DocumentSymbol,
-            PanelKind::WidgetTree,
         ],
     );
 
     order.insert(
         PanelPosition::RightBottom,
-        im::vector![PanelKind::FlutterInspector],
+        im::vector![PanelKind::DeviceManager],
     );
 
     order
@@ -65,6 +69,7 @@ pub enum PanelSection {
     FileExplorer,
     Error,
     Warn,
+    Lint,
     Changes,
     Installed,
     Available,

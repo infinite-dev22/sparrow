@@ -125,8 +125,8 @@ pub fn terminal_view(
         is_focused
     });
 
-    // for rust
-    let reg = regex::Regex::new("[\\w\\\\/-]+\\.(rs)?(toml)?:\\d+(:\\d+)?").unwrap();
+    // for rust, dart, toml, etc.
+    let reg = regex::Regex::new(r"[\w\\/.-]+\.(?:dart|rs|toml|js|ts|json):\d+(?::\d+)?").unwrap();
 
     TerminalView {
         id,
