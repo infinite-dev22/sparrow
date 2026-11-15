@@ -23,3 +23,5 @@ pub mod flutter_test_view;
 
 pub mod chrome;
 pub mod dart_analysis_view;
+
+pub mod reference_tools;

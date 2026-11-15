@@ -21,3 +21,7 @@ Dart Analysis at the bottom uses a virtualized Description/Location table with s
 Dart Analysis and Device Manager share title-bar Hide, Move, and maximize controls. Terminal has compact session tabs, a New Terminal button and a Hide action. The reference preset sizes the right column to approximately 466 px at 1920 px width. Active tool stripes use blue, except Project's neutral selection.
 
 The additional screenshots also document Git history, Logcat, Notifications, pull requests, and Running Devices. This pass does not implement those additional services or substitute mock data for them.
+
+Native before/after captures and interaction results for Dart Analysis, Device Manager, and Terminal are in [the panel visual check](visual-checks/panels.md).
+
+Problems, Logcat, and Git History now have separate bottom tool-stripe entries. Their real-data behavior, native captures, validation, and remaining limitations are documented in [the additional tool-window check](visual-checks/tools.md).

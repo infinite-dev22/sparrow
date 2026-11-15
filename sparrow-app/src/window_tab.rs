@@ -3238,6 +3238,9 @@ impl WindowTabData {
             | PanelKind::FlutterTest
             | PanelKind::DeviceManager
             | PanelKind::FlutterPerformance
+            | PanelKind::Problems
+            | PanelKind::Logcat
+            | PanelKind::GitHistory
             | PanelKind::FileExplorer => self.is_panel_focused(kind),
         };
         if should_hide {

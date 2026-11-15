@@ -41,7 +41,7 @@ pub struct FlutterDevice {
     pub id: String,
     #[serde(default)]
     pub is_supported: bool,
-    #[serde(default)]
+    #[serde(default, alias = "platform")]
     pub target_platform: Option<String>,
     #[serde(default)]
     pub emulator: Option<bool>,
@@ -622,6 +622,16 @@ mod tests {
         assert_eq!(devices[0].id, "emulator-5554");
         assert!(devices[0].is_supported);
         assert_eq!(devices[0].target_platform.as_deref(), Some("android-arm64"));
+    }
+
+    #[test]
+    fn daemon_platform_field_is_preserved() {
+        for platform in ["linux-x64", "web-javascript"] {
+            let device: FlutterDevice = serde_json::from_value(serde_json::json!({
+                "id": "target", "name": "Target", "platform": platform
+            })).unwrap();
+            assert_eq!(device.target_platform.as_deref(), Some(platform));
+        }
     }
 
     #[test]

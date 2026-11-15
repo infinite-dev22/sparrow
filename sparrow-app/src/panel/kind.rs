@@ -9,6 +9,9 @@ use crate::config::icon::SparrowIcons;
 )]
 pub enum PanelKind {
     Terminal,
+    Problems,
+    Logcat,
+    GitHistory,
     FileExplorer,
     SourceControl,
     Plugin,
@@ -31,6 +34,9 @@ pub enum PanelKind {
 impl PanelKind {
     pub fn svg_name(&self) -> &'static str {
         match &self {
+            PanelKind::Problems => SparrowIcons::ERROR,
+            PanelKind::Logcat => SparrowIcons::DOCUMENT_SYMBOL,
+            PanelKind::GitHistory => SparrowIcons::SCM,
             PanelKind::Terminal => SparrowIcons::TERMINAL,
             PanelKind::FileExplorer => SparrowIcons::FILE_EXPLORER,
             PanelKind::SourceControl => SparrowIcons::SCM,
@@ -64,6 +70,7 @@ impl PanelKind {
 
     pub fn default_position(&self) -> PanelPosition {
         match self {
+            PanelKind::Problems | PanelKind::Logcat | PanelKind::GitHistory => PanelPosition::BottomLeft,
             PanelKind::Terminal => PanelPosition::BottomLeft,
             PanelKind::FileExplorer => PanelPosition::LeftTop,
             PanelKind::SourceControl => PanelPosition::LeftTop,

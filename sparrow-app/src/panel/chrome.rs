@@ -66,7 +66,8 @@ pub fn header(
     ))
     .on_double_click_stop(move |_| maximize.toggle_maximize(&kind))
     .style(move |s| {
-        s.height(32.0)
+        s.font_size(13.0)
+            .height(32.0)
             .min_width(0.0)
             .width_full()
             .items_center()

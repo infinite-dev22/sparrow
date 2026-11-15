@@ -46,7 +46,7 @@ pub fn device_manager_panel(
                 .style(|s| s.font_size(11.0)),
         ))
         .style(move |s| {
-            s.height(28.0)
+            s.height(30.0)
                 .items_center()
                 .flex_shrink(0.0_f32)
                 .border_bottom(1.0)
@@ -55,9 +55,9 @@ pub fn device_manager_panel(
         stack((
             label(|| "Name")
                 .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).padding_left(12.0)),
-            label(|| "SDK").style(|s| s.width(90.0)),
-            label(|| "Type").style(|s| s.width(70.0)),
-            empty().style(|s| s.width(30.0)),
+            label(|| "API").style(|s| s.width(44.0)),
+            label(|| "Type").style(|s| s.width(52.0)),
+            empty().style(|s| s.width(48.0)),
         ))
         .style(move |s| {
             s.height(24.0)
@@ -87,7 +87,15 @@ pub fn device_manager_panel(
                         let copy = device.clone();
                         let icon =
                             device_platform_icon(device.target_platform.as_deref());
-                        let sdk = device.sdk.unwrap_or_else(|| "—".into());
+                        let sdk = android_api(device.sdk.as_deref())
+                            .unwrap_or("—")
+                            .to_string();
+                        let detail =
+                            [device.sdk.clone(), device.target_platform.clone()]
+                                .into_iter()
+                                .flatten()
+                                .collect::<Vec<_>>()
+                                .join(" | ");
                         let kind = if device.emulator == Some(true) {
                             "Virtual"
                         } else if device.target_platform.as_deref().is_some_and(
@@ -104,8 +112,10 @@ pub fn device_manager_panel(
                             .is_some_and(|p| p.contains("web"))
                         {
                             "Web"
-                        } else {
+                        } else if device.target_platform.is_some() {
                             "Physical"
+                        } else {
+                            "—"
                         };
                         stack((
                             svg(move || config.get().ui_svg(icon)).style(move |s| {
@@ -118,13 +128,7 @@ pub fn device_manager_panel(
                             stack((
                                 label(move || device.name.clone())
                                     .style(|s| s.text_ellipsis()),
-                                label(move || {
-                                    device
-                                        .target_platform
-                                        .clone()
-                                        .unwrap_or_default()
-                                })
-                                .style(move |s| {
+                                label(move || detail.clone()).style(move |s| {
                                     s.font_size(11.0).text_ellipsis().color(
                                         config.get().color(
                                             SparrowColor::PANEL_FOREGROUND_DIM,
@@ -138,10 +142,11 @@ pub fn device_manager_panel(
                                     .flex_basis(0.0)
                                     .min_width(0.0)
                             }),
-                            label(move || sdk.clone())
-                                .style(|s| s.width(90.0).text_ellipsis()),
-                            label(move || kind).style(|s| s.width(70.0)),
-                            empty().style(|s| s.width(30.0)),
+                            label(move || sdk.clone()).style(|s| {
+                                s.width(44.0).flex_shrink(0.0_f32).text_ellipsis()
+                            }),
+                            label(move || kind).style(|s| s.width(52.0)),
+                            empty().style(|s| s.width(48.0)),
                         ))
                         .on_click_stop(move |_| selected.set(Some(copy.clone())))
                         .style(move |s| {
@@ -204,8 +209,8 @@ pub fn device_manager_panel(
                                     .flex_basis(0.0)
                                     .min_width(0.0)
                             }),
-                            label(|| "—").style(|s| s.width(90.0)),
-                            label(|| "Virtual").style(|s| s.width(70.0)),
+                            label(|| "—").style(|s| s.width(44.0)),
+                            label(|| "Virtual").style(|s| s.width(52.0)),
                             clickable_icon(
                                 || SparrowIcons::START,
                                 move || hr.launch_emulator(&id),
@@ -213,7 +218,7 @@ pub fn device_manager_panel(
                                 || false,
                                 || "Launch Virtual Device",
                                 config,
-                            ),
+                            ).style(|s|s.width(48.0)),
                         ))
                         .style(move |s| {
                             s.height(44.0).items_center().width_full().hover(|s| {
@@ -237,6 +242,27 @@ pub fn device_manager_panel(
                 .width_full()
         }),
     ))
-    .style(|s| s.absolute().size_full().flex_col())
+    .style(|s| s.absolute().size_full().flex_col().font_size(13.0))
     .debug_name("Device Manager Table")
+}
+
+// Only show an API level explicitly supplied by the SDK, never infer it
+// from an Android release or from an emulator's name.
+fn android_api(sdk: Option<&str>) -> Option<&str> {
+    let api = sdk?.split_once("API ")?.1;
+    let end = api
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(api.len());
+    (end > 0).then_some(&api[..end])
+}
+#[cfg(test)]
+mod tests {
+    use super::android_api;
+    #[test]
+    fn api_requires_explicit_metadata() {
+        assert_eq!(android_api(Some("Android 16 (API 36)")), Some("36"));
+        assert_eq!(android_api(Some("Android 17 (API 37.2)")), Some("37.2"));
+        assert_eq!(android_api(Some("Fedora Linux 43")), None);
+        assert_eq!(android_api(None), None);
+    }
 }

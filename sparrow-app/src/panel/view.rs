@@ -506,6 +506,9 @@ fn panel_view(
         |p| *p,
         move |kind| {
             let view = match kind {
+                PanelKind::Problems => super::reference_tools::problems(window_tab_data.clone()).into_any(),
+                PanelKind::Logcat => super::reference_tools::logcat(window_tab_data.clone()).into_any(),
+                PanelKind::GitHistory => super::reference_tools::history(window_tab_data.clone()).into_any(),
                 PanelKind::Terminal => {
                     terminal_panel(window_tab_data.clone()).into_any()
                 }
@@ -675,6 +678,9 @@ fn stripe_picker(
         move |p| {
             let window_tab_data = window_tab_data.clone();
             let tooltip = match p {
+                PanelKind::Problems => "Problems",
+                PanelKind::Logcat => "Logcat",
+                PanelKind::GitHistory => "Git History",
                 PanelKind::Terminal => "Terminal",
                 PanelKind::FileExplorer => "File Explorer",
                 PanelKind::SourceControl => "Source Control",

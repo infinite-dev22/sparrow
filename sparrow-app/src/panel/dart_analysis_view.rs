@@ -114,7 +114,8 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         })
     })
     .style(move |s| {
-        s.padding_horiz(8.0)
+        s.font_size(12.0)
+            .padding_horiz(8.0)
             .padding_vert(3.0)
             .border_radius(4.0)
             .border(1.0)
@@ -127,7 +128,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     .color(SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND),
             )
     });
-    let height = window.common.ui_line_height;
+    let height = 24.0;
     stack((
         super::chrome::header(window, PanelKind::Problem, "Dart Analysis", summary),
         stack((
@@ -175,9 +176,9 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             }),
             stack((
                 stack((
-                    label(|| "Description").style(|s| s.width_pct(52.0)),
+                    label(|| "Description").style(|s| s.padding_left(6.0).width_pct(50.0)),
                     label(|| "Location")
-                        .style(|s| s.padding_left(8.0).width_pct(48.0)),
+                        .style(move |s| s.padding_left(8.0).width_pct(50.0).border_left(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
                 ))
                 .style(move |s| {
                     s.height(24.0)
@@ -239,8 +240,8 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             };
                             stack((
                                 stack((
-                                    label(|| "●").style(move |s| {
-                                        s.margin_right(6.0).color(
+                                    label(move || if severity == 2 { "i" } else { "!" }).style(move |s| {
+                                        s.size(14.0,14.0).flex_shrink(0.0_f32).items_center().justify_center().font_bold().font_size(11.0).border_radius(7.0).margin_left(6.0).margin_right(6.0).color(floem::peniko::Color::WHITE).background(
                                             config.get().color(match severity {
                                                 0 => SparrowColor::SPARROW_ERROR,
                                                 1 => SparrowColor::SPARROW_WARN,
@@ -252,11 +253,11 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                                         .style(|s| s.min_width(0.0).text_ellipsis()),
                                 ))
                                 .style(|s| {
-                                    s.width_pct(52.0).items_center().min_width(0.0)
+                                    s.width_pct(50.0).items_center().min_width(0.0)
                                 }),
                                 label(move || location_text.clone()).style(
                                     move |s| {
-                                        s.width_pct(48.0)
+                                        s.width_pct(50.0)
                                             .padding_left(8.0)
                                             .min_width(0.0)
                                             .text_ellipsis()
@@ -274,7 +275,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                                 })
                             })
                             .style(move |s| {
-                                s.height(height.get() as f32)
+                                s.height(height)
                                     .width_full()
                                     .items_center()
                                     .hover(|s| {
@@ -285,8 +286,8 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             })
                         },
                     )
-                    .item_size_fixed(move || height.get())
-                    .style(|s| s.absolute().min_width_full().flex_col()),
+                    .item_size_fixed(move || f64::from(height))
+                    .style(|s| s.absolute().width_full().flex_col()),
                 )
                 .style(|s| {
                     s.flex_grow(1.0_f32)
