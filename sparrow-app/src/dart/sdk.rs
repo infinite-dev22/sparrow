@@ -485,13 +485,22 @@ fn verify_executable(bin: &Path, args: &[&str]) -> bool {
 }
 
 /// Query Dart SDK version string from `dart --version`.
+/// Metadata is optional: a locked or updating SDK must not block tool launches.
+fn version_output(program: &Path, args: &[&str]) -> Option<std::process::Output> {
+    let mut child = Command::new(program).args(args).stdin(Stdio::null())
+        .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(20)),
+            _ => { let _ = child.kill(); let _ = child.wait(); return None; }
+        }
+    }
+}
+
 fn query_dart_version(dart_bin: &Path) -> Option<String> {
-    let output = Command::new(dart_bin)
-        .arg("--version")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .ok()?;
+    let output = version_output(dart_bin, &["--version"])?;
 
     let text = if !output.stdout.is_empty() {
         String::from_utf8_lossy(&output.stdout).to_string()
@@ -512,13 +521,9 @@ fn query_dart_version(dart_bin: &Path) -> Option<String> {
 
 /// Query Flutter version and channel from `flutter --version --machine` or `flutter --version`.
 fn query_flutter_info(flutter_bin: &Path) -> (Option<String>, Option<String>) {
-    let output = Command::new(flutter_bin)
-        .args(["--version", "--machine"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output();
+    let output = version_output(flutter_bin, &["--version", "--machine"]);
 
-    if let Ok(out) = output {
+    if let Some(out) = output {
         if out.status.success() {
             if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
                 let version = json.get("frameworkVersion")

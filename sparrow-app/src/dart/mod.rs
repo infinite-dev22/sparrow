@@ -47,3 +47,5 @@ pub(crate) fn is_dart_path(path: &std::path::Path) -> bool {
 
 pub mod assets;
 pub mod project_wizard;
+
+pub mod devtools;

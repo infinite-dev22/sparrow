@@ -36,6 +36,8 @@ Sparrow (IPA: /læps/) is written in pure Rust, with a UI in [Floem](https://git
 
 Flutter project creation and asset path completion are described in the [project and assets guide](docs/flutter-projects-and-assets.md).
 
+Flutter memory and network profiling is available through the [DevTools integration](docs/flutter-devtools.md).
+
 ## Installation
 
 You can find pre-built releases for Windows, Linux and macOS [here](https://github.com/infinite-dev22/sparrow/releases), or [installing with a package manager](docs/installing-with-package-manager.md).

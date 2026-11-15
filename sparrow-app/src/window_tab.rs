@@ -190,6 +190,7 @@ pub struct WindowTabData {
     pub dart_lsp: DartLspService,
     pub flutter_hot_reload: FlutterHotReloadData,
     pub flutter_inspector: FlutterInspectorData,
+    pub devtools: crate::dart::devtools::DevToolsData,
     pub flutter_project: crate::dart::project_wizard::ProjectWizard,
     pub flutter_test: crate::dart::test_service::FlutterTestData,
     pub source_control: SourceControlData,
@@ -640,6 +641,7 @@ impl WindowTabData {
             terminal,
             flutter_hot_reload: flutter_hot_reload.clone(),
             flutter_inspector: flutter_inspector.clone(),
+            devtools: crate::dart::devtools::DevToolsData::new(cx),
             flutter_project: crate::dart::project_wizard::ProjectWizard::new(cx, common.workspace.path.as_ref().and_then(|p| p.parent()).unwrap_or(std::env::temp_dir().as_path()).display().to_string()),
             flutter_test: crate::dart::test_service::FlutterTestData::new(
                 cx,
@@ -2019,6 +2021,14 @@ impl WindowTabData {
                 self.flutter_hot_reload.stop();
             }
             FlutterNewProject => self.flutter_project.active.set(true),
+            FlutterOpenDevTools | FlutterDevToolsMemory | FlutterDevToolsNetwork => {
+                let page = match cmd {
+                    FlutterDevToolsMemory => crate::dart::devtools::DevToolsPage::Memory,
+                    FlutterDevToolsNetwork => crate::dart::devtools::DevToolsPage::Network,
+                    _ => crate::dart::devtools::DevToolsPage::Home,
+                };
+                self.open_devtools(page);
+            }
             PubAdd => {
                 self.palette.run(PaletteKind::PubPackage);
             }
@@ -3539,6 +3549,15 @@ impl WindowTabData {
             item.get_untracked().item.as_ref().clone(),
             send,
         );
+    }
+
+    pub fn open_devtools(&self, page: crate::dart::devtools::DevToolsPage) {
+        if self.workspace.kind != SparrowWorkspaceType::Local {
+            self.show_alert("DevTools".into(), "DevTools currently requires a local workspace.".into(), Vec::new()); return;
+        }
+        let vm = self.flutter_hot_reload.ws_uri.get_untracked().or_else(|| self.flutter_inspector.vm_url.get_untracked().map(|(_, url)| url));
+        self.devtools.open(self.workspace.path.clone(), vm, page);
+        self.show_panel(PanelKind::FlutterPerformance);
     }
 
     fn run_test_at_cursor(&self, debug: bool) {

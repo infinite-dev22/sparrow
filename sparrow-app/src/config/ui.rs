@@ -150,9 +150,9 @@ impl UIConfig {
 
     pub fn tool_window_stripe_width(&self) -> usize {
         if self.tool_window_stripe_width == 0 {
-            48
+            36
         } else {
-            self.tool_window_stripe_width
+            self.tool_window_stripe_width.clamp(32, 72)
         }
     }
 }

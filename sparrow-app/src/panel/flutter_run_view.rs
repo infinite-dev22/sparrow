@@ -26,6 +26,7 @@ pub fn flutter_run_panel(
     window_tab_data: Rc<WindowTabData>,
     _position: PanelPosition,
 ) -> impl View {
+    let devtools_window = window_tab_data.clone();
     let hot_reload = window_tab_data.flutter_hot_reload.clone();
     let config = window_tab_data.common.config;
     let ui_line_height = window_tab_data.common.ui_line_height;
@@ -89,6 +90,11 @@ pub fn flutter_run_panel(
                 move || state.get() != FlutterRunState::Running,
                 || "Stop Application",
                 config,
+            ),
+            clickable_icon(
+                || SparrowIcons::DEBUG_CONSOLE,
+                move || devtools_window.open_devtools(crate::dart::devtools::DevToolsPage::Home),
+                || false, || false, || "Open DevTools", config,
             ),
             clickable_icon(
                 || SparrowIcons::CLOSE,

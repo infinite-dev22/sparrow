@@ -24,6 +24,7 @@ pub fn flutter_performance_panel(
     window_tab_data: Rc<WindowTabData>,
     _position: PanelPosition,
 ) -> impl View {
+    let devtools = devtools_controls(window_tab_data.clone());
     let inspector = window_tab_data.flutter_inspector.clone();
     let config = window_tab_data.common.config;
     let state = inspector.state;
@@ -76,6 +77,7 @@ pub fn flutter_performance_panel(
         scroll(
             stack((
                 // Rendering performance indicators (UI vs Raster thread counters)
+                devtools,
                 perf_metrics_section(config),
 
                 // Runtime toggle controls
@@ -263,4 +265,18 @@ fn toggle_row(
                 s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
             })
     })
+}
+
+fn devtools_controls(window: Rc<WindowTabData>) -> impl View {
+    let busy = window.devtools.busy;
+    let message = window.devtools.message;
+    let home = window.clone(); let memory = window.clone(); let network = window.clone();
+    stack((
+        section_header("DEVTOOLS", window.common.config),
+        label(|| "Open DevTools").on_click_stop(move |_| home.open_devtools(crate::dart::devtools::DevToolsPage::Home)).disabled(move || busy.get()),
+        label(|| "Profile Memory").on_click_stop(move |_| memory.open_devtools(crate::dart::devtools::DevToolsPage::Memory)).disabled(move || busy.get()),
+        label(|| "Profile Network").on_click_stop(move |_| network.open_devtools(crate::dart::devtools::DevToolsPage::Network)).disabled(move || busy.get()),
+        label(move || message.get()).style(|s| s.selectable(true).font_size(11.0)),
+        label(|| "Run in debug or profile mode to connect. Use profile mode for representative performance measurements.").style(|s| s.font_size(11.0)),
+    )).style(|s| s.flex_col().gap(8.0).padding(10.0))
 }

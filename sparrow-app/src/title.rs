@@ -829,7 +829,7 @@ pub fn title(
     .style(move |s| {
         let config = config.get();
         s.width_pct(100.0)
-            .height(40.0)
+            .height(config.ui.header_height().max(32) as f32)
             .items_center()
             .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
     })

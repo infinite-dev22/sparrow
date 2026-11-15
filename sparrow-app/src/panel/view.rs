@@ -39,7 +39,7 @@ use crate::{
 };
 
 /// Radius of the rounded "islands" (tool windows and editor area).
-pub const ISLAND_RADIUS: f32 = 10.0;
+pub const ISLAND_RADIUS: f32 = 8.0;
 
 fn island_corner(
     config: ReadSignal<Arc<SparrowConfig>>,
@@ -604,10 +604,12 @@ pub fn panel_header(
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> impl View {
     container(label(move || header.clone())).style(move |s| {
+        let config = config.get();
         s.padding_horiz(10.0)
-            .padding_vert(6.0)
+            .height(config.ui.header_height() as f32)
+            .items_center()
             .width_pct(100.0)
-            .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
+            .background(config.color(SparrowColor::PANEL_BACKGROUND))
     })
 }
 
@@ -643,10 +645,10 @@ pub fn tool_window_stripe(
             let config = config.get();
             s.flex_col()
                 .items_center()
-                .width(36.0) // AS uses 36px
+                .width(config.ui.tool_window_stripe_width() as f32)
                 .height_pct(100.0)
                 .flex_shrink(0.0f32)
-                .padding_vert(6.0)
+                .padding_vert(2.0)
                 .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND)) // Blends with title bar
                 .apply_if(is_left, |s| s.margin_right(-1.0)) // Tighten gap
                 .apply_if(!is_left, |s| s.margin_left(-1.0))

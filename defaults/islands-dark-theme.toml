@@ -7,11 +7,12 @@ name = "Islands Dark"
 [ui]
 font-family = ""
 font-size = 13
-header-height = 34
-status-height = 24
+header-height = 32
+status-height = 22
 tab-min-width = 100
-activity-width = 34
-scroll-width = 10
+icon-size = 16
+tool-window-stripe-width = 36
+scroll-width = 8
 drop-shadow-width = 0
 
 [color-theme.base]

@@ -655,6 +655,15 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "flutter_new_project")]
     #[strum(message = "Flutter: New Project")]
     FlutterNewProject,
+    #[strum(serialize = "flutter_open_devtools")]
+    #[strum(message = "Flutter: Open DevTools")]
+    FlutterOpenDevTools,
+    #[strum(serialize = "flutter_devtools_memory")]
+    #[strum(message = "Flutter: Profile Memory")]
+    FlutterDevToolsMemory,
+    #[strum(serialize = "flutter_devtools_network")]
+    #[strum(message = "Flutter: Profile Network")]
+    FlutterDevToolsNetwork,
 }
 
 #[derive(Clone, Debug)]
