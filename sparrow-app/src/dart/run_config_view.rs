@@ -387,15 +387,18 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .border_right(1.0)
             .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
     });
+    let name_input = cx.create_rw_signal(None::<floem::ViewId>);
     let form_row =
         move |title: &'static str, field: RwSignal<String>, help: &'static str| {
+            let input = text_input(field);
+            if title == "Name:" { name_input.set(Some(input.id())); }
             stack((
                 stack((
                     label(move || if title == "Dart entrypoint:" && !is_flutter.get() { "Dart SDK executable:" } else { title }).style(move |s| {
                         s.width(if title == "Name:" { 64.0 } else { 154.0 })
                             .flex_shrink(0.0_f32)
                     }),
-                    text_input(field).style(move |s| {
+                    input.style(move |s| {
                         s.height(24.0)
                             .min_width(0.0)
                             .flex_grow(1.0_f32)
@@ -525,7 +528,12 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let id = dialog.id();
     cx.create_effect(move |_| {
         if visible.get() {
-            id.request_focus();
+            // Focus only after the hidden dialog has completed its style/layout pass.
+            floem::action::exec_after(std::time::Duration::from_millis(30), move |_| {
+                if visible.get_untracked() {
+                    name_input.get_untracked().unwrap_or(id).request_focus();
+                }
+            });
         }
     });
     dialog

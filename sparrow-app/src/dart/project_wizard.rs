@@ -65,6 +65,8 @@ pub fn arguments(
     Ok((destination, args))
 }
 impl ProjectWizard {
+    pub fn is_busy(&self) -> bool { self.busy.get_untracked() }
+
     pub fn new(cx: Scope, parent: String) -> Self {
         Self {
             active: cx.create_rw_signal(false),
@@ -156,12 +158,21 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let empty = wizard.empty;
     let message = wizard.message;
     let config = window.common.config;
+    let name = text_input(wizard.name);
+    let name_id = name.id();
+    floem::reactive::create_effect(move |_| {
+        if active.get() {
+            floem::action::exec_after(std::time::Duration::from_millis(30), move |_| {
+                if active.get_untracked() { name_id.request_focus(); }
+            });
+        }
+    });
     container(
         container(
             stack((
                 label(|| "New Flutter Project").style(|s| s.font_bold()),
                 label(|| "Project name"),
-                text_input(wizard.name),
+                name,
                 label(|| "Parent directory (absolute path)"),
                 text_input(wizard.parent),
                 label(|| "Project type"),
@@ -229,8 +240,10 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
         }),
     )
+    .on_event_stop(floem::event::EventListener::PointerDown, |_| {})
     .style(move |s| {
         s.absolute()
+            .z_index(200)
             .size_full()
             .items_center()
             .justify_center()

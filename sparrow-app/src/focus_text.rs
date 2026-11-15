@@ -6,7 +6,7 @@ use floem::{
     },
     prop_extractor,
     reactive::create_effect,
-    style::{FontFamily, FontSize, LineHeight, Style, TextColor},
+    style::{FontFamily, FontSize, FontStyle, FontWeight, LineHeight, Style, TextColor},
     taffy::prelude::NodeId,
     text::{Attrs, AttrsList, FamilyOwned, TextLayout, Weight},
 };
@@ -16,6 +16,8 @@ prop_extractor! {
         color: TextColor,
         font_size: FontSize,
         font_family: FontFamily,
+        font_weight: FontWeight,
+        font_style: FontStyle,
         line_height: LineHeight,
     }
 }
@@ -79,6 +81,12 @@ impl FocusText {
     fn set_text_layout(&mut self) {
         let mut attrs =
             Attrs::new().color(self.style.color().unwrap_or(Color::BLACK));
+        if let Some(weight) = self.style.font_weight() {
+            attrs = attrs.weight(weight);
+        }
+        if let Some(style) = self.style.font_style() {
+            attrs = attrs.style(style);
+        }
         if let Some(font_size) = self.style.font_size() {
             attrs = attrs.font_size(font_size);
         }
@@ -121,6 +129,12 @@ impl FocusText {
 
             let mut attrs =
                 Attrs::new().color(self.style.color().unwrap_or(Color::BLACK));
+            if let Some(weight) = self.style.font_weight() {
+                attrs = attrs.weight(weight);
+            }
+            if let Some(style) = self.style.font_style() {
+                attrs = attrs.style(style);
+            }
             if let Some(font_size) = self.style.font_size() {
                 attrs = attrs.font_size(font_size);
             }
@@ -131,6 +145,9 @@ impl FocusText {
             });
             if let Some(font_family) = font_family.as_ref() {
                 attrs = attrs.family(font_family);
+            }
+            if let Some(line_height) = self.style.line_height() {
+                attrs = attrs.line_height(line_height);
             }
 
             let mut attrs_list = AttrsList::new(attrs.clone());
@@ -236,6 +253,12 @@ impl View for FocusText {
                         .color()
                         .unwrap_or_else(|| Color::from_rgb8(0xf0, 0xf0, 0xea)),
                 );
+                if let Some(weight) = self.style.font_weight() {
+                    attrs = attrs.weight(weight);
+                }
+                if let Some(style) = self.style.font_style() {
+                    attrs = attrs.style(style);
+                }
                 if let Some(font_size) = self.style.font_size() {
                     attrs = attrs.font_size(font_size);
                 }

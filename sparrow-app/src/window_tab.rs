@@ -693,11 +693,21 @@ impl WindowTabData {
             let wizard = window_tab_data.flutter_project.active;
             let focus = window_tab_data.common.focus;
             let root = window_tab_data.common.view_id;
+            let previous_focus = cx.create_rw_signal(Focus::Workbench);
             cx.create_effect(move |_| {
                 if settings.get() || run.get() || wizard.get() {
+                    let current = focus.get_untracked();
+                    if current != Focus::Modal {
+                        // Command palettes and other transient overlays close
+                        // when they open a dialog; do not restore their stale focus.
+                        previous_focus.set(match current {
+                            Focus::Workbench | Focus::Panel(_) => current,
+                            _ => Focus::Workbench,
+                        });
+                    }
                     focus.set(Focus::Modal);
                 } else if focus.get_untracked() == Focus::Modal {
-                    focus.set(Focus::Workbench);
+                    focus.set(previous_focus.get_untracked());
                     root.get_untracked().request_focus();
                 }
             });
@@ -1609,7 +1619,12 @@ impl WindowTabData {
                 if let Some(is_debug) = active_term
                     .and_then(|term_id| self.terminal.restart_run_debug(term_id))
                 {
-                    self.panel.show_panel(&PanelKind::Terminal);
+                    let panel = self.terminal.debug.active_term.get_untracked()
+                        .and_then(|id| self.terminal.get_terminal(&id))
+                        .and_then(|terminal| terminal.run_debug.get_untracked())
+                        .map(|process| crate::dart::run_config::console_panel(process.mode, &process.config))
+                        .unwrap_or(PanelKind::Terminal);
+                    self.panel.show_panel(&panel);
                     if is_debug {
                         self.panel.show_panel(&PanelKind::Debug);
                     }
@@ -2921,8 +2936,15 @@ impl WindowTabData {
             }
             Focus::Rename => Some(keypress.key_down(event, &self.rename)),
             Focus::AboutPopup => Some(keypress.key_down(event, &self.about_data)),
-            Focus::Panel(PanelKind::Terminal) => {
-                self.terminal.key_down(event, &keypress)
+            Focus::Panel(PanelKind::Terminal) => self.terminal.key_down(event, &keypress),
+            Focus::Panel(PanelKind::FlutterRun) => {
+                // Terminal may have selected a shell since Run was last visible.
+                // Never send Run console keys to that unrelated terminal.
+                if let Some(id) = self.flutter_hot_reload.active_term.get_untracked()
+                    .filter(|id| self.terminal.get_terminal(id).is_some()) {
+                    self.terminal.focus_terminal_in_panel(id, PanelKind::FlutterRun);
+                    self.terminal.key_down(event, &keypress)
+                } else { None }
             }
             Focus::Panel(PanelKind::Search) => {
                 Some(keypress.key_down(event, &self.global_search))
@@ -3358,6 +3380,11 @@ impl WindowTabData {
             );
         }
         self.panel.show_panel(&kind);
+        if kind == PanelKind::FlutterRun {
+            if let Some(id) = self.flutter_hot_reload.active_term.get_untracked() {
+                self.terminal.focus_terminal_in_panel(id, PanelKind::FlutterRun);
+            }
+        }
         if kind == PanelKind::Search
             && self.common.focus.get_untracked() == Focus::Workbench
         {
@@ -3407,8 +3434,9 @@ impl WindowTabData {
         let selected = self.active_run_config_idx.get_untracked();
         if let Some(config) = self.run_configs.with_untracked(|configs| configs.get(selected).cloned()) {
             if let Some((term_id, _)) = self.terminal.run_debug_process(false).into_iter().find(|(_, process)| !process.stopped && process.mode == mode && process.config.name == config.name) {
-                self.show_panel(if mode == RunDebugMode::Run && crate::dart::run_config::is_flutter_run(&config) { PanelKind::FlutterRun } else { PanelKind::Terminal });
-                self.terminal.focus_terminal(term_id);
+                let panel = crate::dart::run_config::console_panel(mode, &config);
+                self.show_panel(panel);
+                self.terminal.focus_terminal_in_panel(term_id, panel);
                 return;
             }
             self.common.internal_command.send(InternalCommand::RunAndDebug { mode, config });
@@ -3501,9 +3529,9 @@ impl WindowTabData {
         if *mode == RunDebugMode::Run && crate::dart::run_config::is_flutter_run(config) {
             self.flutter_hot_reload.active_term.set(Some(term_id));
         }
+        let console_panel = crate::dart::run_config::console_panel(*mode, config);
         if config.flutter_options.focus_tool_window {
-            self.common.focus.set(Focus::Panel(PanelKind::Terminal));
-            self.terminal.focus_terminal(term_id);
+            self.terminal.focus_terminal_in_panel(term_id, console_panel);
         }
 
         self.terminal.debug.active_term.set(Some(term_id));
@@ -3515,10 +3543,7 @@ impl WindowTabData {
         });
 
         if config.flutter_options.activate_tool_window || config.flutter_options.focus_tool_window {
-            let panel = if *mode == RunDebugMode::Run && crate::dart::run_config::is_flutter_run(config) {
-                PanelKind::FlutterRun
-            } else { PanelKind::Terminal };
-            self.panel.show_panel(&panel);
+            self.panel.show_panel(&console_panel);
         }
 
     }
@@ -3721,8 +3746,11 @@ impl WindowTabData {
                 "font-family",
                 "JetBrains Mono, Noto Sans Mono, monospace".into(),
             ),
-            ("editor", "font-size", 13.into()),
-            ("editor", "line-height", 1.65.into()),
+            ("editor", "font-size", 14.into()),
+            ("editor", "line-height", 1.5.into()),
+            ("terminal", "font-family", "JetBrains Mono, Noto Sans Mono, monospace".into()),
+            ("terminal", "font-size", 13.into()),
+            ("terminal", "line-height", 1.4.into()),
         ];
         for (section, key, value) in values {
             if SparrowConfig::update_file(section, key, value).is_none() {

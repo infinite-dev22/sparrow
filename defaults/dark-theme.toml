@@ -2,7 +2,7 @@
 name = "sparrow Dark"
 
 [ui]
-font-family = ""
+font-family = "Inter, Noto Sans, sans-serif"
 font-size = 13
 header-height = 35
 status-height = 25

@@ -26,7 +26,7 @@ pub fn header(
         label(move || title).style(|s| {
             s.margin_left(12.0)
                 .margin_right(14.0)
-                .font_bold()
+                .font_weight(floem::text::Weight(600))
                 .selectable(false)
         }),
         tabs,

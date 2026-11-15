@@ -319,6 +319,7 @@ fn terminal_tab_split(
                     terminal.launch_error,
                     internal_command,
                     workspace.clone(),
+                    PanelKind::Terminal,
                 );
                 let view_id = terminal_view.id();
                 let have_task = terminal.run_debug.get_untracked().is_some();

@@ -44,10 +44,10 @@ pub fn flutter_run_panel(
             let id = terminal.term_id;
             crate::terminal::view::terminal_view(id, terminal.raw.read_only(),
                 terminal.mode.read_only(), terminal.run_debug.read_only(), panel.clone(),
-                terminal.launch_error, window.common.internal_command, window.workspace.clone())
+                terminal.launch_error, window.common.internal_command, window.workspace.clone(), super::kind::PanelKind::FlutterRun)
                 .on_event_cont(floem::event::EventListener::PointerDown, move |_| {
-                    panel.focus_terminal(id);
-                    focus.set(crate::window_tab::Focus::Panel(super::kind::PanelKind::Terminal));
+                    panel.focus_terminal_in_panel(id, super::kind::PanelKind::FlutterRun);
+                    focus.set(crate::window_tab::Focus::Panel(super::kind::PanelKind::FlutterRun));
                 }).style(|s| s.size_full()).into_any()
         } else { label(|| "Run a Flutter configuration to start a session.")
             .style(|s| s.padding(12.0)).into_any() }

@@ -646,6 +646,9 @@ impl AppData {
                                 Some(tab.settings_modal_visible)
                             } else if tab.run_config_modal_visible.get_untracked() {
                                 Some(tab.run_config_modal_visible)
+                            } else if tab.flutter_project.active.get_untracked()
+                                && !tab.flutter_project.is_busy() {
+                                Some(tab.flutter_project.active)
                             } else {
                                 None
                             };
@@ -663,8 +666,12 @@ impl AppData {
                 if let Event::KeyDown(key_event) = event {
                     if key_down_window_data.key_down(key_event) {
                         view_id.request_focus();
+                        EventPropagation::Stop
+                    } else {
+                        // Let native inputs and Floem handle unbound keys,
+                        // especially Tab/Shift+Tab focus navigation in dialogs.
+                        EventPropagation::Continue
                     }
-                    EventPropagation::Stop
                 } else {
                     EventPropagation::Continue
                 }
@@ -2189,6 +2196,7 @@ fn tooltip_tip<V: View + 'static>(
         s.padding_horiz(10.0)
             .padding_vert(5.0)
             .font_size(config.ui.font_size() as f32)
+            .line_height(1.4)
             .font_family(config.ui.font_family.clone())
             .color(config.color(SparrowColor::TOOLTIP_FOREGROUND))
             .background(config.color(SparrowColor::TOOLTIP_BACKGROUND))
@@ -3578,6 +3586,10 @@ fn window_tab(
     let project_chip_origin = create_rw_signal(Point::ZERO);
     let branch_chip_origin = create_rw_signal(Point::ZERO);
     let device_chip_origin = create_rw_signal(Point::ZERO);
+    let settings_modal = window_tab_data.settings_modal_visible;
+    let run_modal = window_tab_data.run_config_modal_visible;
+    let project_modal = window_tab_data.flutter_project.active;
+    let modal_open = move || settings_modal.get() || run_modal.get() || project_modal.get();
 
     let view = stack((
         stack((
@@ -3608,19 +3620,20 @@ fn window_tab(
                 config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
             )
         })
+        .disabled(modal_open)
         .debug_name("Base Layer"),
-        completion(window_tab_data.clone()),
-        signature_help(window_tab_data.clone()),
-        hover(window_tab_data.clone()),
-        code_action(window_tab_data.clone()),
-        rename(window_tab_data.clone()),
-        palette(window_tab_data.clone()),
+        completion(window_tab_data.clone()).disabled(modal_open),
+        signature_help(window_tab_data.clone()).disabled(modal_open),
+        hover(window_tab_data.clone()).disabled(modal_open),
+        code_action(window_tab_data.clone()).disabled(modal_open),
+        rename(window_tab_data.clone()).disabled(modal_open),
+        palette(window_tab_data.clone()).disabled(modal_open),
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
         crate::dart::project_wizard::view(window_tab_data.clone()),
         run_config_modal(window_tab_data.clone()),
         crate::settings::modal::view(window_tab_data.clone()),
-        debug_floating_toolbar(window_tab_data.clone()),
+        debug_floating_toolbar(window_tab_data.clone()).disabled(modal_open),
         project_switcher(window_tab_data.clone(), window_tabs, project_chip_origin),
         branch_switcher(window_tab_data.clone(), branch_chip_origin),
         device_selector_overlay(window_tab_data.clone(), device_chip_origin),
@@ -3639,6 +3652,7 @@ fn window_tab(
             .color(config.color(SparrowColor::EDITOR_FOREGROUND))
             .background(config.color(SparrowColor::EDITOR_BACKGROUND))
             .font_size(config.ui.font_size() as f32)
+            .line_height(1.4)
             .apply_if(!config.ui.font_family.is_empty(), |s| {
                 s.font_family(config.ui.font_family.clone())
             })
@@ -3935,6 +3949,7 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
             .width_full()
             .height(37.0)
             .font_size(config.ui.font_size() as f32)
+            .line_height(1.4)
             .apply_if(!config.ui.font_family.is_empty(), |s| {
                 s.font_family(config.ui.font_family.clone())
             })

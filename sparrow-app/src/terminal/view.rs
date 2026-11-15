@@ -85,6 +85,7 @@ pub fn terminal_view(
     launch_error: RwSignal<Option<String>>,
     internal_command: Listener<InternalCommand>,
     workspace: Arc<SparrowWorkspace>,
+    focus_panel: PanelKind,
 ) -> TerminalView {
     let id = ViewId::new();
 
@@ -110,7 +111,7 @@ pub fn terminal_view(
         let focus = terminal_panel_data.common.focus.get();
 
         let mut is_focused = false;
-        if let Focus::Panel(PanelKind::Terminal) = focus {
+        if focus == Focus::Panel(focus_panel) {
             let tab = terminal_panel_data.active_tab(true);
             if let Some(tab) = tab {
                 let terminal = tab.active_terminal(true);

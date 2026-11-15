@@ -485,6 +485,7 @@ impl TerminalPanelData {
                 run_debug.config = new_config;
             }
         }
+        let console_panel = crate::dart::run_config::console_panel(run_debug.mode, &run_debug.config);
         let mut is_debug = false;
         let new_term_id = match run_debug.mode {
             RunDebugMode::Run => {
@@ -520,7 +521,7 @@ impl TerminalPanelData {
             }
         };
 
-        self.focus_terminal(new_term_id);
+        self.focus_terminal_in_panel(new_term_id, console_panel);
 
         Some(is_debug)
     }
@@ -546,6 +547,10 @@ impl TerminalPanelData {
     }
 
     pub fn focus_terminal(&self, term_id: TermId) {
+        self.focus_terminal_in_panel(term_id, PanelKind::Terminal);
+    }
+
+    pub fn focus_terminal_in_panel(&self, term_id: TermId, panel: PanelKind) {
         if let Some((tab_index, terminal_tab, index, _terminal)) =
             self.get_terminal_in_tab(&term_id)
         {
@@ -553,7 +558,7 @@ impl TerminalPanelData {
                 info.active = tab_index;
             });
             terminal_tab.active.set(index);
-            self.common.focus.set(Focus::Panel(PanelKind::Terminal));
+            self.common.focus.set(Focus::Panel(panel));
 
             self.update_debug_active_term();
         }

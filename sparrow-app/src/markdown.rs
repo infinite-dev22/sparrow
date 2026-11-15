@@ -27,7 +27,9 @@ pub fn parse_markdown(
     let code_font_family: Vec<FamilyOwned> =
         FamilyOwned::parse_list(&config.editor.font_family).collect();
 
+    let ui_font_family = config.ui.font_family();
     let default_attrs = Attrs::new()
+        .family(&ui_font_family)
         .color(config.color(SparrowColor::EDITOR_FOREGROUND))
         .font_size(config.ui.font_size() as f32)
         .line_height(LineHeightValue::Normal(line_height as f32));
@@ -330,11 +332,14 @@ pub fn from_plaintext(
     line_height: f64,
     config: &SparrowConfig,
 ) -> Vec<MarkdownContent> {
+    let ui_font_family = config.ui.font_family();
     let mut text_layout = TextLayout::new();
     text_layout.set_text(
         text,
         AttrsList::new(
             Attrs::new()
+                .family(&ui_font_family)
+                .color(config.color(SparrowColor::EDITOR_FOREGROUND))
                 .font_size(config.ui.font_size() as f32)
                 .line_height(LineHeightValue::Normal(line_height as f32)),
         ),
