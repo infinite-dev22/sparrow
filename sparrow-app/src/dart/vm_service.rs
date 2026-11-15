@@ -532,6 +532,11 @@ fn parse_node(v: &Value) -> Option<InspectorNode> {
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
+    let children = root
+        .get("children")
+        .and_then(|x| x.as_array())
+        .map(|arr| arr.iter().filter_map(parse_node).collect())
+        .unwrap_or_default();
     let mut properties = Vec::new();
     if let Some(props) = root.get("properties").and_then(|x| x.as_array()) {
         for prop in props {
@@ -603,6 +608,7 @@ pub struct FlutterInspectorData {
     pub state: RwSignal<InspectorState>,
     pub vm_url: RwSignal<Option<(TermId, String)>>,
     pub root: RwSignal<Option<RwSignal<InspectorNodeData>>>,
+    pub selected_node: RwSignal<Option<RwSignal<InspectorNodeData>>>,
     pub updates: ReadSignal<Option<Notification>>,
     pub common: std::rc::Rc<CommonData>,
     cx: Scope,
@@ -617,6 +623,7 @@ impl FlutterInspectorData {
             state: cx.create_rw_signal(InspectorState::Disconnected),
             vm_url: cx.create_rw_signal(None),
             root: cx.create_rw_signal(None),
+            selected_node: cx.create_rw_signal(None),
             updates,
             common,
             cx,
@@ -641,6 +648,7 @@ impl FlutterInspectorData {
         self.client.disconnect();
         self.vm_url.set(None);
         self.root.set(None);
+        self.selected_node.set(None);
         self.state.set(InspectorState::Disconnected);
     }
 
