@@ -760,19 +760,24 @@ impl PaletteData {
             }
         };
 
+        let lsp = &self.common.dart_lsp;
+        if !crate::dart::is_dart_path(&path) || !lsp.is_available() {
+            self.items.update(|items| items.clear());
+            return;
+        }
         let set_items = self.items.write_only();
-        let send = create_ext_action(self.common.scope, move |result| {
-            if let Ok(ProxyResponse::GetDocumentSymbols { resp }) = result {
-                let items = Self::format_document_symbol_resp(resp);
-                set_items.set(items);
-            } else {
-                set_items.update(|items| items.clear());
+        let status = self.status;
+        let current_run = self.run_id;
+        let requested_run = current_run.get_untracked();
+        let send = create_ext_action(self.common.scope, move |symbols| {
+            if status.get_untracked() == PaletteStatus::Started
+                && current_run.get_untracked() == requested_run {
+                set_items.set(Self::format_document_symbol_resp(
+                    DocumentSymbolResponse::Nested(symbols),
+                ));
             }
         });
-
-        self.common.proxy.get_document_symbols(path, move |result| {
-            send(result);
-        });
+        lsp.document_symbols(&path, move |symbols| send(symbols));
     }
 
     fn format_document_symbol_resp(
@@ -818,7 +823,7 @@ impl PaletteData {
             content: PaletteItemContent::DocumentSymbol {
                 kind: s.kind,
                 name: s.name.replace('\n', "↵"),
-                range: s.range,
+                range: s.selection_range,
                 container_name: parent,
             },
             filter_text: s.name.clone(),
@@ -1937,4 +1942,30 @@ fn fetch_pub_packages(query: &str) -> anyhow::Result<Vec<PubPackageInfo>> {
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod dart_symbol_tests {
+    use super::*;
+    #[test]
+    fn nested_dart_symbols_keep_parent_and_jump_to_identifier() {
+        let symbol: DocumentSymbol = serde_json::from_value(serde_json::json!({
+            "name": "Counter", "kind": 5,
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 8, "character": 1}},
+            "selectionRange": {"start": {"line": 0, "character": 6}, "end": {"line": 0, "character": 13}},
+            "children": [{"name": "increment", "kind": 6,
+                "range": {"start": {"line": 2, "character": 2}, "end": {"line": 4, "character": 3}},
+                "selectionRange": {"start": {"line": 2, "character": 7}, "end": {"line": 2, "character": 16}}}]
+        })).unwrap();
+        let items = PaletteData::format_document_symbol_resp(DocumentSymbolResponse::Nested(vec![symbol]));
+        assert_eq!(items.len(), 2);
+        match &items[1].content {
+            PaletteItemContent::DocumentSymbol { name, range, container_name, .. } => {
+                assert_eq!(name, "increment");
+                assert_eq!(container_name.as_deref(), Some("Counter"));
+                assert_eq!(range.start, lsp_types::Position::new(2, 7));
+            }
+            _ => panic!("expected Dart symbol"),
+        }
+    }
 }

@@ -87,7 +87,7 @@ use crate::{
     palette::{DEFAULT_RUN_TOML, PaletteData, PaletteStatus, kind::PaletteKind},
     panel::{
         call_hierarchy_view::{CallHierarchyData, CallHierarchyItemData},
-        data::{PanelData, PanelSection, default_panel_order},
+        data::{PanelData, PanelSection, default_panel_order, normalize_panel_layout},
         kind::PanelKind,
         position::PanelContainerPosition,
     },
@@ -507,12 +507,13 @@ impl WindowTabData {
         let panel = workspace_info
             .as_ref()
             .map(|i| {
-                let panel_order = db
-                    .get_panel_orders()
-                    .unwrap_or_else(|_| default_panel_order());
+                // Active indices belong to this workspace's saved order, not
+                // the last order saved by a different workspace.
+                let panel_order = i.panel.panels.clone();
+                let (panel_order, styles) = normalize_panel_layout(panel_order, i.panel.styles.clone());
                 PanelData {
                     panels: cx.create_rw_signal(panel_order),
-                    styles: cx.create_rw_signal(i.panel.styles.clone()),
+                    styles: cx.create_rw_signal(styles),
                     size: cx.create_rw_signal(i.panel.size.clone()),
                     available_size: panel_available_size,
                     sections: cx.create_rw_signal(
@@ -2709,7 +2710,6 @@ impl WindowTabData {
                     self.main_split.docs.with_untracked(|x| {
                         for doc in x.values() {
                             doc.get_code_lens();
-                            doc.get_document_symbol();
                             doc.get_semantic_styles();
                             doc.get_folding_range();
                             doc.get_inlay_hints();
@@ -3312,6 +3312,7 @@ impl WindowTabData {
     }
 
     pub fn show_panel(&self, kind: PanelKind) {
+        let kind = kind.canonical();
         if kind == PanelKind::Terminal
             && self
                 .terminal

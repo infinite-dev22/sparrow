@@ -8,11 +8,9 @@ use floem::{
     reactive::{ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
     views::{
-        Decorators, VirtualVector, empty, label, scroll, stack, svg,
-        virtual_stack,
+        Decorators, VirtualVector, empty, label, scroll, stack, svg, virtual_stack,
     },
 };
-
 
 use super::position::PanelPosition;
 use crate::{
@@ -34,7 +32,13 @@ pub fn widget_tree_panel(
     let internal_command = window_tab_data.common.internal_command;
     let source_path = data.source_path.read_only();
 
-    scroll(
+    let header = super::chrome::header(
+        window_tab_data.clone(),
+        super::kind::PanelKind::WidgetTree,
+        super::kind::PanelKind::WidgetTree.title(),
+        empty(),
+    );
+    let content = scroll(
         virtual_stack(
             move || WidgetList::new(data.roots.get()),
             move |(i, _, node)| (*i, node.get_untracked().info.class_name.clone()),
@@ -42,10 +46,17 @@ pub fn widget_tree_panel(
                 widget_row(depth, node, config, internal_command, source_path)
             },
         )
-            .item_size_fixed(move || ui_line_height.get())
-            .style(|s| s.absolute().flex_col().min_width_full()),
+        .item_size_fixed(move || ui_line_height.get())
+        .style(|s| s.absolute().flex_col().width_full()),
     )
-        .style(|s| s.absolute().size_full())
+    .style(|s| {
+        s.flex_grow(1.0_f32)
+            .flex_basis(0.0)
+            .min_height(0.0)
+            .width_full()
+    });
+    stack((header, content))
+        .style(|s| s.flex_col().size_full())
         .debug_name("Widget Tree Panel")
 }
 
@@ -56,15 +67,16 @@ fn widget_row(
     internal_command: crate::listener::Listener<InternalCommand>,
     source_path: ReadSignal<Option<std::path::PathBuf>>,
 ) -> impl View {
-    let (kind, class_name, has_children, jump_target, open) = node.with_untracked(|n| {
-        (
-            n.info.kind(),
-            n.info.class_name.clone(),
-            !n.children.is_empty(),
-            n.info.source_range.or(n.info.instantiation_range),
-            n.open,
-        )
-    });
+    let (kind, class_name, has_children, jump_target, open) =
+        node.with_untracked(|n| {
+            (
+                n.info.kind(),
+                n.info.class_name.clone(),
+                !n.children.is_empty(),
+                n.info.source_range.or(n.info.instantiation_range),
+                n.open,
+            )
+        });
     let indent = (depth as f32) * 10.0;
     let kind_label = kind.label();
 
@@ -78,47 +90,39 @@ fn widget_row(
                 .margin_right(6.0)
                 .color(c.color(SparrowColor::SPARROW_ICON_ACTIVE))
         }),
-        label(move || class_name.clone()).style(|s| {
-            s.selectable(false)
-                .min_width(0.0)
-                .flex_basis(0.0)
-                .flex_grow(1.0f32)
-                .text_ellipsis()
-        }),
+        label(move || class_name.clone()).style(|s| s.selectable(false).flex_shrink(0.0_f32)),
         label(move || kind_label).style(move |s| {
             s.color(config.get().color(SparrowColor::EDITOR_DIM))
                 .margin_right(10.0)
                 .selectable(false)
         }),
     ))
-        .on_click_stop(move |_| {
-            if let (Some((start, _)), Some(path)) =
-                (jump_target, source_path.get_untracked())
-            {
-                internal_command.send(InternalCommand::JumpToLocation {
-                    location: EditorLocation {
-                        path,
-                        position: Some(EditorPosition::Offset(start)),
-                        scroll_offset: None,
-                        ignore_unconfirmed: false,
-                        same_editor_tab: false,
-                    },
-                });
-            }
-        })
-        .style(move |s| {
-            s.padding_left(10.0)
-                .items_center()
-                .width_pct(100.0)
-                .cursor(CursorStyle::Pointer)
-                .hover(|s| {
-                    s.background(
-                        config
-                            .get()
-                            .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-        })
+    .on_click_stop(move |_| {
+        if let (Some((start, _)), Some(path)) =
+            (jump_target, source_path.get_untracked())
+        {
+            internal_command.send(InternalCommand::JumpToLocation {
+                location: EditorLocation {
+                    path,
+                    position: Some(EditorPosition::Offset(start)),
+                    scroll_offset: None,
+                    ignore_unconfirmed: false,
+                    same_editor_tab: false,
+                },
+            });
+        }
+    })
+    .style(move |s| {
+        s.padding_left(10.0)
+            .items_center()
+            .width_pct(100.0)
+            .cursor(CursorStyle::Pointer)
+            .hover(|s| {
+                s.background(
+                    config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                )
+            })
+    })
 }
 
 /// Chevron that toggles a node's `open` signal. For leaves, renders an
@@ -143,12 +147,10 @@ fn chevron(
             || "",
             config,
         )
-            .style(|s| s.size(16.0, 16.0).padding(0.0))
-            .into_any()
+        .style(|s| s.size(16.0, 16.0).padding(0.0))
+        .into_any()
     } else {
-        empty()
-            .style(|s| s.size(16.0, 16.0))
-            .into_any()
+        empty().style(|s| s.size(16.0, 16.0)).into_any()
     }
 }
 

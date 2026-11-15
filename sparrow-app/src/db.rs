@@ -14,7 +14,7 @@ use sparrow_rpc::plugin::VoltID;
 use crate::{
     app::{AppData, AppInfo},
     doc::DocInfo,
-    panel::{data::PanelOrder, kind::PanelKind},
+    panel::data::PanelOrder,
     window::{WindowData, WindowInfo},
     window_tab::WindowTabData,
     workspace::{SparrowWorkspace, WorkspaceInfo},
@@ -370,16 +370,7 @@ impl SparrowDb {
 
     pub fn get_panel_orders(&self) -> Result<PanelOrder> {
         let panel_orders = std::fs::read_to_string(self.folder.join(PANEL_ORDERS))?;
-        let mut panel_orders: PanelOrder = serde_json::from_str(&panel_orders)?;
-
-        use strum::IntoEnumIterator;
-        for kind in PanelKind::iter() {
-            if kind.position(&panel_orders).is_none() {
-                let panels =
-                    panel_orders.entry(kind.default_position()).or_default();
-                panels.push_back(kind);
-            }
-        }
+        let panel_orders: PanelOrder = serde_json::from_str(&panel_orders)?;
 
         Ok(panel_orders)
     }

@@ -67,7 +67,10 @@ pub fn file_explorer_panel(
     let config = window_tab_data.common.config;
     let data = window_tab_data.file_explorer.clone();
     let source_control = window_tab_data.source_control.clone();
-    PanelBuilder::new(config, position)
+    let header = crate::panel::chrome::header(
+        window_tab_data.clone(), PanelKind::FileExplorer, "Project", floem::views::empty(),
+    );
+    let open_editors = PanelBuilder::new(config, position)
         .add_height_style(
             "Open Editors",
             150.0,
@@ -76,15 +79,14 @@ pub fn file_explorer_panel(
             window_tab_data.panel.section_open(PanelSection::OpenEditor),
             move |s| s.apply_if(!config.get().ui.open_editors_visible, |s| s.hide()),
         )
-        .add(
-            "Project",
-            container(file_explorer_view(data, source_control))
-                .style(|s| s.size_full()),
-            window_tab_data
-                .panel
-                .section_open(PanelSection::FileExplorer),
-        )
-        .build()
+        .build();
+    stack((
+        header,
+        open_editors,
+        container(file_explorer_view(data, source_control))
+            .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full()),
+    ))
+        .style(|s| s.flex_col().size_full())
         .debug_name("File Explorer Panel")
 }
 

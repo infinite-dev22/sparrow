@@ -4,6 +4,7 @@ use floem::{
     AnyView, IntoView, View,
     event::{Event, EventListener, EventPropagation},
     kurbo::{Point, Size},
+    menu::{Menu, MenuItem},
     reactive::{
         ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal,
     },
@@ -31,7 +32,7 @@ use crate::{
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     file_explorer::view::file_explorer_panel,
     panel::{
-        call_hierarchy_view::show_hierarchy_panel, document_symbol::symbol_panel,
+        call_hierarchy_view::show_hierarchy_panel,
         implementation_view::implementation_panel,
         references_view::references_panel,
     },
@@ -544,7 +545,7 @@ fn panel_view(
                         .into_any()
                 }
                 PanelKind::DocumentSymbol => {
-                    symbol_panel(window_tab_data.clone(), position).into_any()
+                    crate::panel::dart_outline::dart_outline_panel(window_tab_data.clone(), position).into_any()
                 }
                 PanelKind::References => {
                     references_panel(window_tab_data.clone(), position).into_any()
@@ -634,6 +635,7 @@ pub fn tool_window_stripe(
     is_left: bool,
 ) -> impl View {
     let config = window_tab_data.common.config;
+    let overflow_window = window_tab_data.clone();
     let (top, lower, bottom) = if is_left {
         (
             PanelPosition::LeftTop,
@@ -649,6 +651,40 @@ pub fn tool_window_stripe(
     };
     stack((
         stripe_picker(window_tab_data.clone(), top),
+        label(|| "···")
+            .style(move |s| {
+                s.size(28.0, 28.0)
+                    .margin_vert(2.0)
+                    .items_center()
+                    .justify_center()
+                    .font_size(16.0)
+                    .cursor(CursorStyle::Pointer)
+                    .apply_if(!is_left, |s| s.hide())
+                    .hover(|s| {
+                        s.background(
+                            config
+                                .get()
+                                .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                        .border_radius(6.0)
+                    })
+            })
+            .popout_menu(move || {
+                use strum::IntoEnumIterator;
+                let mut menu = Menu::new("Tool Windows");
+                let mut kinds: Vec<_> = PanelKind::iter()
+                    .filter(|kind| kind.canonical() == *kind)
+                    .collect();
+                kinds.sort_by_key(|kind| kind.title());
+                for kind in kinds {
+                    let window = overflow_window.clone();
+                    menu = menu.entry(
+                        MenuItem::new(kind.title())
+                            .action(move || window.show_panel(kind)),
+                    );
+                }
+                menu
+            }),
         empty().style(|s| s.flex_grow(1.0f32)),
         stripe_picker(window_tab_data.clone(), lower),
         stripe_picker(window_tab_data, bottom),
@@ -678,39 +714,18 @@ fn stripe_picker(
     let dragging = window_tab_data.common.dragging;
     dyn_stack(
         move || {
+            let active = panel.active_panel_at_position(&position, true);
             panel
                 .panels
                 .with(|panels| panels.get(&position).cloned().unwrap_or_default())
+                .into_iter()
+                .filter(|kind| kind.pinned() || active == Some((*kind, true)))
+                .collect::<Vec<_>>()
         },
         |p| *p,
         move |p| {
             let window_tab_data = window_tab_data.clone();
-            let tooltip = match p {
-                PanelKind::Notifications => "Notifications",
-                PanelKind::PullRequests => "Pull Requests",
-                PanelKind::RunningDevices => "Running Devices",
-                PanelKind::Problems => "Problems",
-                PanelKind::Logcat => "Logcat",
-                PanelKind::GitHistory => "Git History",
-                PanelKind::Terminal => "Terminal",
-                PanelKind::FileExplorer => "File Explorer",
-                PanelKind::SourceControl => "Source Control",
-                PanelKind::Plugin => "Themes",
-                PanelKind::Search => "Search",
-                PanelKind::Problem => "Dart Analysis",
-                PanelKind::Debug => "Debug",
-                PanelKind::CallHierarchy => "Call Hierarchy",
-                PanelKind::DocumentSymbol => "Document Symbol",
-                PanelKind::References => "References",
-                PanelKind::Implementation => "Implementation",
-                PanelKind::WidgetTree => "Widget Tree",
-                PanelKind::DartOutline => "Outline",
-                PanelKind::FlutterInspector => "Flutter Inspector",
-                PanelKind::FlutterRun => "Run / Flutter Logs",
-                PanelKind::FlutterTest => "Flutter Test",
-                PanelKind::DeviceManager => "Device Manager",
-                PanelKind::FlutterPerformance => "Flutter Performance",
-            };
+            let tooltip = p.title();
             let icon = p.svg_name();
             let is_active = {
                 let window_tab_data = window_tab_data.clone();
@@ -758,16 +773,18 @@ fn stripe_picker(
             )
             .style(move |s| {
                 let config = config.get();
-                s.padding(1.0).margin_vert(2.0).border_radius(6.0).apply_if(
-                    is_active(),
-                    |s| {
+                s.size(28.0, 28.0)
+                    .items_center()
+                    .justify_center()
+                    .margin_vert(2.0)
+                    .border_radius(6.0)
+                    .apply_if(is_active(), |s| {
                         s.background(config.color(if p == PanelKind::FileExplorer {
                             SparrowColor::ACTIVITY_CURRENT
                         } else {
                             SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND
                         }))
-                    },
-                )
+                    })
             })
         },
     )

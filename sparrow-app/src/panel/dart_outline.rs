@@ -3,24 +3,23 @@
 
 use std::{ops::Range, rc::Rc, sync::Arc};
 
-use floem::{
-    IntoView, View,
-    reactive::{ReadSignal, RwSignal, SignalGet, SignalUpdate},
-    style::CursorStyle,
-    views::{
-        Decorators, VirtualVector, empty, label, scroll, stack, svg,
-        virtual_stack,
-    },
-};
-use floem::reactive::SignalWith;
 use super::position::PanelPosition;
 use crate::{
     app::clickable_icon,
     command::InternalCommand,
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     editor::location::{EditorLocation, EditorPosition},
-    outline::{flatten, OutlineNodeData},
+    outline::{OutlineNodeData, flatten},
     window_tab::WindowTabData,
+};
+use floem::reactive::SignalWith;
+use floem::{
+    IntoView, View,
+    reactive::{ReadSignal, RwSignal, SignalGet, SignalUpdate},
+    style::CursorStyle,
+    views::{
+        Decorators, VirtualVector, empty, label, scroll, stack, svg, virtual_stack,
+    },
 };
 
 pub fn dart_outline_panel(
@@ -33,20 +32,31 @@ pub fn dart_outline_panel(
     let internal_command = window_tab_data.common.internal_command;
     let source_path = data.source_path.read_only();
 
-    scroll(
+    let header = super::chrome::header(
+        window_tab_data.clone(),
+        super::kind::PanelKind::DartOutline,
+        super::kind::PanelKind::DartOutline.title(),
+        empty(),
+    );
+    let content = scroll(
         virtual_stack(
             move || OutlineList::new(data.roots.get()),
-            move |(i, _, node)| {
-                (*i, node.get_untracked().symbol.name.clone())
-            },
+            move |(i, _, node)| (*i, node.get_untracked().symbol.name.clone()),
             move |(_, depth, node)| {
                 outline_row(depth, node, config, internal_command, source_path)
             },
         )
-            .item_size_fixed(move || ui_line_height.get())
-            .style(|s| s.absolute().flex_col().min_width_full()),
+        .item_size_fixed(move || ui_line_height.get())
+        .style(|s| s.absolute().flex_col().width_full()),
     )
-        .style(|s| s.absolute().size_full())
+    .style(|s| {
+        s.flex_grow(1.0_f32)
+            .flex_basis(0.0)
+            .min_height(0.0)
+            .width_full()
+    });
+    stack((header, content))
+        .style(|s| s.flex_col().size_full())
         .debug_name("Dart Outline Panel")
 }
 
@@ -80,21 +90,15 @@ fn outline_row(
                 .symbol_svg(&kind)
                 .unwrap_or_else(|| config.get().ui_svg(SparrowIcons::FILE))
         })
-            .style(move |s| {
-                let c = config.get();
-                let size = c.ui.icon_size() as f32;
-                s.size(size, size).margin_right(6.0).color(
-                    c.symbol_color(&kind)
-                        .unwrap_or_else(|| c.color(SparrowColor::SPARROW_ICON_ACTIVE)),
-                )
-            }),
-        label(move || name.clone()).style(|s| {
-            s.selectable(false)
-                .min_width(0.0)
-                .flex_basis(0.0)
-                .flex_grow(1.0f32)
-                .text_ellipsis()
+        .style(move |s| {
+            let c = config.get();
+            let size = c.ui.icon_size() as f32;
+            s.size(size, size).margin_right(6.0).color(
+                c.symbol_color(&kind)
+                    .unwrap_or_else(|| c.color(SparrowColor::SPARROW_ICON_ACTIVE)),
+            )
         }),
+        label(move || name.clone()).style(|s| s.selectable(false).flex_shrink(0.0_f32)),
         label(move || detail.clone().unwrap_or_default()).style(move |s| {
             s.color(config.get().color(SparrowColor::EDITOR_DIM))
                 .margin_left(6.0)
@@ -104,32 +108,30 @@ fn outline_row(
                 .apply_if(!has_detail, |s| s.hide())
         }),
     ))
-        .on_click_stop(move |_| {
-            if let Some(path) = source_path.get_untracked() {
-                internal_command.send(InternalCommand::JumpToLocation {
-                    location: EditorLocation {
-                        path,
-                        position: Some(EditorPosition::Position(jump_pos)),
-                        scroll_offset: None,
-                        ignore_unconfirmed: false,
-                        same_editor_tab: false,
-                    },
-                });
-            }
-        })
-        .style(move |s| {
-            s.padding_left(10.0)
-                .items_center()
-                .width_pct(100.0)
-                .cursor(CursorStyle::Pointer)
-                .hover(|s| {
-                    s.background(
-                        config
-                            .get()
-                            .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-        })
+    .on_click_stop(move |_| {
+        if let Some(path) = source_path.get_untracked() {
+            internal_command.send(InternalCommand::JumpToLocation {
+                location: EditorLocation {
+                    path,
+                    position: Some(EditorPosition::Position(jump_pos)),
+                    scroll_offset: None,
+                    ignore_unconfirmed: false,
+                    same_editor_tab: false,
+                },
+            });
+        }
+    })
+    .style(move |s| {
+        s.padding_left(10.0)
+            .items_center()
+            .width_pct(100.0)
+            .cursor(CursorStyle::Pointer)
+            .hover(|s| {
+                s.background(
+                    config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                )
+            })
+    })
 }
 
 fn chevron(
@@ -152,8 +154,8 @@ fn chevron(
             || "",
             config,
         )
-            .style(|s| s.size(16.0, 16.0).padding(0.0))
-            .into_any()
+        .style(|s| s.size(16.0, 16.0).padding(0.0))
+        .into_any()
     } else {
         empty().style(|s| s.size(16.0, 16.0)).into_any()
     }

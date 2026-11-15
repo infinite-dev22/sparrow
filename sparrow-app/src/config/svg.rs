@@ -108,3 +108,20 @@ mod file_icon_tests {
         assert_eq!(rendered.len(),10);
     }
 }
+
+#[cfg(test)]
+mod panel_icon_tests {
+    use super::*;
+    use strum::IntoEnumIterator;
+    #[test]
+    fn pinned_tools_have_distinct_readable_glyphs() {
+        let mut store = SvgStore::default();
+        let mut rendered = std::collections::HashSet::new();
+        for kind in crate::panel::kind::PanelKind::iter().filter(|kind| kind.pinned()) {
+            let path = crate::config::DEFAULT_ICON_THEME_ICON_CONFIG.ui.get(kind.svg_name()).unwrap();
+            let svg = store.get_default_svg(path);
+            assert!(svg.contains("<svg"));
+            assert!(rendered.insert(svg), "duplicate glyph for {}", kind.title());
+        }
+    }
+}
