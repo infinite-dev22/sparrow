@@ -1,0 +1,19 @@
+<!-- Sparrow file-type variant: Kotlin mark, filled single path; fixed accent #b49ae5. -->
+<svg
+        class="icon icon-kotlin"
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="#b49ae5"
+        fill-opacity="0.5"
+        stroke="#b49ae5"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+>
+    <path d="M4 4h16l-8 8 8 8H4z" />
+    <path d="M4 20l16 -16" />
+    <path d="M4 12l8 -8" />
+    <path d="M12 12l8 8" />
+</svg>

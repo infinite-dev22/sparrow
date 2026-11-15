@@ -654,6 +654,26 @@ impl SparrowConfig {
         self.files_svg(slice::from_ref(&path))
     }
 
+    pub fn folder_svg(&self, path: &Path) -> (String, Option<Color>) {
+        let svg = self.icon_theme.resolve_folder_to_icon(path)
+            .and_then(|path| self.svg_store.write().get_svg_on_disk(&path))
+            .or_else(|| {
+                let path = DEFAULT_ICON_THEME_ICON_CONFIG.resolve_folder_to_icon(path)?;
+                Some(self.svg_store.write().get_default_svg(path.file_name()?.to_str()?))
+            });
+        match svg {
+            Some(svg) => {
+                let color = self.icon_theme.use_editor_color.unwrap_or(false)
+                    .then(|| self.color(SparrowColor::SPARROW_ICON_ACTIVE));
+                (svg, color)
+            }
+            None => (
+                self.ui_svg(SparrowIcons::DIRECTORY),
+                Some(self.color(SparrowColor::SPARROW_ICON_ACTIVE)),
+            ),
+        }
+    }
+
     pub fn symbol_svg(&self, kind: &SymbolKind) -> Option<String> {
         let kind_str = match *kind {
             SymbolKind::ARRAY => SparrowIcons::SYMBOL_KIND_ARRAY,

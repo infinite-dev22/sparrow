@@ -2628,7 +2628,7 @@ fn palette_item(
 
             let (svg_path, svg_color) = (
                 config.get().ui_svg(if *is_dir {
-                    SparrowIcons::DIRECTORY_CLOSED
+                    SparrowIcons::DIRECTORY
                 } else {
                     SparrowIcons::FILE
                 }),

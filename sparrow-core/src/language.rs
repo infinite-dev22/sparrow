@@ -293,7 +293,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: SparrowLanguage::Cmake,
         indent: Indent::space(2),
-        files: &["cmakelists"],
+        files: &["CMakeLists.txt", "cmakelists"],
         extensions: &["cmake"],
         comment: comment_properties!("#"),
         tree_sitter: TreeSitterProperties {
@@ -418,7 +418,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
         id: SparrowLanguage::Groovy,
         indent: Indent::tab(),
         files: &[],
-        extensions: &[],
+        extensions: &["gradle"],
         comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
@@ -433,8 +433,8 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: SparrowLanguage::Ini,
         indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
+        files: &[".env"],
+        extensions: &["ini", "properties", "xcconfig", "desktop", "env"],
         comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
@@ -450,7 +450,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
         id: SparrowLanguage::Json,
         indent: Indent::space(4),
         files: &[],
-        extensions: &["json", "arb", "har"],
+        extensions: &["json", "arb", "har", "gltf"],
         comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
@@ -559,14 +559,14 @@ const LANGUAGES: &[SyntaxProperties] = &[
         id: SparrowLanguage::Xml,
         indent: Indent::space(4),
         files: &[],
-        extensions: &["xml", "svg", "plist", "storyboard", "xib", "vcxproj"],
+        extensions: &["xml", "svg", "plist", "entitlements", "storyboard", "xib", "vcxproj", "iml"],
         comment: comment_properties!("<!--", "-->"),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
         id: SparrowLanguage::Yaml,
         indent: Indent::space(2),
-        files: &[],
+        files: &[".metadata"],
         extensions: &["yml", "yaml"],
         comment: comment_properties!("#"),
         tree_sitter: TreeSitterProperties::DEFAULT,
@@ -588,10 +588,14 @@ impl SparrowLanguage {
             .and_then(|s| s.to_str().map(|s| s.to_lowercase()));
         // NOTE: This is a linear search.  It is assumed that this function
         // isn't called in any tight loop.
+        // Named configuration files (CMakeLists.txt, log.txt, dotfiles)
+        // take priority over a generic extension such as txt.
         for properties in LANGUAGES {
             if properties.files.iter().any(|f| Some(*f) == filename) {
                 return Some(properties.id);
             }
+        }
+        for properties in LANGUAGES {
             if properties
                 .extensions
                 .iter()
@@ -978,6 +982,22 @@ mod tests {
             SparrowLanguage::Json
         );
         assert!(SparrowLanguage::from_name("Python").is_none());
+    }
+    #[test]
+    fn flutter_configuration_and_native_resource_syntax() {
+        use std::path::Path;
+        for (file, language) in [
+            ("model.freezed.dart", SparrowLanguage::Dart),
+            (".metadata", SparrowLanguage::Yaml),
+            (".env", SparrowLanguage::Ini),
+            ("local.properties", SparrowLanguage::Ini),
+            ("CMakeLists.txt", SparrowLanguage::Cmake),
+            ("build.gradle", SparrowLanguage::Groovy),
+            ("build.gradle.kts", SparrowLanguage::KotlinBuildScript),
+            ("Runner.entitlements", SparrowLanguage::Xml),
+            ("flutter.iml", SparrowLanguage::Xml),
+            ("model.gltf", SparrowLanguage::Json),
+        ] { assert_eq!(SparrowLanguage::from_path(Path::new(file)), language, "{file}"); }
     }
     #[test]
     fn test_language_from_path() {

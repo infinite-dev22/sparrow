@@ -1236,7 +1236,7 @@ pub fn project_switcher(
                         config,
                     ),
                     menu_row(
-                        Some(SparrowIcons::DIRECTORY_CLOSED),
+                        Some(SparrowIcons::DIRECTORY),
                         "Open...",
                         move || {
                             workbench_command

@@ -139,3 +139,68 @@ mod sdk_icon_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod flutter_file_catalog_tests {
+    use super::*;
+    const FILES: &str = "main.dart model.g.dart model.freezed.dart service.mocks.dart pubspec.yaml analysis_options.yaml build.yaml pubspec.lock app.arb .metadata .packages package_config.json a.png a.jpg a.jpeg a.webp a.gif a.bmp a.svg a.ttf a.otf a.json a.riv a.frag a.db a.sqlite a.sqlite3 a.mp3 a.wav a.ogg a.mp4 a.glb a.gltf a.obj a.txt a.csv a.kt a.java build.gradle build.gradle.kts AndroidManifest.xml local.properties rules.pro signing.jks signing.keystore library.jar library.aar a.swift a.m a.mm a.h Info.plist a.entitlements a.xcconfig Podfile Podfile.lock LaunchScreen.storyboard a.xib Assets.xcassets Runner.xcodeproj Runner.xcworkspace a.framework a.xcframework index.html a.css a.js a.mjs a.wasm a.cpp a.c a.hpp CMakeLists.txt Runner.rc a.ico a.dll a.lib a.cc a.desktop a.so README.md .env .env.local .gitignore .gitattributes a.iml a.sh a.bat a.ps1";
+    #[test]
+    fn every_requested_file_type_loads_an_embedded_icon() {
+        let theme = &crate::config::DEFAULT_ICON_THEME_ICON_CONFIG;
+        let mut store = SvgStore::default();
+        for name in FILES.split_whitespace() {
+            let icon = theme.resolve_path_to_icon(&[Path::new(name)]).unwrap_or_else(|| panic!("no icon for {name}"));
+            assert!(store.get_default_svg(icon.file_name().unwrap().to_str().unwrap()).contains("<svg"), "{name}");
+        }
+        for name in ["Assets.xcassets", "Runner.xcodeproj", "Runner.xcworkspace", "Flutter.framework", "Flutter.xcframework"] {
+            let icon = theme.resolve_folder_to_icon(Path::new(name)).unwrap();
+            assert!(store.get_default_svg(icon.file_name().unwrap().to_str().unwrap()).contains("<svg"));
+        }
+    }
+    #[test]
+    fn docker_names_override_yaml_without_affecting_other_configs() {
+        let theme = &crate::config::DEFAULT_ICON_THEME_ICON_CONFIG;
+        let icon = |name| theme.resolve_path_to_icon(&[Path::new(name)]).unwrap();
+        let docker = icon("Dockerfile");
+        for name in ["Dockerfile.dev", "Dockerfile.release", "dockerfile", "dockerfile.dev",
+            "app.Dockerfile", ".dockerignore", "compose.yaml", "compose.yml",
+            "compose.override.yaml", "compose.override.yml", "docker-compose.yaml",
+            "docker-compose.yml", "docker-compose.override.yaml", "docker-compose.override.yml"] {
+            assert_eq!(icon(name), docker, "{name}");
+        }
+        assert_ne!(icon("config.yaml"), docker);
+        assert_ne!(icon("pubspec.yaml"), docker);
+        assert_eq!(docker.file_name().unwrap(), "filetype-docker.svg");
+    }
+
+    #[test]
+    fn all_bundled_filetype_assets_are_mapped_and_ui_assets_load() {
+        let theme = &crate::config::DEFAULT_ICON_THEME_ICON_CONFIG;
+        let mapped: std::collections::HashSet<_> = theme.filename.values()
+            .chain(theme.extension.values()).chain(theme.foldername.values()).collect();
+        let mut store = SvgStore::default();
+        for file in LUCIDE_ICONS_DIR.files() {
+            let name = file.path().to_str().unwrap();
+            if name.starts_with("filetype-") && name.ends_with(".svg") {
+                assert!(mapped.iter().any(|mapped| mapped.as_str() == name), "unmapped {name}");
+                assert!(store.get_default_svg(name).contains("<svg"));
+            }
+        }
+        for asset in theme.ui.values() {
+            assert!(store.get_default_svg(asset).contains("<svg"), "{asset}");
+        }
+    }
+
+    #[test]
+    fn compound_generated_and_named_icons_override_generic_suffixes() {
+        let theme = &crate::config::DEFAULT_ICON_THEME_ICON_CONFIG;
+        let icon = |name| theme.resolve_path_to_icon(&[Path::new(name)]).unwrap();
+        let generated: std::collections::HashSet<_> = ["a.dart", "a.g.dart", "a.freezed.dart", "a.mocks.dart"].map(icon).into_iter().collect();
+        assert_eq!(generated.len(), 4);
+        assert_ne!(icon("build.gradle.kts"), icon("script.kts"));
+        assert_ne!(icon("Podfile.lock"), icon("pubspec.lock"));
+        assert_eq!(icon("PHOTO.PNG"), icon("photo.png"));
+        assert_eq!(icon(".env.local"), icon(".env"));
+        assert!(theme.resolve_path_to_icon(&[Path::new("unknown.zzz")]).is_none());
+    }
+}

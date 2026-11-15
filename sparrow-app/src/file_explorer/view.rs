@@ -367,11 +367,8 @@ fn file_explorer_view(
                         svg(move || {
                             let config = config.get();
                             if is_dir {
-                                let svg_str = match open {
-                                    true => SparrowIcons::DIRECTORY_OPENED,
-                                    false => SparrowIcons::DIRECTORY_CLOSED,
-                                };
-                                config.ui_svg(svg_str)
+                                kind.path().map(|path| config.folder_svg(path).0)
+                                    .unwrap_or_else(|| config.ui_svg(SparrowIcons::DIRECTORY))
                             } else if let Some(path) = kind.path() {
                                 config.file_svg(path).0
                             } else {
@@ -385,21 +382,13 @@ fn file_explorer_view(
                                 s.size(size, size)
                                     .flex_shrink(0.0f32)
                                     .margin_horiz(6.0)
-                                    .apply_if(is_dir, |s| {
-                                        s.color(
-                                            config.color(
-                                                SparrowColor::SPARROW_ICON_ACTIVE,
-                                            ),
-                                        )
-                                    })
-                                    .apply_if(!is_dir, |s| {
-                                        s.apply_opt(
-                                            kind_for_style
-                                                .path()
-                                                .and_then(|p| config.file_svg(p).1),
-                                            Style::color,
-                                        )
-                                    })
+                                    .apply_opt(
+                                        kind_for_style.path().and_then(|path| {
+                                            if is_dir { config.folder_svg(path).1 }
+                                            else { config.file_svg(path).1 }
+                                        }),
+                                        Style::color,
+                                    )
                             })
                     },
                     file_node_text_view(data, node, source_control.clone()),

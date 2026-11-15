@@ -73,8 +73,7 @@ impl SparrowIcons {
     pub const ITEM_OPENED: &'static str = "item.opened";
     pub const ITEM_CLOSED: &'static str = "item.closed";
 
-    pub const DIRECTORY_CLOSED: &'static str = "directory.closed";
-    pub const DIRECTORY_OPENED: &'static str = "directory.opened";
+    pub const DIRECTORY: &'static str = "directory";
 
     pub const PANEL_RESTORE: &'static str = "panel.restore";
     pub const PANEL_MAXIMISE: &'static str = "panel.maximise";

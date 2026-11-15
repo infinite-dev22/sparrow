@@ -7,8 +7,8 @@ file-explorer-double-click = false
 
 [editor]
 font-family = "JetBrains Mono, Noto Sans Mono, monospace"
-font-size = 13
-code-glance-font-size = 2
+font-size = 16
+code-glance-font-size = 16
 line-height = 1.65
 smart-tab = true
 tab-width = 4
@@ -37,18 +37,18 @@ autosave-interval = 0
 format-on-autosave = true
 normalize-line-endings = true
 enable-inlay-hints = true
-inlay-hint-font-family = ""
-inlay-hint-font-size = 0
+inlay-hint-font-family = "JetBrains Mono, Noto Sans Mono, monospace"
+inlay-hint-font-size = 16
 enable-error-lens = true
 only-render-error-styling = true
 error-lens-end-of-line = true
-error-lens-font-family = ""
-error-lens-font-size = 0
+error-lens-font-family = "JetBrains Mono, Noto Sans Mono, monospace"
+error-lens-font-size = 16
 error-lens-multiline = false
 enable-completion-lens = false
 enable-inline-completion = true
-completion-lens-font-family = ""
-completion-lens-font-size = 0
+completion-lens-font-family = "JetBrains Mono, Noto Sans Mono, monospace"
+completion-lens-font-size = 16
 blink-interval = 500                                         # ms
 multicursor-case-sensitive = true
 multicursor-whole-words = true
@@ -64,8 +64,8 @@ bracket-colorization-limit = 30000
 files-exclude = "**/{.git,.svn,.hg,CVS,.DS_Store,Thumbs.db}" # Glob patterns
 
 [terminal]
-font-family = ""
-font-size = 0
+font-family = "JetBrains Mono, Noto Sans Mono, monospace"
+font-size = 16
 line-height = 0
 
 [terminal.default-profile]
@@ -84,8 +84,8 @@ default = {}
 
 [ui]
 scale = +1.0
-font-family = ""
-font-size = 13
+font-family = "JetBrains Mono, Noto Sans Mono, monospace"
+font-size = 16
 icon-size = 16
 header-height = 32
 status-height = 24
@@ -94,8 +94,8 @@ tab-separator-height = "Content"
 scroll-width = 8
 drop-shadow-width = 0
 palette-width = 500
-hover-font-family = ""
-hover-font-size = 0
+hover-font-family = "JetBrains Mono, Noto Sans Mono, monospace"
+hover-font-size = 16
 trim-search-results-whitespace = true
 list-line-height = 22
 tab-close-button = "Right"
