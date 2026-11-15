@@ -33,7 +33,7 @@ use sparrow_rpc::{
 
 use super::{
     PluginCatalogRpcHandler,
-    psp::{ResponseHandler, RpcCallback},
+    rpc::{ResponseHandler, RpcCallback},
 };
 
 pub struct DapClient {
@@ -128,7 +128,7 @@ impl DapClient {
             thread::spawn(move || {
                 let mut reader = Box::new(BufReader::new(stdout));
                 loop {
-                    match crate::plugin::lsp::read_message(&mut reader) {
+                    match crate::plugin::rpc::read_message(&mut reader) {
                         Ok(message_str) => {
                             tracing::debug!("read from dap server: {}", message_str);
                             dap_rpc.handle_server_message(&message_str);
@@ -445,13 +445,6 @@ pub enum DapRpc {
 }
 
 #[derive(Clone)]
-pub struct DebuggerData {
-    pub debugger_type: String,
-    pub program: String,
-    pub args: Option<Vec<String>>,
-}
-
-#[derive(Clone)]
 pub struct DapRpcHandler {
     pub dap_id: DapId,
     rpc_tx: Sender<DapRpc>,
@@ -647,14 +640,7 @@ impl DapRpcHandler {
     }
 
     pub fn launch(&self, config: &RunDebugConfig) -> Result<()> {
-        let params = serde_json::json!({
-            "console": if config.ty.as_deref() == Some("flutter-test") { "debugConsole" } else { "terminal" },
-            "program": config.program,
-            "args": config.args,
-            "cwd": config.cwd,
-            "runInTerminal": config.ty.as_deref() != Some("flutter-test"),
-            "env": config.env
-        });
+        let params = dart_launch_arguments(config)?;
         let _resp = self
             .request::<Launch>(params)
             .map_err(|e| anyhow!(e.message))?;
@@ -848,5 +834,69 @@ impl DapRpcHandler {
         };
 
         self.request_async::<StepOut>(args, move |_| {});
+    }
+}
+
+/// Translate SDK CLI configurations into the Dart DAP launch schema. The
+/// debug adapter launches an entrypoint, never the SDK executable as a script.
+fn dart_launch_arguments(config: &RunDebugConfig) -> Result<Value> {
+    if !config.is_dart_flutter() {
+        return Err(anyhow!("Only Dart and Flutter debug targets are supported"));
+    }
+    let mut program = config.program.clone();
+    let mut args = config.args.clone().unwrap_or_default();
+    let mut tool_args = Vec::new();
+    if config.ty.as_deref() != Some("flutter-test") {
+        let flutter = std::path::Path::new(&program)
+            .file_stem()
+            .is_some_and(|s| s == "flutter");
+        if args.first().is_some_and(|s| s == "run") {
+            args.remove(0);
+        }
+        if flutter {
+            program = "lib/main.dart".into();
+            let mut iter = args.into_iter();
+            while let Some(arg) = iter.next() {
+                if arg == "-t" || arg == "--target" {
+                    program = iter
+                        .next()
+                        .ok_or_else(|| anyhow!("Flutter target is missing"))?;
+                } else if let Some(target) = arg.strip_prefix("--target=") {
+                    program = target.to_string();
+                } else {
+                    tool_args.push(arg);
+                }
+            }
+            args = Vec::new();
+        } else {
+            while args.first().is_some_and(|s| s.starts_with('-')) {
+                tool_args.push(args.remove(0));
+            }
+            if args.is_empty() {
+                return Err(anyhow!("Choose a Dart entrypoint for debugging"));
+            }
+            program = args.remove(0);
+        }
+    }
+    Ok(
+        serde_json::json!({"console":if config.ty.as_deref()==Some("flutter-test"){"debugConsole"}else{"terminal"},"program":program,"args":args,"toolArgs":tool_args,"cwd":config.cwd,"runInTerminal":config.ty.as_deref()!=Some("flutter-test"),"env":config.env}),
+    )
+}
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    #[test]
+    fn native_flutter_launch_uses_entrypoint_not_tool_executable() {
+        let c:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":"flutter","name":"app","program":"flutter","args":["run","--target","example/lib/main.dart","--flavor","dev"]})).unwrap();
+        let p = dart_launch_arguments(&c).unwrap();
+        assert_eq!(p["program"], "example/lib/main.dart");
+        assert_eq!(p["toolArgs"], serde_json::json!(["--flavor", "dev"]));
+    }
+    #[test]
+    fn native_dart_launch_keeps_script_arguments() {
+        let c:RunDebugConfig=serde_json::from_value(serde_json::json!({"name":"script","program":"dart","args":["run","tool/main.dart","hello world"]})).unwrap();
+        let p = dart_launch_arguments(&c).unwrap();
+        assert_eq!(p["program"], "tool/main.dart");
+        assert_eq!(p["args"], serde_json::json!(["hello world"]));
     }
 }

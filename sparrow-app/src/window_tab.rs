@@ -51,7 +51,9 @@ use sparrow_rpc::{
 };
 use tracing::{Level, debug, error, event};
 
-use crate::dart::{DartLspService, FlutterHotReloadData, FlutterInspectorData, SignatureHelpData};
+use crate::dart::{
+    DartLspService, FlutterHotReloadData, FlutterInspectorData, SignatureHelpData,
+};
 use crate::outline::OutlineData;
 use crate::widget_tree::WidgetTreeData;
 use crate::{
@@ -387,7 +389,10 @@ impl WindowTabData {
                 .line_height(LineHeightValue::Normal(1.0));
             let attrs_list = AttrsList::new(attrs);
             text_layout.set_text("W", attrs_list, None);
-            text_layout.size().height.max(config.ui.list_line_height() as f64)
+            text_layout
+                .size()
+                .height
+                .max(config.ui.list_line_height() as f64)
         });
 
         let (dart_lsp, dart_lsp_rx) = match &workspace.kind {
@@ -398,8 +403,13 @@ impl WindowTabData {
             _ => DartLspService::spawn_unavailable(),
         };
 
-        if let Some(root) = &workspace.path { if workspace.kind == SparrowWorkspaceType::Local { crate::dart::assets::start(root.clone()); } }
-        let signature_help = cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
+        if let Some(root) = &workspace.path {
+            if workspace.kind == SparrowWorkspaceType::Local {
+                crate::dart::assets::start(root.clone());
+            }
+        }
+        let signature_help =
+            cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
 
         let common = Rc::new(CommonData {
             workspace: workspace.clone(),
@@ -432,8 +442,7 @@ impl WindowTabData {
             window_common: window_common.clone(),
         });
 
-        let flutter_inspector =
-            FlutterInspectorData::new(cx, common.clone());
+        let flutter_inspector = FlutterInspectorData::new(cx, common.clone());
         let main_split = MainSplitData::new(cx, common.clone());
         let code_action =
             cx.create_rw_signal(CodeActionData::new(cx, common.clone()));
@@ -586,11 +595,14 @@ impl WindowTabData {
                             TermNotification::VmServiceUrl { term_id, url } => {
                                 // Only connect for the terminal that flutter_hot_reload tracks,
                                 // and only if the tab is actually in the Running state.
-                                let tracked = flutter_hot_reload.active_term.get_untracked();
-                                let running = flutter_hot_reload.state.get_untracked()
-                                    == crate::dart::FlutterRunState::Running;
+                                let tracked =
+                                    flutter_hot_reload.active_term.get_untracked();
+                                let running =
+                                    flutter_hot_reload.state.get_untracked()
+                                        == crate::dart::FlutterRunState::Running;
                                 if running && tracked == Some(*term_id) {
-                                    flutter_inspector.on_vm_url(*term_id, url.to_string());
+                                    flutter_inspector
+                                        .on_vm_url(*term_id, url.to_string());
                                 }
                             }
                         }
@@ -608,7 +620,9 @@ impl WindowTabData {
 
         let mut loaded_configs = Vec::new();
         if let Some(workspace_path) = &workspace.path {
-            if let Some(configs) = crate::dart::run_config::load(workspace_path) { loaded_configs = configs; }
+            if let Some(configs) = crate::dart::run_config::load(workspace_path) {
+                loaded_configs = configs;
+            }
         }
         if loaded_configs.is_empty() {
             loaded_configs.push(sparrow_rpc::dap_types::RunDebugConfig {
@@ -616,7 +630,10 @@ impl WindowTabData {
                 name: "Run Debug".to_string(),
                 program: "flutter".to_string(),
                 args: Some(vec!["run".to_string()]),
-                cwd: workspace.path.as_ref().map(|p| p.to_string_lossy().to_string()),
+                cwd: workspace
+                    .path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
                 env: None,
                 prelaunch: None,
                 flutter_options: Default::default(),
@@ -639,7 +656,17 @@ impl WindowTabData {
             flutter_hot_reload: flutter_hot_reload.clone(),
             flutter_inspector: flutter_inspector.clone(),
             devtools: crate::dart::devtools::DevToolsData::new(cx),
-            flutter_project: crate::dart::project_wizard::ProjectWizard::new(cx, common.workspace.path.as_ref().and_then(|p| p.parent()).unwrap_or(std::env::temp_dir().as_path()).display().to_string()),
+            flutter_project: crate::dart::project_wizard::ProjectWizard::new(
+                cx,
+                common
+                    .workspace
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.parent())
+                    .unwrap_or(std::env::temp_dir().as_path())
+                    .display()
+                    .to_string(),
+            ),
             flutter_test: crate::dart::test_service::FlutterTestData::new(
                 cx,
                 common.proxy.clone(),
@@ -692,7 +719,12 @@ impl WindowTabData {
                     if running && previous != Some(true) {
                         panel.show_panel(&PanelKind::FlutterRun);
                     } else if previous.is_none() && !running {
-                        if let Some((PanelKind::FlutterRun, true)) = panel.active_panel_at_position(&crate::panel::position::PanelPosition::BottomLeft, false) {
+                        if let Some((PanelKind::FlutterRun, true)) = panel
+                            .active_panel_at_position(
+                                &crate::panel::position::PanelPosition::BottomLeft,
+                                false,
+                            )
+                        {
                             panel.hide_panel(&PanelKind::FlutterRun);
                         }
                     }
@@ -814,7 +846,8 @@ impl WindowTabData {
                 let _ = doc.loaded.get();
                 let version = doc.buffer.with(|b| b.rev() as i64);
                 let content = doc.buffer.with(|b| b.to_string());
-                let closing = crate::dart::extract_closing_labels_from_source(&content);
+                let closing =
+                    crate::dart::extract_closing_labels_from_source(&content);
                 doc.closing_labels.set(Some(closing));
                 dart_lsp.send_change(path, content, version);
             });
@@ -883,10 +916,18 @@ impl WindowTabData {
                         }
                         DartNotification::Error(e) => {
                             tracing::warn!("dart lsp: {e}");
-                            crate::panel::workflow_tools::record(notices, "Dart analysis", e);
+                            crate::panel::workflow_tools::record(
+                                notices,
+                                "Dart analysis",
+                                e,
+                            );
                         }
                         DartNotification::Ready => {
-                            crate::panel::workflow_tools::record(notices, "Dart analysis", "Analysis server is ready.");
+                            crate::panel::workflow_tools::record(
+                                notices,
+                                "Dart analysis",
+                                "Analysis server is ready.",
+                            );
                             // LSP handshake done — request semantic tokens for every open Dart doc.
                             main_split_apply.docs.with_untracked(|docs| {
                                 for (path, doc) in docs.iter() {
@@ -1001,7 +1042,8 @@ impl WindowTabData {
             let hot_reload = flutter_hot_reload.clone();
             cx.create_effect(move |_| {
                 if hot_reload.state.get() == crate::dart::FlutterRunState::Idle
-                    && inspector.state.get_untracked() != crate::dart::InspectorState::Disconnected
+                    && inspector.state.get_untracked()
+                        != crate::dart::InspectorState::Disconnected
                 {
                     inspector.disconnect();
                 }
@@ -1014,7 +1056,8 @@ impl WindowTabData {
             let hot_reload = flutter_hot_reload.clone();
             cx.create_effect(move |_| {
                 if let Some(ws_uri) = hot_reload.ws_uri.get() {
-                    let running = hot_reload.state.get() == crate::dart::FlutterRunState::Running;
+                    let running = hot_reload.state.get()
+                        == crate::dart::FlutterRunState::Running;
                     if running && !ws_uri.is_empty() {
                         let term_id = hot_reload
                             .active_term
@@ -1048,45 +1091,7 @@ impl WindowTabData {
             keypress.update_keymaps(&config);
         });
 
-        let mut change_plugins = Vec::new();
-        for (key, configs) in self.common.config.get_untracked().plugins.iter() {
-            if config
-                .plugins
-                .get(key)
-                .map(|x| x != configs)
-                .unwrap_or_default()
-            {
-                change_plugins.push(key.clone());
-            }
-        }
-        self.set_config.set(Arc::new(config.clone()));
-        if !change_plugins.is_empty() {
-            self.common
-                .proxy
-                .update_plugin_configs(config.plugins.clone());
-            if config.core.auto_reload_plugin {
-                let mut plugin_metas: HashMap<
-                    String,
-                    sparrow_rpc::plugin::VoltMetadata,
-                > = self
-                    .plugin
-                    .installed
-                    .get_untracked()
-                    .values()
-                    .map(|x| {
-                        let meta = x.meta.get_untracked();
-                        (meta.name.clone(), meta)
-                    })
-                    .collect();
-                for name in change_plugins {
-                    if let Some(meta) = plugin_metas.remove(&name) {
-                        self.common.proxy.reload_volt(meta);
-                    } else {
-                        error!("not found volt metadata of {}", name);
-                    }
-                }
-            }
-        }
+        self.set_config.set(Arc::new(config));
     }
 
     pub fn run_sparrow_command(&self, cmd: SparrowCommand) {
@@ -3010,10 +3015,9 @@ impl WindowTabData {
             editor_data.viewport(),
             &editor_data.editor,
         );
-        let offset = editor_data
-            .cursor()
-            .with_untracked(|c| c.offset());
-        let (_, point_below) = editor.points_of_offset(offset, CursorAffinity::Forward);
+        let offset = editor_data.cursor().with_untracked(|c| c.offset());
+        let (_, point_below) =
+            editor.points_of_offset(offset, CursorAffinity::Forward);
         let window_origin =
             window_origin.get() - self.common.window_origin.get().to_vec2();
         let viewport = viewport.get();
@@ -3022,9 +3026,9 @@ impl WindowTabData {
 
         let mut origin = window_origin
             + Vec2::new(
-            point_below.x - viewport.x0,
-            point_below.y - viewport.y0 + 4.0,
-        );
+                point_below.x - viewport.x0,
+                point_below.y - viewport.y0 + 4.0,
+            );
 
         if origin.x + sh_size.width + 8.0 > tab_size.width {
             origin.x = (tab_size.width - sh_size.width - 8.0).max(0.0);
@@ -3343,7 +3347,14 @@ impl WindowTabData {
         mode: &RunDebugMode,
         config: &RunDebugConfig,
     ) {
-        debug!("{:?}", config);
+        if !config.is_dart_flutter()
+            && !(config.config_source == ConfigSource::RunInTerminal
+                && *mode == RunDebugMode::Run)
+        {
+            self.show_alert("Unsupported run configuration".into(),"Sparrow runs and debugs Dart and Flutter SDK targets only. Use the Terminal for auxiliary build commands.".into(),Vec::new());
+            return;
+        }
+        debug!("Starting Dart/Flutter target: {}", config.name);
         match mode {
             RunDebugMode::Run => {
                 self.run_in_terminal(cx, mode, config, false);
@@ -3411,7 +3422,10 @@ impl WindowTabData {
             );
         });
 
-        if (config.flutter_options.activate_tool_window || config.flutter_options.focus_tool_window) && !self.panel.is_panel_visible(&PanelKind::Terminal) {
+        if (config.flutter_options.activate_tool_window
+            || config.flutter_options.focus_tool_window)
+            && !self.panel.is_panel_visible(&PanelKind::Terminal)
+        {
             self.panel.show_panel(&PanelKind::Terminal);
         }
     }
@@ -3498,7 +3512,11 @@ impl WindowTabData {
     }
 
     fn show_message(&self, title: &str, message: &ShowMessageParams) {
-        crate::panel::workflow_tools::record(self.notifications, title, &message.message);
+        crate::panel::workflow_tools::record(
+            self.notifications,
+            title,
+            &message.message,
+        );
         self.messages.update(|messages| {
             messages.push((title.to_string(), message.clone()));
         });
@@ -3596,41 +3614,75 @@ impl WindowTabData {
             ("core", "color-theme", "Islands Dark".into()),
             ("core", "icon-theme", "sparrow Modern".into()),
             ("ui", "font-family", "Inter, Noto Sans, sans-serif".into()),
-            ("ui", "font-size", 13.into()), ("ui", "icon-size", 16.into()),
-            ("ui", "header-height", 32.into()), ("ui", "status-height", 24.into()),
-            ("ui", "tool-window-stripe-width", 35.into()), ("ui", "list-line-height", 22.into()),
-            ("ui", "scroll-width", 8.into()), ("ui", "open-editors-visible", false.into()),
+            ("ui", "font-size", 13.into()),
+            ("ui", "icon-size", 16.into()),
+            ("ui", "header-height", 32.into()),
+            ("ui", "status-height", 24.into()),
+            ("ui", "tool-window-stripe-width", 35.into()),
+            ("ui", "list-line-height", 22.into()),
+            ("ui", "scroll-width", 8.into()),
+            ("ui", "open-editors-visible", false.into()),
             ("ui", "rounded-corners", true.into()),
-            ("editor", "font-family", "JetBrains Mono, Noto Sans Mono, monospace".into()),
-            ("editor", "font-size", 13.into()), ("editor", "line-height", 1.65.into()),
+            (
+                "editor",
+                "font-family",
+                "JetBrains Mono, Noto Sans Mono, monospace".into(),
+            ),
+            ("editor", "font-size", 13.into()),
+            ("editor", "line-height", 1.65.into()),
         ];
         for (section, key, value) in values {
             if SparrowConfig::update_file(section, key, value).is_none() {
-                self.show_alert("Appearance".into(), "Could not save appearance settings.".into(), Vec::new()); return;
+                self.show_alert(
+                    "Appearance".into(),
+                    "Could not save appearance settings.".into(),
+                    Vec::new(),
+                );
+                return;
             }
         }
         self.reload_config();
         let available = self.common.workbench_size.get_untracked();
         self.panel.size.update(|size| {
             size.left = 400.0_f64.min((available.width * 0.4).max(150.0));
-            size.right = (self.layout_rect.get_untracked().width() * 0.243).max(250.0);
-            size.bottom = (self.layout_rect.get_untracked().height() * 342.0 / 1048.0).max(150.0);
+            size.right =
+                (self.layout_rect.get_untracked().width() * 0.243).max(250.0);
+            size.bottom = (self.layout_rect.get_untracked().height() * 342.0
+                / 1048.0)
+                .max(150.0);
         });
-        self.panel.panels.set(crate::panel::data::default_panel_order());
+        self.panel
+            .panels
+            .set(crate::panel::data::default_panel_order());
         self.panel.styles.update(|styles| {
-            for (_, style) in styles.iter_mut() { style.shown = false; style.maximized = false; }
+            for (_, style) in styles.iter_mut() {
+                style.shown = false;
+                style.maximized = false;
+            }
         });
         self.panel.show_panel(&PanelKind::FileExplorer);
-        if self.flutter_hot_reload.state.get_untracked() == crate::dart::FlutterRunState::Running {
+        if self.flutter_hot_reload.state.get_untracked()
+            == crate::dart::FlutterRunState::Running
+        {
             self.panel.show_panel(&PanelKind::FlutterRun);
         }
     }
 
     pub fn open_devtools(&self, page: crate::dart::devtools::DevToolsPage) {
         if self.workspace.kind != SparrowWorkspaceType::Local {
-            self.show_alert("DevTools".into(), "DevTools currently requires a local workspace.".into(), Vec::new()); return;
+            self.show_alert(
+                "DevTools".into(),
+                "DevTools currently requires a local workspace.".into(),
+                Vec::new(),
+            );
+            return;
         }
-        let vm = self.flutter_hot_reload.ws_uri.get_untracked().or_else(|| self.flutter_inspector.vm_url.get_untracked().map(|(_, url)| url));
+        let vm = self.flutter_hot_reload.ws_uri.get_untracked().or_else(|| {
+            self.flutter_inspector
+                .vm_url
+                .get_untracked()
+                .map(|(_, url)| url)
+        });
         self.devtools.open(self.workspace.path.clone(), vm, page);
         self.show_panel(PanelKind::FlutterPerformance);
     }

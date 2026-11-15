@@ -66,11 +66,6 @@ impl SparrowColor {
     pub const SPARROW_REMOTE_DISCONNECTED: &'static str =
         "sparrow.remote.disconnected";
 
-    pub const SPARROW_PLUGIN_NAME: &'static str = "sparrow.plugin.name";
-    pub const SPARROW_PLUGIN_DESCRIPTION: &'static str =
-        "sparrow.plugin.description";
-    pub const SPARROW_PLUGIN_AUTHOR: &'static str = "sparrow.plugin.author";
-
     pub const EDITOR_BACKGROUND: &'static str = "editor.background";
     pub const EDITOR_FOREGROUND: &'static str = "editor.foreground";
     pub const EDITOR_DIM: &'static str = "editor.dim";

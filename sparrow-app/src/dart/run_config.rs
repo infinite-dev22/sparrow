@@ -221,6 +221,12 @@ impl Draft {
         d
     }
     pub fn build(&self) -> Result<RunDebugConfig, String> {
+        if !self.original.is_dart_flutter() {
+            return Err(
+                "Run configurations must use the Dart or Flutter SDK executable."
+                    .into(),
+            );
+        }
         if self.name.trim().is_empty() || self.entry.trim().is_empty() {
             return Err("Name and entrypoint/program are required.".into());
         }
@@ -247,6 +253,9 @@ impl Draft {
         } else {
             c.program = self.entry.trim().into();
             c.args = Some(extra);
+        }
+        if !c.is_dart_flutter() {
+            return Err("Choose the Dart or Flutter SDK executable.".into());
         }
         let env = parse_environment(&self.env)?;
         c.env = if env.is_empty() { None } else { Some(env) };
@@ -361,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn generic_commands_preserve_executable_and_quoted_arguments() {
+    fn dart_commands_preserve_sdk_and_quoted_arguments() {
         let original: RunDebugConfig = serde_json::from_value(serde_json::json!({"name":"tool", "program":"/usr/bin/dart", "args":["run", "tool/my script.dart"]})).unwrap();
         let built = Draft::from_config(original.clone()).build().unwrap();
         assert_eq!(built.program, original.program);

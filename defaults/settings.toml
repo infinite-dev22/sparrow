@@ -4,7 +4,6 @@ color-theme = "Islands Dark"
 icon-theme = "sparrow Modern"
 custom-titlebar = true
 file-explorer-double-click = false
-auto-reload-plugin = false
 
 [editor]
 font-family = "JetBrains Mono, Noto Sans Mono, monospace"
@@ -78,8 +77,8 @@ windows = "default"
 default = {}
 
 # [terminal.profiles.example]
-# command     = "cargo"
-# arguments   = ["run"]
+# command     = "dart"
+# arguments   = ["run", "tool/build.dart"]
 # environment = { "KEY" = "VALUE" }
 # workdir     = "/home/user"
 

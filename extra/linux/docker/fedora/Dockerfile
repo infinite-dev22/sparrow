@@ -124,7 +124,7 @@ cat > sparrow.spec <<EOL
 Name:     ${PACKAGE_NAME}
 Version:  ${RELEASE_TAG_NAME}
 Release:  1.${DISTRO_ID}${DISTRO_VERSION}
-Summary:  Lightning-fast and Powerful Code Editor written in Rust
+Summary:  Dart and Flutter IDE
 License:  Apache-2.0
 URL:      https://github.com/infinite-dev22/sparrow
 Packager: Jakub Panek

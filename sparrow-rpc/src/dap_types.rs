@@ -67,6 +67,52 @@ pub struct RunDebugConfig {
     pub config_source: ConfigSource,
 }
 
+/// IDE run/debug targets are Dart or Flutter SDK invocations. Auxiliary
+/// terminal/pre-launch commands are separate from language integrations.
+impl RunDebugConfig {
+    pub fn is_dart_flutter(&self) -> bool {
+        let sdk = |program: &str| {
+            std::path::Path::new(program)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| {
+                    matches!(s.to_ascii_lowercase().as_str(), "dart" | "flutter")
+                })
+        };
+        if self
+            .ty
+            .as_deref()
+            .is_some_and(|ty| !matches!(ty, "dart" | "flutter" | "flutter-test"))
+        {
+            return false;
+        }
+        if self
+            .debug_adapter
+            .as_ref()
+            .is_some_and(|adapter| !sdk(&adapter.program))
+        {
+            return false;
+        }
+        sdk(&self.program)
+            || (self.ty.as_deref() == Some("flutter-test")
+                && std::path::Path::new(&self.program)
+                    .extension()
+                    .is_some_and(|e| e == "dart")
+                && self.debug_adapter.is_some())
+    }
+    pub fn dart_debug_adapter(&self) -> Option<RunDebugProgram> {
+        if !self.is_dart_flutter() {
+            return None;
+        }
+        self.debug_adapter.clone().or_else(|| {
+            Some(RunDebugProgram {
+                program: self.program.clone(),
+                args: Some(vec!["debug_adapter".into()]),
+            })
+        })
+    }
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 #[serde(default, rename_all = "kebab-case")]
 pub struct FlutterRunOptions {
@@ -75,7 +121,13 @@ pub struct FlutterRunOptions {
     pub focus_tool_window: bool,
 }
 impl Default for FlutterRunOptions {
-    fn default() -> Self { Self { attach_args: Vec::new(), activate_tool_window: true, focus_tool_window: false } }
+    fn default() -> Self {
+        Self {
+            attach_args: Vec::new(),
+            activate_tool_window: true,
+            focus_tool_window: false,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
@@ -918,5 +970,49 @@ mod flutter_test_protocol_tests {
                 .get("debug-adapter")
                 .is_none()
         );
+    }
+}
+
+#[cfg(test)]
+mod dart_scope_tests {
+    use super::*;
+    fn config(program: &str) -> RunDebugConfig {
+        serde_json::from_value(
+            serde_json::json!({"name":"target","program":program}),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn sdk_adapters_are_resolved_without_plugins() {
+        let dart = config("/sdk/bin/dart");
+        assert!(dart.is_dart_flutter());
+        assert_eq!(
+            dart.dart_debug_adapter().unwrap().args,
+            Some(vec!["debug_adapter".into()])
+        );
+        assert!(config("flutter.bat").is_dart_flutter());
+    }
+    #[test]
+    fn unrelated_tools_and_adapters_are_rejected() {
+        assert!(!config("cargo").is_dart_flutter());
+        assert!(!config("python").is_dart_flutter());
+        let mut dart = config("dart");
+        dart.debug_adapter = Some(RunDebugProgram {
+            program: "lldb-vscode".into(),
+            args: None,
+        });
+        assert!(!dart.is_dart_flutter());
+        assert!(dart.dart_debug_adapter().is_none());
+    }
+    #[test]
+    fn flutter_test_entrypoints_keep_native_adapter() {
+        let mut test = config("test/widget_test.dart");
+        test.ty = Some("flutter-test".into());
+        test.debug_adapter = Some(RunDebugProgram {
+            program: "flutter".into(),
+            args: Some(vec!["debug-adapter".into(), "--test".into()]),
+        });
+        assert!(test.is_dart_flutter());
+        assert_eq!(test.dart_debug_adapter(), test.debug_adapter);
     }
 }

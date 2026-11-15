@@ -1,4 +1,6 @@
 [package]
+autobins     = false
+description  = "Native Dart and Flutter IDE"
 name         = "sparrow-app"
 license      = { workspace = true }
 version      = { workspace = true }

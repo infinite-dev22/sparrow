@@ -1,4 +1,5 @@
 [package]
+description  = "Native Dart and Flutter IDE"
 name         = "sparrow"
 version      = { workspace = true }
 authors      = { workspace = true }
@@ -27,8 +28,8 @@ version      = "0.4.6"
 edition      = "2024"
 rust-version = "1.98.0"
 license      = "Apache-2.0"
-homepage     = "https://sparrow.dev"
-authors      = ["Dongdong Zhou <dzhou121@gmail.com>"]
+homepage     = "https://github.com/infinite-dev22/sparrow"
+authors      = ["Sparrow contributors", "Dongdong Zhou <dzhou121@gmail.com>"]
 
 [workspace.dependencies]
 anyhow            = { version = "1.0" }
@@ -69,7 +70,6 @@ zstd              = { version = "0.11.2" }
 tungstenite       = { version = "0.30.0" }
 
 lsp-types = { version = "0.95.1", features = ["proposed"] }                                                  # not following semver, so should be locked to patch version updates only
-psp-types = { git = "https://github.com/lapce/psp-types", rev = "f7fea28f59e7b2d6faa1034a21679ad49b3524ad" }
 
 lapce-xi-rope = { version = "0.3.2", features = ["serde"] }
 
@@ -92,7 +92,6 @@ features = ["serde"]
 [patch.crates-io]
 # Temporarily patch lsp-types with a version that adds message-type debug
 lsp-types = { git = "https://github.com/lapce/lsp-types", rev = "feaa1e2ec80975c9dadd400a238ceacf071058e6" }
-regalloc2 = { rev = "5d79e12d0a93b10fc181f4da409b4671dd365228", git = "https://github.com/bytecodealliance/regalloc2" }
 
 # cargo vendor issue: https://github.com/rust-lang/cargo/issues/10310
 # dpi comes from winit (source) and muda (crate)

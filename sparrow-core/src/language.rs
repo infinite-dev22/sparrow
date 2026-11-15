@@ -103,13 +103,13 @@ pub struct SyntaxProperties {
     /// All tokens that can be used for comments in language
     comment: CommentProperties,
     /// The indent unit.  
-    /// "  " for bash, "    " for rust, for example.
+    /// Two spaces for Dart and YAML project files.
     indent: &'static str,
     /// Filenames that belong to this language  
     /// `["Dockerfile"]` for Dockerfile, `[".editorconfig"]` for EditorConfig
     files: &'static [&'static str],
     /// File name extensions to determine the language.  
-    /// `["py"]` for python, `["rs"]` for rust, for example.
+    /// For example, `["dart"]` for Dart sources.
     extensions: &'static [&'static str],
     /// Tree-sitter properties
     tree_sitter: TreeSitterProperties,
@@ -156,12 +156,12 @@ impl TreeSitterProperties {
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug, PartialOrd, Ord, Default)]
 struct CommentProperties {
     /// Single line comment token used when commenting out one line.
-    /// "#" for python, "//" for rust for example.
+    /// For example, "//" for Dart or "#" for YAML.
     single_line_start: Option<&'static str>,
     single_line_end: Option<&'static str>,
 
     /// Multi line comment token used when commenting a selection of lines.
-    /// "#" for python, "//" for rust for example.
+    /// For example, "//" for Dart or "#" for YAML.
     multi_line_start: Option<&'static str>,
     multi_line_end: Option<&'static str>,
     multi_line_prefix: Option<&'static str>,
@@ -197,71 +197,20 @@ pub enum SparrowLanguage {
     #[default]
     #[strum(message = "Plain Text")]
     PlainText,
-
-    #[strum(message = "Ada")]
-    Ada,
-    #[strum(message = "Adl")]
-    Adl,
-    #[strum(message = "Agda")]
-    Agda,
-    #[strum(message = "Astro")]
-    Astro,
     #[strum(message = "Bash")]
     Bash,
-    #[strum(message = "Bass")]
-    Bass,
-    #[strum(message = "Beancount")]
-    Beancount,
-    #[strum(message = "Bibtex")]
-    Bibtex,
-    #[strum(message = "Bitbake")]
-    Bitbake,
-    #[strum(message = "Blade")]
-    Blade,
     #[strum(message = "C")]
     C,
-    #[strum(message = "Clojure")]
-    Clojure,
     #[strum(message = "CMake")]
     Cmake,
-    #[strum(message = "Comment")]
-    Comment,
     #[strum(message = "C++")]
     Cpp,
-    #[strum(message = "C#")]
-    Csharp,
     #[strum(message = "CSS")]
     Css,
-    #[strum(message = "Cue")]
-    Cue,
-    #[strum(message = "D")]
-    D,
     #[strum(message = "Dart")]
     Dart,
-    #[strum(message = "Dhall")]
-    Dhall,
     #[strum(message = "Diff")]
     Diff,
-    #[strum(message = "Dockerfile")]
-    Dockerfile,
-    #[strum(message = "Dot")]
-    Dot,
-    #[strum(message = "Elixir")]
-    Elixir,
-    #[strum(message = "Elm")]
-    Elm,
-    #[strum(message = "Erlang")]
-    Erlang,
-    #[strum(message = "Fish Shell")]
-    Fish,
-    #[strum(message = "Fluent")]
-    Fluent,
-    #[strum(message = "Forth")]
-    Forth,
-    #[strum(message = "Fortran")]
-    Fortran,
-    #[strum(message = "F#")]
-    FSharp,
     #[strum(message = "Gitattributes")]
     Gitattributes,
     #[strum(message = "Git (commit)")]
@@ -270,226 +219,52 @@ pub enum SparrowLanguage {
     GitConfig,
     #[strum(message = "Git (rebase)")]
     GitRebase,
-    #[strum(message = "Gleam")]
-    Gleam,
-    #[strum(message = "Glimmer")]
-    Glimmer,
     #[strum(message = "GLSL")]
     Glsl,
-    #[strum(message = "Gn")]
-    Gn,
-    #[strum(message = "Go")]
-    Go,
-    #[strum(message = "Go (go.mod)")]
-    GoMod,
-    #[strum(message = "Go (template)")]
-    GoTemplate,
-    #[strum(message = "Go (go.work)")]
-    GoWork,
-    #[strum(message = "GraphQL")]
-    GraphQl,
     #[strum(message = "Groovy")]
     Groovy,
-    #[strum(message = "Hare")]
-    Hare,
-    #[strum(message = "Haskell")]
-    Haskell,
-    #[strum(message = "Haxe")]
-    Haxe,
-    #[strum(message = "HCL")]
-    Hcl,
-    #[strum(message = "Hosts file (/etc/hosts)")]
-    Hosts,
     #[strum(message = "HTML")]
     Html,
     #[strum(message = "INI")]
     Ini,
     #[strum(message = "Java")]
     Java,
-    #[strum(message = "JavaScript")]
-    Javascript,
-    #[strum(message = "JSDoc")]
-    Jsdoc,
     #[strum(message = "JSON")]
     Json,
     #[strum(message = "JSON5")]
     Json5,
-    #[strum(message = "Jsonnet")]
-    Jsonnet,
-    #[strum(message = "JavaScript React")]
-    Jsx,
-    #[strum(message = "Julia")]
-    Julia,
-    #[strum(message = "Just")]
-    Just,
-    #[strum(message = "KDL")]
-    Kdl,
     #[strum(message = "Kotlin")]
     Kotlin,
     #[strum(message = "Kotlin Build Script")]
     KotlinBuildScript,
-    #[strum(message = "LaTeX")]
-    Latex,
-    #[strum(message = "Linker Script")]
-    Ld,
-    #[strum(message = "LLVM")]
-    Llvm,
-    #[strum(message = "LLVM MIR")]
-    LlvmMir,
     #[strum(message = "Log")]
     Log,
-    #[strum(message = "Lua")]
-    Lua,
     #[strum(message = "Makefile")]
     Make,
     #[strum(message = "Markdown")]
     Markdown,
     #[strum(serialize = "markdown.inline")]
     MarkdownInline,
-    #[strum(message = "Meson")]
-    Meson,
-    #[strum(message = "NASM")]
-    Nasm,
-    #[strum(message = "Nix")]
-    Nix,
-    #[strum(message = "Nu (nushell)")]
-    Nushell,
-    #[strum(message = "Ocaml")]
-    Ocaml,
-    #[strum(serialize = "ocaml.interface")]
-    OcamlInterface,
-    #[strum(message = "Odin")]
-    Odin,
-    #[strum(message = "OpenCL")]
-    OpenCl,
-    #[strum(message = "Pascal")]
-    Pascal,
-    #[strum(message = "Password file (/etc/passwd)")]
-    Passwd,
-    #[strum(message = "PEM (RFC 1422)")]
-    Pem,
-    #[strum(message = "PHP")]
-    Php,
-    #[strum(message = "PKL")]
-    Pkl,
-    #[strum(message = "PowerShell")]
-    PowerShell,
-    #[strum(message = "Prisma")]
-    Prisma,
-    #[strum(message = "Proto")]
-    ProtoBuf,
-    #[strum(message = "Python")]
-    Python,
-    #[strum(message = "QL")]
-    Ql,
-    #[strum(message = "R")]
-    R,
-    #[strum(message = "RCL")]
-    Rcl,
-    #[strum(message = "RegEx")]
-    Regex,
-    #[strum(message = "REGO")]
-    Rego,
-    #[strum(message = "RON (Rust Object Notation)")]
-    Ron,
-    #[strum(message = "Rst")]
-    Rst,
-    #[strum(message = "Ruby")]
-    Ruby,
-    #[strum(message = "Rust")]
-    Rust,
-    #[strum(message = "Scala")]
-    Scala,
-    #[strum(message = "Scheme")]
-    Scheme,
-    #[strum(message = "SCSS")]
-    Scss,
     #[strum(message = "Shell Script (POSIX)")]
     ShellScript,
-    #[strum(message = "Smithy")]
-    Smithy,
-    #[strum(message = "SQL")]
-    Sql,
-    #[strum(message = "SSH Config")]
-    SshClientConfig,
-    #[strum(message = "Strace")]
-    Strace,
-    #[strum(message = "Svelte")]
-    Svelte,
-    #[strum(message = "Sway")]
-    Sway,
     #[strum(message = "Swift")]
     Swift,
-    #[strum(message = "TCL")]
-    Tcl,
     #[strum(message = "TOML")]
     Toml,
-    #[strum(message = "Tsx")]
-    Tsx,
-    #[strum(message = "TypeScript")]
-    Typescript,
-    #[strum(message = "Typst")]
-    Typst,
-    #[strum(message = "Verilog")]
-    Verilog,
-    #[strum(message = "Vue")]
-    Vue,
-    #[strum(message = "WASM")]
-    Wasm,
-    #[strum(message = "WGSL")]
-    Wgsl,
-    #[strum(message = "WIT")]
-    Wit,
     #[strum(message = "XML")]
     Xml,
     #[strum(message = "YAML")]
     Yaml,
-    #[strum(message = "Zig")]
-    Zig,
 }
 
 /// NOTE: Elements in the array must be in the same order as the enum variants of
 /// `SparrowLanguage` as they will be accessed using the enum variants as indices.
 const LANGUAGES: &[SyntaxProperties] = &[
-    // Undetected/unmatched fallback or just plain file
     SyntaxProperties {
         id: SparrowLanguage::PlainText,
         indent: Indent::tab(),
         files: &[],
         extensions: &["txt"],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    // Languages
-    SyntaxProperties {
-        id: SparrowLanguage::Ada,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Adl,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Agda,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Astro,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
         comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
@@ -499,46 +274,6 @@ const LANGUAGES: &[SyntaxProperties] = &[
         files: &[],
         extensions: &["bash", "sh"],
         comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Bass,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Beancount,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Bibtex,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Bitbake,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Blade,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
@@ -556,22 +291,6 @@ const LANGUAGES: &[SyntaxProperties] = &[
         },
     },
     SyntaxProperties {
-        id: SparrowLanguage::Clojure,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &[
-            "clj",
-            "edn", // spellchecker:disable-line
-            "cljs",
-            "cljc",
-            "cljd",
-            "bb",
-            "clj_kondo",
-        ],
-        comment: comment_properties!(";"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
         id: SparrowLanguage::Cmake,
         indent: Indent::space(2),
         files: &["cmakelists"],
@@ -584,14 +303,6 @@ const LANGUAGES: &[SyntaxProperties] = &[
             code_glance: (DEFAULT_CODE_GLANCE_LIST, DEFAULT_CODE_GLANCE_IGNORE_LIST),
             sticky_headers: &["function_definition"],
         },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Comment,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
         id: SparrowLanguage::Cpp,
@@ -612,58 +323,11 @@ const LANGUAGES: &[SyntaxProperties] = &[
         },
     },
     SyntaxProperties {
-        id: SparrowLanguage::Csharp,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["cs", "csx"],
-        comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties {
-            grammar: None,
-            grammar_fn: None,
-            query: None,
-            code_glance: (DEFAULT_CODE_GLANCE_LIST, DEFAULT_CODE_GLANCE_IGNORE_LIST),
-            sticky_headers: &[
-                "interface_declaration",
-                "class_declaration",
-                "enum_declaration",
-                "struct_declaration",
-                "record_declaration",
-                "record_struct_declaration",
-                "namespace_declaration",
-                "constructor_declaration",
-                "destructor_declaration",
-                "method_declaration",
-            ],
-        },
-    },
-    SyntaxProperties {
         id: SparrowLanguage::Css,
         indent: Indent::space(2),
         files: &[],
         extensions: &["css"],
         comment: comment_properties!("/*", "*/"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Cue,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::D,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["d", "di", "dlang"],
-        comment: CommentProperties {
-            single_line_start: Some("//"),
-            single_line_end: None,
-            multi_line_start: Some("/+"),
-            multi_line_prefix: None,
-            multi_line_end: Some("+/"),
-        },
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
@@ -696,104 +360,10 @@ const LANGUAGES: &[SyntaxProperties] = &[
         },
     },
     SyntaxProperties {
-        id: SparrowLanguage::Dhall,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
         id: SparrowLanguage::Diff,
         indent: Indent::tab(),
         files: &[],
         extensions: &["diff", "patch"],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Dockerfile,
-        indent: Indent::space(2),
-        files: &["Dockerfile", "Containerfile"],
-        extensions: &["containerfile", "dockerfile"],
-        comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Dot,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Elixir,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["ex", "exs", "eex", "heex", "sface"],
-        comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties {
-            grammar: None,
-            grammar_fn: None,
-            query: None,
-            code_glance: (DEFAULT_CODE_GLANCE_LIST, DEFAULT_CODE_GLANCE_IGNORE_LIST),
-            sticky_headers: &["do_block"],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Elm,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["elm"],
-        comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Erlang,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["erl", "hrl"],
-        comment: comment_properties!("%"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::FSharp,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Fish,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &["fish"],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Fluent,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Forth,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Fortran,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
         comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
@@ -830,22 +400,6 @@ const LANGUAGES: &[SyntaxProperties] = &[
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
-        id: SparrowLanguage::Gleam,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Glimmer,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["hbs"],
-        comment: comment_properties!("{{!", "!}}"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
         id: SparrowLanguage::Glsl,
         indent: Indent::space(2),
         files: &[],
@@ -861,110 +415,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
-        id: SparrowLanguage::Gn,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Go,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &["go"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties {
-            grammar: None,
-            grammar_fn: None,
-            query: None,
-            code_glance: (
-                &[
-                    "source_file",
-                    "type_declaration",
-                    "type_spec",
-                    "interface_type",
-                    "method_spec_list",
-                ],
-                &["source_file", "comment", "line_comment"],
-            ),
-            sticky_headers: &[],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::GoMod,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::GoTemplate,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::GoWork,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::GraphQl,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
         id: SparrowLanguage::Groovy,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Hare,
-        indent: Indent::space(8),
-        files: &[],
-        extensions: &["ha"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Haskell,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["hs"],
-        comment: comment_properties!("--"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Haxe,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["hx"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Hcl,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["hcl", "tf"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Hosts,
         indent: Indent::tab(),
         files: &[],
         extensions: &[],
@@ -996,89 +447,15 @@ const LANGUAGES: &[SyntaxProperties] = &[
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
-        id: SparrowLanguage::Javascript,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["js", "cjs", "mjs"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties {
-            grammar: None,
-            grammar_fn: None,
-            query: None,
-            code_glance: (&["source_file", "program"], &["source_file"]),
-            sticky_headers: &[],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Jsdoc,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
         id: SparrowLanguage::Json,
         indent: Indent::space(4),
         files: &[],
-        extensions: &["json", "har"],
+        extensions: &["json", "arb", "har"],
         comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
         id: SparrowLanguage::Json5,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Jsonnet,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Jsx,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["jsx"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties {
-            grammar: Some("javascript"),
-            grammar_fn: Some("javascript"),
-            query: Some("jsx"),
-            code_glance: (&["source_file", "program"], &["source_file"]),
-            sticky_headers: &[],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Julia,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["julia", "jl"],
-        comment: CommentProperties {
-            single_line_start: Some("#"),
-            single_line_end: None,
-            multi_line_start: Some("#="),
-            multi_line_prefix: None,
-            multi_line_end: Some("=#"),
-        },
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Just,
-        indent: Indent::tab(),
-        files: &["justfile", "Justfile", ".justfile", ".Justfile"],
-        extensions: &["just"],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Kdl,
         indent: Indent::tab(),
         files: &[],
         extensions: &[],
@@ -1116,51 +493,11 @@ const LANGUAGES: &[SyntaxProperties] = &[
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
-        id: SparrowLanguage::Latex,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["tex"],
-        comment: comment_properties!("%"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Ld,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Llvm,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::LlvmMir,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
         id: SparrowLanguage::Log,
         indent: Indent::tab(),
         files: &["log.txt"],
         extensions: &["log"],
         comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Lua,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["lua"],
-        comment: comment_properties!("--"),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
@@ -1195,375 +532,11 @@ const LANGUAGES: &[SyntaxProperties] = &[
         },
     },
     SyntaxProperties {
-        id: SparrowLanguage::Meson,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Nasm,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Nix,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["nix"],
-        comment: CommentProperties {
-            single_line_start: Some("#"),
-            single_line_end: None,
-
-            multi_line_start: Some("/*"),
-            multi_line_prefix: None,
-            multi_line_end: Some("*/"),
-        },
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Nushell,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Ocaml,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["ml"],
-        comment: CommentProperties {
-            single_line_start: Some("(*"),
-            single_line_end: Some("*)"),
-
-            multi_line_start: Some("(*"),
-            multi_line_prefix: Some("*"),
-            multi_line_end: Some("*)"),
-        },
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::OcamlInterface,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["mli"],
-        comment: comment_properties!("(*"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Odin,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::OpenCl,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Pascal,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Passwd,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Pem,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Php,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["php"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties {
-            grammar: None,
-            grammar_fn: None,
-            query: None,
-            code_glance: (
-                &[
-                    "program",
-                    "class_declaration",
-                    "trait_declaration",
-                    "interface_declaration",
-                    "declaration_list",
-                    "method_declaration",
-                    "function_declaration",
-                ],
-                &[
-                    "program",
-                    "php_tag",
-                    "comment",
-                    "namespace_definition",
-                    "namespace_use_declaration",
-                    "use_declaration",
-                    "const_declaration",
-                    "property_declaration",
-                    "expression_statement",
-                ],
-            ),
-            sticky_headers: &[],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Pkl,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::PowerShell,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["ps1", "psm1", "psd1", "ps1xml"],
-        comment: CommentProperties {
-            single_line_start: Some("#"),
-            single_line_end: None,
-            multi_line_start: Some("<#"),
-            multi_line_end: Some("#>"),
-            multi_line_prefix: None,
-        },
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Prisma,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["prisma"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::ProtoBuf,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["proto"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Python,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["py", "pyi", "pyc", "pyd", "pyw"],
-        comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties {
-            grammar: None,
-            grammar_fn: None,
-            query: None,
-            code_glance: (
-                &[
-                    "source_file",
-                    "module",
-                    "class_definition",
-                    "class",
-                    "identifier",
-                    "decorated_definition",
-                    "block",
-                ],
-                &["source_file", "import_statement", "import_from_statement"],
-            ),
-            sticky_headers: &[],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Ql,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["ql"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::R,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["r"],
-        comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Rcl,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Regex,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Rego,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Ron,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Rst,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Ruby,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["rb"],
-        comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties {
-            grammar: None,
-            grammar_fn: None,
-            query: None,
-            code_glance: (DEFAULT_CODE_GLANCE_LIST, DEFAULT_CODE_GLANCE_IGNORE_LIST),
-            sticky_headers: &["module", "class", "method", "do_block"],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Rust,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["rs"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties {
-            grammar: None,
-            grammar_fn: None,
-            query: None,
-            code_glance: (
-                &["source_file", "impl_item", "trait_item", "declaration_list"],
-                &["source_file", "use_declaration", "line_comment"],
-            ),
-            sticky_headers: &[
-                "struct_item",
-                "enum_item",
-                "function_item",
-                "impl_item",
-            ],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Scala,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Scheme,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["scm", "ss"],
-        comment: comment_properties!(";"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Scss,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["scss"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
         id: SparrowLanguage::ShellScript,
         indent: Indent::space(2),
         files: &[],
         extensions: &["sh"],
         comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Smithy,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Sql,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["sql"],
-        comment: comment_properties!("--"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::SshClientConfig,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Strace,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Svelte,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["svelte"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Sway,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
@@ -1575,14 +548,6 @@ const LANGUAGES: &[SyntaxProperties] = &[
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
-        id: SparrowLanguage::Tcl,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &["tcl"],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
         id: SparrowLanguage::Toml,
         indent: Indent::space(2),
         files: &["Cargo.lock"],
@@ -1591,87 +556,11 @@ const LANGUAGES: &[SyntaxProperties] = &[
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
-        id: SparrowLanguage::Tsx,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["tsx"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties {
-            grammar: Some("tsx"),
-            grammar_fn: Some("tsx"),
-            query: Some("tsx"),
-            code_glance: (&["source_file", "program"], &["source_file"]),
-            sticky_headers: &[],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Typescript,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["ts", "cts", "mts"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties {
-            grammar: Some("typescript"),
-            grammar_fn: Some("typescript"),
-            query: Some("typescript"),
-            code_glance: (&["source_file", "program"], &["source_file"]),
-            sticky_headers: &[],
-        },
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Typst,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Verilog,
-        indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Vue,
-        indent: Indent::space(2),
-        files: &[],
-        extensions: &["vue"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Wasm,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["wasm"],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Wgsl,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["wgsl"],
-        comment: comment_properties!("//"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Wit,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["wit"],
-        comment: comment_properties!(),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
         id: SparrowLanguage::Xml,
         indent: Indent::space(4),
         files: &[],
-        extensions: &["xml", "csproj"],
-        comment: comment_properties!("//"),
+        extensions: &["xml", "svg", "plist", "storyboard", "xib", "vcxproj"],
+        comment: comment_properties!("<!--", "-->"),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
@@ -1680,14 +569,6 @@ const LANGUAGES: &[SyntaxProperties] = &[
         files: &[],
         extensions: &["yml", "yaml"],
         comment: comment_properties!("#"),
-        tree_sitter: TreeSitterProperties::DEFAULT,
-    },
-    SyntaxProperties {
-        id: SparrowLanguage::Zig,
-        indent: Indent::space(4),
-        files: &[],
-        extensions: &["zig"],
-        comment: comment_properties!("//"),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
 ];
@@ -1731,6 +612,15 @@ impl SparrowLanguage {
                 None
             }
         }
+    }
+
+    /// Names used by the upstream grammar/query archive for supported
+    /// Dart and Flutter project-file syntax only.
+    pub fn syntax_asset_names() -> HashSet<String> {
+        LANGUAGES
+            .iter()
+            .flat_map(|p| [p.id.grammar_name(), p.id.query_name()])
+            .collect()
     }
 
     pub fn languages() -> Vec<&'static str> {
@@ -2068,8 +958,30 @@ mod tests {
     use super::SparrowLanguage;
 
     #[test]
+    fn catalog_is_ordered_and_excludes_unrelated_languages() {
+        for (i, p) in super::LANGUAGES.iter().enumerate() {
+            assert_eq!(p.id as usize, i);
+            let _ = p.id.properties();
+        }
+        for file in ["main.rs", "app.py", "index.ts", "main.go"] {
+            assert_eq!(
+                SparrowLanguage::from_path(std::path::Path::new(file)),
+                SparrowLanguage::PlainText
+            );
+        }
+        assert_eq!(
+            SparrowLanguage::from_path(std::path::Path::new("pubspec.yaml")),
+            SparrowLanguage::Yaml
+        );
+        assert_eq!(
+            SparrowLanguage::from_path(std::path::Path::new("app_en.arb")),
+            SparrowLanguage::Json
+        );
+        assert!(SparrowLanguage::from_name("Python").is_none());
+    }
+    #[test]
     fn test_language_from_path() {
-        let l = SparrowLanguage::from_path(&PathBuf::new().join("test.rs"));
-        assert_eq!(l, SparrowLanguage::Rust);
+        let l = SparrowLanguage::from_path(&PathBuf::new().join("test.dart"));
+        assert_eq!(l, SparrowLanguage::Dart);
     }
 }

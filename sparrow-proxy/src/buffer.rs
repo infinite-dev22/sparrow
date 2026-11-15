@@ -210,96 +210,14 @@ pub fn read_path_to_string<P: AsRef<Path>>(path: P) -> Result<String> {
     Ok(contents.to_string())
 }
 
+/// Semantic language services are supplied only by the Dart SDK.
+/// Flutter's assets, platform scaffolding and config files stay editable,
+/// but never activate a second programming-language server.
 pub fn language_id_from_path(path: &Path) -> Option<&'static str> {
-    // recommended language_id values
-    // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem
-    Some(match path.extension() {
-        Some(ext) => {
-            match ext.to_str()? {
-                "C" | "H" => "cpp",
-                "M" => "objective-c",
-                // stop case-sensitive matching
-                ext => match ext.to_lowercase().as_str() {
-                    "bat" => "bat",
-                    // spellchecker:ignore-next-line
-                    "clj" | "cljs" | "cljc" | "edn" => "clojure",
-                    "coffee" => "coffeescript",
-                    "c" | "h" => "c",
-                    "cpp" | "hpp" | "cxx" | "hxx" | "c++" | "h++" | "cc" | "hh" => {
-                        "cpp"
-                    }
-                    "cs" | "csx" => "csharp",
-                    "css" => "css",
-                    "d" | "di" | "dlang" => "dlang",
-                    "diff" | "patch" => "diff",
-                    "dart" => "dart",
-                    "dockerfile" => "dockerfile",
-                    "elm" => "elm",
-                    "ex" | "exs" => "elixir",
-                    "erl" | "hrl" => "erlang",
-                    "fs" | "fsi" | "fsx" | "fsscript" => "fsharp",
-                    "git-commit" | "git-rebase" => "git",
-                    "go" => "go",
-                    "groovy" | "gvy" | "gy" | "gsh" => "groovy",
-                    "hbs" => "handlebars",
-                    "htm" | "html" | "xhtml" => "html",
-                    "ini" => "ini",
-                    "java" | "class" => "java",
-                    "js" => "javascript",
-                    "jsx" => "javascriptreact",
-                    "json" => "json",
-                    "jl" => "julia",
-                    "kt" => "kotlin",
-                    "kts" => "kotlinbuildscript",
-                    "less" => "less",
-                    "lua" => "lua",
-                    "makefile" | "gnumakefile" => "makefile",
-                    "md" | "markdown" => "markdown",
-                    "m" => "objective-c",
-                    "mm" => "objective-cpp",
-                    "plx" | "pl" | "pm" | "xs" | "t" | "pod" | "cgi" => "perl",
-                    "p6" | "pm6" | "pod6" | "t6" | "raku" | "rakumod"
-                    | "rakudoc" | "rakutest" => "perl6",
-                    "php" | "phtml" | "pht" | "phps" => "php",
-                    "proto" => "proto",
-                    "ps1" | "ps1xml" | "psc1" | "psm1" | "psd1" | "pssc"
-                    | "psrc" => "powershell",
-                    "py" | "pyi" | "pyc" | "pyd" | "pyw" => "python",
-                    "r" => "r",
-                    "rb" => "ruby",
-                    "rs" => "rust",
-                    "scss" | "sass" => "scss",
-                    "sc" | "scala" => "scala",
-                    "sh" | "bash" | "zsh" => "shellscript",
-                    "sql" => "sql",
-                    "swift" => "swift",
-                    "svelte" => "svelte",
-                    "thrift" => "thrift",
-                    "toml" => "toml",
-                    "ts" => "typescript",
-                    "tsx" => "typescriptreact",
-                    "tex" => "tex",
-                    "vb" => "vb",
-                    "xml" | "csproj" => "xml",
-                    "xsl" => "xsl",
-                    "yml" | "yaml" => "yaml",
-                    "zig" => "zig",
-                    "vue" => "vue",
-                    _ => return None,
-                },
-            }
-        }
-        // Handle paths without extension
-        #[allow(clippy::match_single_binding)]
-        None => match path.file_name()?.to_str()? {
-            // case-insensitive matching
-            filename => match filename.to_lowercase().as_str() {
-                "dockerfile" => "dockerfile",
-                "makefile" | "gnumakefile" => "makefile",
-                _ => return None,
-            },
-        },
-    })
+    path.extension()?
+        .to_str()?
+        .eq_ignore_ascii_case("dart")
+        .then_some("dart")
 }
 
 fn get_document_content_changes(
@@ -348,4 +266,29 @@ pub fn get_mod_time<P: AsRef<Path>>(path: P) -> Option<SystemTime> {
         .and_then(|f| f.metadata())
         .and_then(|meta| meta.modified())
         .ok()
+}
+
+#[cfg(test)]
+mod dart_scope_tests {
+    use super::*;
+    #[test]
+    fn only_dart_files_have_a_semantic_language_id() {
+        assert_eq!(
+            language_id_from_path(Path::new("lib/main.dart")),
+            Some("dart")
+        );
+        assert_eq!(
+            language_id_from_path(Path::new("tool/TEST.DART")),
+            Some("dart")
+        );
+        for p in [
+            "main.rs",
+            "app.py",
+            "index.ts",
+            "pubspec.yaml",
+            "android/MainActivity.kt",
+        ] {
+            assert_eq!(language_id_from_path(Path::new(p)), None);
+        }
+    }
 }

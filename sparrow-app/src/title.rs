@@ -23,6 +23,7 @@ use std::{rc::Rc, sync::Arc};
 
 use crate::command::{CommandKind, InternalCommand};
 use crate::dart::hot_reload::FlutterDevice;
+use crate::debug::RunDebugMode;
 use crate::text_input::TextInputBuilder;
 use crate::{
     app::{clickable_icon, not_clickable_icon, tooltip_label, window_menu},
@@ -35,7 +36,6 @@ use crate::{
     window_tab::WindowTabData,
     workspace::SparrowWorkspace,
 };
-use crate::debug::RunDebugMode;
 
 fn left(
     workspace: Arc<SparrowWorkspace>,
@@ -147,7 +147,8 @@ fn left(
                     None => Color::TRANSPARENT,
                 }
             };
-            s.apply_if(is_local, |s| s.hide()).height_pct(100.0)
+            s.apply_if(is_local, |s| s.hide())
+                .height_pct(100.0)
                 .padding_horiz(10.0)
                 .items_center()
                 .background(color)
@@ -169,19 +170,19 @@ fn left(
 
 fn middle(
     window_tab_data: Rc<WindowTabData>,
-    window_tabs: ReadSignal<im::Vector<(RwSignal<usize>, Rc<WindowTabData>)>>,
+    _window_tabs: ReadSignal<im::Vector<(RwSignal<usize>, Rc<WindowTabData>)>>,
     branch: impl Fn() -> String + Copy + 'static,
     config: ReadSignal<Arc<SparrowConfig>>,
     project_chip_origin: RwSignal<Point>,
     branch_chip_origin: RwSignal<Point>,
 ) -> impl View {
     let workspace = window_tab_data.workspace.clone();
-    let main_split = window_tab_data.main_split.clone();
-    let workbench_command = window_tab_data.common.workbench_command;
-    let window_command = window_tab_data.common.window_common.window_command;
+    let _main_split = window_tab_data.main_split.clone();
+    let _workbench_command = window_tab_data.common.workbench_command;
+    let _window_command = window_tab_data.common.window_common.window_command;
 
     // Copy out everything the closures need so none of them captures the Rc.
-    let current_tab_id = window_tab_data.window_tab_id;
+    let _current_tab_id = window_tab_data.window_tab_id;
     let branch_menu_visible = window_tab_data.branch_menu_visible;
     let project_menu_visible = window_tab_data.project_menu_visible;
 
@@ -372,7 +373,6 @@ fn middle(
     stack((
         project_chip,
         branch_chip,
-
         drag_window_area(empty())
             .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0f32)),
     ))
@@ -418,28 +418,37 @@ fn right(
         let workbench_command = workbench_command;
         container(
             stack((
-                svg(move || config.get().ui_svg(SparrowIcons::FLUTTER))
-                    .style(move |s| {
+                svg(move || config.get().ui_svg(SparrowIcons::FLUTTER)).style(
+                    move |s| {
                         let size = config.get().ui.icon_size() as f32;
                         s.size(size, size).margin_right(6.0)
-                    }),
+                    },
+                ),
                 label({
                     let wt_data = window_tab_data.clone();
                     move || {
-                    let idx = wt_data.active_run_config_idx.get();
-                    wt_data.run_configs.with(|c| c.get(idx).map(|c| c.name.clone()).unwrap_or_else(|| "Run Config".to_string()))
-                }})
-                    .style(move |s| s.selectable(false)),
+                        let idx = wt_data.active_run_config_idx.get();
+                        wt_data.run_configs.with(|c| {
+                            c.get(idx)
+                                .map(|c| c.name.clone())
+                                .unwrap_or_else(|| "Run Config".to_string())
+                        })
+                    }
+                })
+                .style(move |s| s.selectable(false)),
                 svg(move || config.get().ui_svg(SparrowIcons::DROPDOWN_ARROW))
                     .style(move |s| {
                         let size = config.get().ui.icon_size() as f32;
-                        s.size(size, size).margin_left(4.0).color(config.get().color(SparrowColor::SPARROW_ICON_INACTIVE))
+                        s.size(size, size).margin_left(4.0).color(
+                            config.get().color(SparrowColor::SPARROW_ICON_INACTIVE),
+                        )
                     }),
-            )).style(|s| s.items_center()),
+            ))
+            .style(|s| s.items_center()),
         )
-            .popout_menu({
-                let wt_data = window_tab_data.clone();
-                move || {
+        .popout_menu({
+            let wt_data = window_tab_data.clone();
+            move || {
                 let mut menu = Menu::new("");
                 let configs = wt_data.run_configs.get_untracked();
                 let active = wt_data.active_run_config_idx.get_untracked();
@@ -447,8 +456,12 @@ fn right(
                 // Config list
                 for (i, c) in configs.iter().enumerate() {
                     let c_name = c.name.clone();
-                    let label = if i == active { format!("✓ {}", c_name) } else { format!("   {}", c_name) };
-                    let cmd = workbench_command;
+                    let label = if i == active {
+                        format!("✓ {}", c_name)
+                    } else {
+                        format!("   {}", c_name)
+                    };
+                    let _cmd = workbench_command;
                     let wt_clone = wt_data.clone();
                     menu = menu.entry(MenuItem::new(label).action(move || {
                         wt_clone.active_run_config_idx.set(i);
@@ -457,41 +470,74 @@ fn right(
 
                 menu = menu.separator();
                 let wt_clone = wt_data.clone();
-                menu = menu.entry(MenuItem::new("Edit Configurations...").action(move || {
-                    wt_clone.run_config_modal_visible.set(true);
-                }));
+                menu = menu.entry(MenuItem::new("Edit Configurations...").action(
+                    move || {
+                        wt_clone.run_config_modal_visible.set(true);
+                    },
+                ));
                 menu
-            }})
-            .style(move |s| {
-                s.height(28.0)
-                    .padding_horiz(10.0)
-                    .margin_horiz(6.0)
-                    .items_center()
-                    .border_radius(6.0)
-                    .hover(|s| s.cursor(CursorStyle::Pointer).background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND)))
-            })
+            }
+        })
+        .style(move |s| {
+            s.height(28.0)
+                .padding_horiz(10.0)
+                .margin_horiz(6.0)
+                .items_center()
+                .border_radius(6.0)
+                .hover(|s| {
+                    s.cursor(CursorStyle::Pointer).background(
+                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
+        })
     };
 
     let run_state = hot_reload.state;
-    let is_running = move || run_state.get() == crate::dart::FlutterRunState::Running;
+    let is_running =
+        move || run_state.get() == crate::dart::FlutterRunState::Running;
     let run_button = {
         let wt_data = window_tab_data.clone();
         tooltip_label(
             config,
-            container(svg(move || config.get().ui_svg(SparrowIcons::START)).style(move |s| {
-                let c = config.get();
-                let size = c.ui.icon_size() as f32;
-                s.size(size, size).color(if is_running() { Color::WHITE } else { c.color(SparrowColor::SPARROW_RUN_ICON) })
-            }))
+            container(svg(move || config.get().ui_svg(SparrowIcons::START)).style(
+                move |s| {
+                    let c = config.get();
+                    let size = c.ui.icon_size() as f32;
+                    s.size(size, size).color(if is_running() {
+                        Color::WHITE
+                    } else {
+                        c.color(SparrowColor::SPARROW_RUN_ICON)
+                    })
+                },
+            ))
             .on_click_stop(move |_| {
                 let idx = wt_data.active_run_config_idx.get_untracked();
-                if let Some(c) = wt_data.run_configs.with_untracked(|c| c.get(idx).cloned()) {
-                    wt_data.common.internal_command.send(InternalCommand::RunAndDebug { mode: RunDebugMode::Run, config: c });
+                if let Some(c) =
+                    wt_data.run_configs.with_untracked(|c| c.get(idx).cloned())
+                {
+                    wt_data.common.internal_command.send(
+                        InternalCommand::RunAndDebug {
+                            mode: RunDebugMode::Run,
+                            config: c,
+                        },
+                    );
                 }
             })
-            .style(move |s| s.padding(4.0).margin_horiz(2.0).border_radius(4.0)
-                .apply_if(is_running(), |s| s.background(Color::from_rgb8(0x2D, 0x85, 0x50)))
-                .hover(|s| s.cursor(CursorStyle::Pointer).background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND)))),
+            .style(move |s| {
+                s.padding(4.0)
+                    .margin_horiz(2.0)
+                    .border_radius(4.0)
+                    .apply_if(is_running(), |s| {
+                        s.background(Color::from_rgb8(0x2D, 0x85, 0x50))
+                    })
+                    .hover(|s| {
+                        s.cursor(CursorStyle::Pointer).background(
+                            config
+                                .get()
+                                .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                    })
+            }),
             || "Run (Shift+F10)",
         )
     };
@@ -525,24 +571,32 @@ fn right(
         let hr = hot_reload.clone();
         tooltip_label(
             config,
-            container(svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_HOT_RELOAD)).style(
-                move |s| {
-                    let config = config.get();
-                    let size = config.ui.icon_size() as f32;
-                    s.size(size, size)
-                        .color(config.color(if is_running() { SparrowColor::SPARROW_HOT_RELOAD_ICON } else { SparrowColor::SPARROW_ICON_INACTIVE }))
-                },
-            ))
+            container(
+                svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_HOT_RELOAD))
+                    .style(move |s| {
+                        let config = config.get();
+                        let size = config.ui.icon_size() as f32;
+                        s.size(size, size).color(config.color(if is_running() {
+                            SparrowColor::SPARROW_HOT_RELOAD_ICON
+                        } else {
+                            SparrowColor::SPARROW_ICON_INACTIVE
+                        }))
+                    }),
+            )
             .disabled(move || !is_running())
             .on_click_stop(move |_| {
                 hr.hot_reload();
             })
             .style(move |s| {
                 let config = config.get();
-                s.padding(4.0).margin_horiz(2.0).border_radius(6.0).hover(|s| {
-                    s.cursor(CursorStyle::Pointer)
-                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
+                s.padding(4.0)
+                    .margin_horiz(2.0)
+                    .border_radius(6.0)
+                    .hover(|s| {
+                        s.cursor(CursorStyle::Pointer).background(
+                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                    })
             }),
             || "Hot Reload (Ctrl+\\)",
         )
@@ -553,24 +607,32 @@ fn right(
         let hr = hot_reload.clone();
         tooltip_label(
             config,
-            container(svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_HOT_RESTART)).style(
-                move |s| {
-                    let config = config.get();
-                    let size = config.ui.icon_size() as f32;
-                    s.size(size, size)
-                        .color(config.color(if is_running() { SparrowColor::SPARROW_HOT_RESTART_ICON } else { SparrowColor::SPARROW_ICON_INACTIVE }))
-                },
-            ))
+            container(
+                svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_HOT_RESTART))
+                    .style(move |s| {
+                        let config = config.get();
+                        let size = config.ui.icon_size() as f32;
+                        s.size(size, size).color(config.color(if is_running() {
+                            SparrowColor::SPARROW_HOT_RESTART_ICON
+                        } else {
+                            SparrowColor::SPARROW_ICON_INACTIVE
+                        }))
+                    }),
+            )
             .disabled(move || !is_running())
             .on_click_stop(move |_| {
                 hr.hot_restart();
             })
             .style(move |s| {
                 let config = config.get();
-                s.padding(4.0).margin_horiz(2.0).border_radius(6.0).hover(|s| {
-                    s.cursor(CursorStyle::Pointer)
-                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
+                s.padding(4.0)
+                    .margin_horiz(2.0)
+                    .border_radius(6.0)
+                    .hover(|s| {
+                        s.cursor(CursorStyle::Pointer).background(
+                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                    })
             }),
             || "Hot Restart (Ctrl+Shift+\\)",
         )
@@ -581,27 +643,34 @@ fn right(
         let hr = hot_reload.clone();
         tooltip_label(
             config,
-            container(svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_STOP)).style(
-                move |s| {
-                    let config = config.get();
-                    let size = config.ui.icon_size() as f32;
-                    s.size(size, size)
-                        .color(Color::WHITE)
-                },
-            ))
+            container(
+                svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_STOP)).style(
+                    move |s| {
+                        let config = config.get();
+                        let size = config.ui.icon_size() as f32;
+                        s.size(size, size).color(Color::WHITE)
+                    },
+                ),
+            )
             .disabled(move || !is_running())
             .on_click_stop(move |_| {
                 hr.stop();
             })
             .style(move |s| {
                 let config = config.get();
-                s.padding(4.0).margin_horiz(2.0).border_radius(4.0).background(config.color(SparrowColor::SPARROW_STOP_ICON)).hover(|s| {
-                    s.cursor(CursorStyle::Pointer)
-                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
+                s.padding(4.0)
+                    .margin_horiz(2.0)
+                    .border_radius(4.0)
+                    .background(config.color(SparrowColor::SPARROW_STOP_ICON))
+                    .hover(|s| {
+                        s.cursor(CursorStyle::Pointer).background(
+                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                    })
             }),
             || "Stop (Ctrl+F2)",
-        ).style(move |s| s.apply_if(!is_running(), |s| s.hide()))
+        )
+        .style(move |s| s.apply_if(!is_running(), |s| s.hide()))
     };
 
     // Flutter Inspector toggle button
@@ -609,23 +678,30 @@ fn right(
         let wt_data = window_tab_data.clone();
         tooltip_label(
             config,
-            container(svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_INSPECTOR)).style(
-                move |s| {
-                    let config = config.get();
-                    let size = config.ui.icon_size() as f32;
-                    s.size(size, size)
-                        .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
-                },
-            ))
+            container(
+                svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_INSPECTOR))
+                    .style(move |s| {
+                        let config = config.get();
+                        let size = config.ui.icon_size() as f32;
+                        s.size(size, size)
+                            .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
+                    }),
+            )
             .on_click_stop(move |_| {
-                wt_data.toggle_panel_visual(crate::panel::kind::PanelKind::FlutterInspector);
+                wt_data.toggle_panel_visual(
+                    crate::panel::kind::PanelKind::FlutterInspector,
+                );
             })
             .style(move |s| {
                 let config = config.get();
-                s.padding(4.0).margin_horiz(2.0).border_radius(6.0).hover(|s| {
-                    s.cursor(CursorStyle::Pointer)
-                        .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
+                s.padding(4.0)
+                    .margin_horiz(2.0)
+                    .border_radius(6.0)
+                    .hover(|s| {
+                        s.cursor(CursorStyle::Pointer).background(
+                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                    })
             }),
             || "Flutter Inspector",
         )
@@ -804,8 +880,13 @@ pub fn title(
             .items_center()
             .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
             .apply_if(config.color_theme.name == "Islands Dark", |s| {
-                s.background(floem::peniko::Gradient::new_linear((0.0, 0.0), (620.0, 32.0))
-                    .with_stops([Color::from_rgb8(0x41, 0x4D, 0x68), Color::from_rgb8(0x26, 0x28, 0x2C)]))
+                s.background(
+                    floem::peniko::Gradient::new_linear((0.0, 0.0), (620.0, 32.0))
+                        .with_stops([
+                            Color::from_rgb8(0x41, 0x4D, 0x68),
+                            Color::from_rgb8(0x26, 0x28, 0x2C),
+                        ]),
+                )
             })
     })
     .debug_name("Title / Top Bar")
@@ -896,7 +977,9 @@ fn device_selector(
             svg(move || {
                 let c = config.get();
                 let icon_key = if let Some(dev) = hot_reload.selected_device.get() {
-                    crate::dart::hot_reload::device_platform_icon(dev.target_platform.as_deref())
+                    crate::dart::hot_reload::device_platform_icon(
+                        dev.target_platform.as_deref(),
+                    )
                 } else {
                     SparrowIcons::DEVICE_DESKTOP
                 };
@@ -1621,8 +1704,13 @@ pub fn device_selector_overlay(
         let close = close_menu.clone();
         let config_get = config;
 
-        let icon_key = crate::dart::hot_reload::device_platform_icon(dev.target_platform.as_deref());
-        let platform_desc = dev.target_platform.clone().unwrap_or_else(|| "desktop".to_string());
+        let icon_key = crate::dart::hot_reload::device_platform_icon(
+            dev.target_platform.as_deref(),
+        );
+        let platform_desc = dev
+            .target_platform
+            .clone()
+            .unwrap_or_else(|| "desktop".to_string());
 
         container(
             stack((
@@ -1718,9 +1806,9 @@ pub fn device_selector_overlay(
                 }),
                 label(|| "Launch".to_string()).style(move |s| {
                     let c = config_get.get();
-                    s.font_size(11.0)
-                        .font_weight(Weight::BOLD)
-                        .color(c.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))
+                    s.font_size(11.0).font_weight(Weight::BOLD).color(
+                        c.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND),
+                    )
                 }),
             ))
             .style(|s| s.items_center().width_full()),
@@ -1794,14 +1882,18 @@ pub fn device_selector_overlay(
                                 config.get().color(SparrowColor::SPARROW_BORDER),
                             )
                         }),
-                        label(|| "Available Emulators".to_string()).style(move |s| {
-                            let c = config.get();
-                            s.font_size(11.0)
-                                .font_weight(Weight::BOLD)
-                                .padding_horiz(10.0)
-                                .padding_vert(4.0)
-                                .color(c.color(SparrowColor::PANEL_FOREGROUND_DIM))
-                        }),
+                        label(|| "Available Emulators".to_string()).style(
+                            move |s| {
+                                let c = config.get();
+                                s.font_size(11.0)
+                                    .font_weight(Weight::BOLD)
+                                    .padding_horiz(10.0)
+                                    .padding_vert(4.0)
+                                    .color(
+                                        c.color(SparrowColor::PANEL_FOREGROUND_DIM),
+                                    )
+                            },
+                        ),
                         dyn_stack(
                             {
                                 let hr = hot_reload.clone();
@@ -1816,7 +1908,9 @@ pub fn device_selector_overlay(
                         let hr = hot_reload.clone();
                         move |s| {
                             let is_empty = hr.emulators.get().is_empty();
-                            s.flex_col().width_full().apply_if(is_empty, |s| s.hide())
+                            s.flex_col()
+                                .width_full()
+                                .apply_if(is_empty, |s| s.hide())
                         }
                     }),
                     // Divider
@@ -1828,14 +1922,18 @@ pub fn device_selector_overlay(
                     // Refresh Devices Action
                     container(
                         stack((
-                            svg(move || config.get().ui_svg(SparrowIcons::FLUTTER_HOT_RESTART))
-                                .style(move |s| {
-                                    let c = config.get();
-                                    let size = c.ui.icon_size() as f32;
-                                    s.size(size, size).margin_right(10.0).color(
-                                        c.color(SparrowColor::EDITOR_FOREGROUND),
-                                    )
-                                }),
+                            svg(move || {
+                                config
+                                    .get()
+                                    .ui_svg(SparrowIcons::FLUTTER_HOT_RESTART)
+                            })
+                            .style(move |s| {
+                                let c = config.get();
+                                let size = c.ui.icon_size() as f32;
+                                s.size(size, size)
+                                    .margin_right(10.0)
+                                    .color(c.color(SparrowColor::EDITOR_FOREGROUND))
+                            }),
                             label(|| "Refresh Devices".to_string()).style(
                                 move |s| {
                                     s.font_size(13.0).color(

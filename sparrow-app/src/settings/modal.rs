@@ -35,7 +35,7 @@ const PAGES: [(Page, &str, usize); 8] = [
     (Page::System, "System Settings", 1),
     (Page::Keymap, "Keymap", 0),
     (Page::Editor, "Editor", 0),
-    (Page::Plugins, "Plugins", 0),
+    (Page::Plugins, "Themes", 0),
     (Page::Run, "Build, Execution, Deployment", 0),
     (Page::Terminal, "Tools › Terminal", 0),
 ];
@@ -341,14 +341,14 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let save = apply.clone();
     let external = window.clone();
     let overview=stack((
-        label(||"Customize IDE appearance and behavior: change themes and font size, tune the keymap, configure plugins and system settings.").style(|s|s.width_full().margin_top(8.0).margin_bottom(10.0)),
+        label(||"Customize IDE appearance and behavior: change themes and font size, tune the keymap, configure Dart/Flutter and system settings.").style(|s|s.width_full().margin_top(8.0).margin_bottom(10.0)),
         dyn_stack(||vec![Page::Appearance,Page::System,Page::Editor,Page::Terminal,Page::Keymap,Page::Plugins],|p|*p as u8,move |p|label(move ||p.title()).on_click_stop(move |_|navigate(p,page,history,index,query)).style(move |s|s.margin_left(24.0).height(22.0).color(config.get().color(SparrowColor::EDITOR_LINK)).hover(|s|s.cursor(floem::style::CursorStyle::Pointer)))).style(|s|s.flex_col().width_full()),
     )).style(move |s|s.flex_col().width_full().apply_if(page.get()!=Page::Overview||!query.with(|q|q.is_empty()),|s|s.hide()));
     let launch_page = page;
     let external_button = label(move || match launch_page.get() {
         Page::Keymap => "Open Keymap Editor",
         Page::Run => "Edit Run/Debug Configurations…",
-        _ => "Manage Plugins…",
+        _ => "Manage Themes…",
     })
     .on_click_stop(move |_| {
         if !pending.with_untracked(|p| p.is_empty()) {

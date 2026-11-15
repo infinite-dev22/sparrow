@@ -99,7 +99,7 @@ export CARGO_BUILD_TARGET="$(xx-cargo --print-target-triple)"
 
 xx-cargo build \
   --frozen \
-  --package sparrow-app \
+  --package sparrow \
   --profile release-lto \
   --no-default-features
 
@@ -156,7 +156,7 @@ cat <<- EOL > debian/control
 	Conflicts: ${conflicts}
 	Maintainer: Jakub Panek <me+debian@panekj.dev>
 	Architecture: ${_PACKAGE_ARCHITECTURE}
-	Description: Lightning-fast and Powerful Code Editor
+	Description: Dart and Flutter IDE
 	Source: https://sparrow.dev
 EOL
 

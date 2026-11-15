@@ -12,6 +12,7 @@ use std::{
     },
 };
 
+use crate::debug::{debug_floating_toolbar, run_config_modal};
 use crate::title::{branch_switcher, device_selector_overlay, project_switcher};
 use crate::{
     about, alert,
@@ -115,13 +116,12 @@ use sparrow_rpc::{
     file::PathObject,
 };
 use tracing_subscriber::{filter::Targets, reload::Handle};
-use crate::debug::{debug_floating_toolbar, run_config_modal};
 
 mod grammars;
 mod logging;
 
 #[derive(Parser)]
-#[clap(name = "Sparrow")]
+#[clap(name = "Sparrow", about = "Native Dart and Flutter IDE")]
 #[clap(version=meta::VERSION)]
 #[derive(Debug)]
 struct Cli {
@@ -132,12 +132,13 @@ struct Cli {
     #[clap(short, long, action)]
     wait: bool,
 
-    /// Path(s) to plugins to load.
-    ///
-    /// This is primarily used for plugin development to make it easier to test changes to the
-    /// plugin without needing to copy the plugin to the plugins directory.
-    /// This will cause any plugin with the same author & name to not run.
-    #[clap(long, action)]
+    /// Additional local color/icon theme package directories.
+    #[clap(
+        long = "theme-path",
+        alias = "plugin-path",
+        value_name = "THEME_PATH",
+        action
+    )]
     plugin_path: Vec<PathBuf>,
 
     /// Paths to file(s) and/or folder(s) to open.
@@ -630,14 +631,24 @@ impl AppData {
                 // bubbling to its modal. Escape clears text-input focus on
                 // key-down; dismiss the topmost configuration modal on key-up.
                 if let Event::KeyUp(key) = event {
-                    if key.key.logical_key == floem::keyboard::Key::Named(floem::keyboard::NamedKey::Escape) {
+                    if key.key.logical_key
+                        == floem::keyboard::Key::Named(
+                            floem::keyboard::NamedKey::Escape,
+                        )
+                    {
                         let active = key_up_window_data.active.get_untracked();
-                        if let Some((_, tab)) = key_up_window_data.window_tabs.with_untracked(|tabs| tabs.get(active).cloned()) {
-                            let modal = if tab.settings_modal_visible.get_untracked() {
+                        if let Some((_, tab)) = key_up_window_data
+                            .window_tabs
+                            .with_untracked(|tabs| tabs.get(active).cloned())
+                        {
+                            let modal = if tab.settings_modal_visible.get_untracked()
+                            {
                                 Some(tab.settings_modal_visible)
                             } else if tab.run_config_modal_visible.get_untracked() {
                                 Some(tab.run_config_modal_visible)
-                            } else { None };
+                            } else {
+                                None
+                            };
                             if let Some(modal) = modal {
                                 modal.set(false);
                                 view_id.request_focus();
@@ -2198,15 +2209,41 @@ fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
         tool_window_stripe(window_tab_data.clone(), true),
         stack((
             stack((
-                panel_container_view(window_tab_data.clone(), PanelContainerPosition::Left),
+                panel_container_view(
+                    window_tab_data.clone(),
+                    PanelContainerPosition::Left,
+                ),
                 main_split(window_tab_data.clone()).on_resize(move |rect| {
                     let width = rect.width();
-                    if main_split_width.get_untracked() != width { main_split_width.set(width); }
+                    if main_split_width.get_untracked() != width {
+                        main_split_width.set(width);
+                    }
                 }),
-                panel_container_view(window_tab_data.clone(), PanelContainerPosition::Right),
-            )).style(|s| s.width_full().flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).gap(3.0)),
-            panel_container_view(window_tab_data.clone(), PanelContainerPosition::Bottom),
-        )).style(|s| s.height_full().flex_col().flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).gap(3.0)),
+                panel_container_view(
+                    window_tab_data.clone(),
+                    PanelContainerPosition::Right,
+                ),
+            ))
+            .style(|s| {
+                s.width_full()
+                    .flex_grow(1.0_f32)
+                    .flex_basis(0.0)
+                    .min_height(0.0)
+                    .gap(3.0)
+            }),
+            panel_container_view(
+                window_tab_data.clone(),
+                PanelContainerPosition::Bottom,
+            ),
+        ))
+        .style(|s| {
+            s.height_full()
+                .flex_col()
+                .flex_grow(1.0_f32)
+                .flex_basis(0.0)
+                .min_width(0.0)
+                .gap(3.0)
+        }),
         tool_window_stripe(window_tab_data.clone(), false),
         window_message_view(window_tab_data.messages, window_tab_data.common.config),
     ))
@@ -3544,7 +3581,13 @@ fn window_tab(
 
     let view = stack((
         stack((
-            title(window_tab_data.clone(), window_tabs, project_chip_origin, branch_chip_origin, device_chip_origin),
+            title(
+                window_tab_data.clone(),
+                window_tabs,
+                project_chip_origin,
+                branch_chip_origin,
+                device_chip_origin,
+            ),
             workbench(window_tab_data.clone()),
             status(
                 window_tab_data.clone(),
@@ -3575,11 +3618,9 @@ fn window_tab(
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
         crate::dart::project_wizard::view(window_tab_data.clone()),
-
         run_config_modal(window_tab_data.clone()),
         crate::settings::modal::view(window_tab_data.clone()),
         debug_floating_toolbar(window_tab_data.clone()),
-
         project_switcher(window_tab_data.clone(), window_tabs, project_chip_origin),
         branch_switcher(window_tab_data.clone(), branch_chip_origin),
         device_selector_overlay(window_tab_data.clone(), device_chip_origin),
@@ -3982,10 +4023,19 @@ pub fn launch() {
         for bytes in [
             include_bytes!("../../extra/fonts/Inter/Inter-Regular.otf").as_slice(),
             include_bytes!("../../extra/fonts/Inter/Inter-SemiBold.otf").as_slice(),
-            include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-Regular.ttf").as_slice(),
-            include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-Italic.ttf").as_slice(),
+            include_bytes!(
+                "../../extra/fonts/JetBrainsMono/JetBrainsMono-Regular.ttf"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../../extra/fonts/JetBrainsMono/JetBrainsMono-Italic.ttf"
+            )
+            .as_slice(),
         ] {
-            FONT_SYSTEM.lock().db_mut().load_font_source(Source::Binary(Arc::new(bytes)));
+            FONT_SYSTEM
+                .lock()
+                .db_mut()
+                .load_font_source(Source::Binary(Arc::new(bytes)));
         }
 
         const FONT_DEJAVU_SANS_REGULAR: &[u8] = include_bytes!(concat!(

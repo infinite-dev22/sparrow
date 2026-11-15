@@ -123,9 +123,6 @@ dim-text = "#A0A1A7"
 "sparrow.remote.connecting" = "#C18401"
 "sparrow.remote.disconnected" = "#E45649"
 
-"sparrow.plugin.name" = "#444444"
-"sparrow.plugin.description" = "$text"
-"sparrow.plugin.author" = "#707070"
 
 "terminal.cursor" = "$text"
 "terminal.foreground" = "$text"

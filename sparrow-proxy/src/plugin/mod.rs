@@ -1,13 +1,11 @@
 pub mod catalog;
 pub mod dap;
-pub mod lsp;
-pub mod psp;
-pub mod wasi;
+pub mod rpc;
+pub mod themes;
 
 use std::{
     borrow::Cow,
     collections::HashMap,
-    fs,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -19,38 +17,23 @@ use std::{
 use anyhow::{Result, anyhow};
 use crossbeam_channel::{Receiver, Sender};
 use dyn_clone::DynClone;
-use flate2::read::GzDecoder;
 use lapce_xi_rope::{Rope, RopeDelta};
 use lsp_types::{
-    CallHierarchyClientCapabilities, CallHierarchyIncomingCall,
-    CallHierarchyIncomingCallsParams, CallHierarchyItem, CallHierarchyPrepareParams,
-    ClientCapabilities, CodeAction, CodeActionCapabilityResolveSupport,
-    CodeActionClientCapabilities, CodeActionContext, CodeActionKind,
-    CodeActionKindLiteralSupport, CodeActionLiteralSupport, CodeActionParams,
-    CodeActionResponse, CodeLens, CodeLensParams, CompletionClientCapabilities,
-    CompletionItem, CompletionItemCapability,
-    CompletionItemCapabilityResolveSupport, CompletionParams, CompletionResponse,
-    Diagnostic, DocumentFormattingParams, DocumentHighlight,
-    DocumentHighlightParams, DocumentSymbolClientCapabilities, DocumentSymbolParams,
-    DocumentSymbolResponse, FoldingRange, FoldingRangeClientCapabilities,
-    FoldingRangeParams, FormattingOptions, GotoCapability, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverClientCapabilities, HoverParams, InlayHint,
-    InlayHintClientCapabilities, InlayHintParams,
-    InlineCompletionClientCapabilities, InlineCompletionParams,
-    InlineCompletionResponse, InlineCompletionTriggerKind, Location, MarkupKind,
-    MessageActionItemCapabilities, ParameterInformationSettings,
-    PartialResultParams, Position, PrepareRenameResponse,
-    PublishDiagnosticsClientCapabilities, Range, ReferenceContext, ReferenceParams,
-    RenameParams, SelectionRange, SelectionRangeParams, SemanticTokens,
-    SemanticTokensClientCapabilities, SemanticTokensParams,
-    ShowMessageRequestClientCapabilities, SignatureHelp,
-    SignatureHelpClientCapabilities, SignatureHelpParams,
-    SignatureInformationSettings, SymbolInformation, TextDocumentClientCapabilities,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams,
-    TextDocumentSyncClientCapabilities, TextEdit, Url,
-    VersionedTextDocumentIdentifier, WindowClientCapabilities,
-    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEdit,
-    WorkspaceSymbolClientCapabilities, WorkspaceSymbolParams,
+    CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
+    CallHierarchyPrepareParams, CodeAction, CodeActionContext, CodeActionParams,
+    CodeActionResponse, CodeLens, CodeLensParams, CompletionItem, CompletionParams,
+    CompletionResponse, Diagnostic, DocumentFormattingParams, DocumentHighlight,
+    DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
+    FoldingRange, FoldingRangeParams, FormattingOptions, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverParams, InlayHint, InlayHintParams,
+    InlineCompletionParams, InlineCompletionResponse, InlineCompletionTriggerKind,
+    Location, PartialResultParams, Position, PrepareRenameResponse, Range,
+    ReferenceContext, ReferenceParams, RenameParams, SelectionRange,
+    SelectionRangeParams, SemanticTokens, SemanticTokensParams, SignatureHelp,
+    SignatureHelpParams, SymbolInformation, TextDocumentIdentifier,
+    TextDocumentItem, TextDocumentPositionParams, TextEdit, Url,
+    VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceEdit,
+    WorkspaceSymbolParams,
     request::{
         CallHierarchyIncomingCalls, CallHierarchyPrepare, CodeActionRequest,
         CodeActionResolveRequest, CodeLensRequest, CodeLensResolve, Completion,
@@ -64,9 +47,8 @@ use lsp_types::{
     },
 };
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Map, Value};
-use sparrow_core::directory::Directory;
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use sparrow_rpc::{
     RequestId, RpcError,
     core::CoreRpcHandler,
@@ -76,14 +58,12 @@ use sparrow_rpc::{
     style::LineStyle,
     terminal::TermId,
 };
-use tar::Archive;
 use tracing::error;
 
 use self::{
     catalog::PluginCatalog,
     dap::DapRpcHandler,
-    psp::{CloneableCallback, PluginServerRpcHandler, RpcCallback},
-    wasi::{load_volt, start_volt},
+    rpc::{CloneableCallback, RpcCallback},
 };
 use crate::buffer::language_id_from_path;
 
@@ -157,8 +137,6 @@ pub enum PluginCatalogRpc {
 #[allow(clippy::large_enum_variant)]
 pub enum PluginCatalogNotification {
     UpdatePluginConfigs(HashMap<String, HashMap<String, serde_json::Value>>),
-    UnactivatedVolts(Vec<VoltMetadata>),
-    PluginServerLoaded(PluginServerRpcHandler),
     InstallVolt(VoltInfo),
     StopVolt(VoltInfo),
     EnableVolt(VoltInfo),
@@ -208,11 +186,6 @@ pub enum PluginCatalogNotification {
         dap_id: DapId,
         path: PathBuf,
         breakpoints: Vec<SourceBreakpoint>,
-    },
-    RegisterDebuggerType {
-        debugger_type: String,
-        program: String,
-        args: Option<Vec<String>>,
     },
     Shutdown,
 }
@@ -1328,19 +1301,6 @@ impl PluginCatalogRpcHandler {
         }
     }
 
-    pub fn unactivated_volts(&self, volts: Vec<VoltMetadata>) -> Result<()> {
-        self.catalog_notification(PluginCatalogNotification::UnactivatedVolts(volts))
-    }
-
-    pub fn plugin_server_loaded(
-        &self,
-        plugin: PluginServerRpcHandler,
-    ) -> Result<()> {
-        self.catalog_notification(PluginCatalogNotification::PluginServerLoaded(
-            plugin,
-        ))
-    }
-
     pub fn update_plugin_configs(
         &self,
         configs: HashMap<String, HashMap<String, serde_json::Value>>,
@@ -1529,125 +1489,12 @@ impl PluginCatalogRpcHandler {
             tracing::error!("{:?}", err);
         }
     }
-
-    pub fn register_debugger_type(
-        &self,
-        debugger_type: String,
-        program: String,
-        args: Option<Vec<String>>,
-    ) {
-        if let Err(err) = self.catalog_notification(
-            PluginCatalogNotification::RegisterDebuggerType {
-                debugger_type,
-                program,
-                args,
-            },
-        ) {
-            tracing::error!("{:?}", err);
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
-#[serde(tag = "method", content = "params")]
-pub enum PluginNotification {
-    StartLspServer {
-        exec_path: String,
-        language_id: String,
-        options: Option<Value>,
-        system_lsp: Option<bool>,
-    },
-    DownloadFile {
-        url: String,
-        path: PathBuf,
-    },
-    LockFile {
-        path: PathBuf,
-    },
-    MakeFileExecutable {
-        path: PathBuf,
-    },
 }
 
 pub fn volt_icon(volt: &VoltMetadata) -> Option<Vec<u8>> {
     let dir = volt.dir.as_ref()?;
     let icon = dir.join(volt.icon.as_ref()?);
     std::fs::read(icon).ok()
-}
-
-pub fn download_volt(volt: &VoltInfo) -> Result<VoltMetadata> {
-    let url = format!(
-        "https://plugins.lapce.dev/api/v1/plugins/{}/{}/{}/download",
-        volt.author, volt.name, volt.version
-    );
-
-    let resp = crate::get_url(url, None)?;
-    if !resp.status().is_success() {
-        return Err(anyhow!("can't download plugin"));
-    }
-
-    // this is the s3 url
-    let url = resp.text()?;
-
-    let mut resp = crate::get_url(url, None)?;
-    if !resp.status().is_success() {
-        return Err(anyhow!("can't download plugin"));
-    }
-
-    let is_zstd = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        == Some("application/zstd");
-
-    let id = volt.id();
-    let plugin_dir = Directory::plugins_directory()
-        .ok_or_else(|| anyhow!("can't get plugin directory"))?
-        .join(id.to_string());
-    if let Err(err) = fs::remove_dir_all(&plugin_dir) {
-        tracing::error!("{:?}", err);
-    }
-    fs::create_dir_all(&plugin_dir)?;
-
-    if is_zstd {
-        let tar = zstd::Decoder::new(&mut resp).unwrap();
-        let mut archive = Archive::new(tar);
-        archive.unpack(&plugin_dir)?;
-    } else {
-        let tar = GzDecoder::new(&mut resp);
-        let mut archive = Archive::new(tar);
-        archive.unpack(&plugin_dir)?;
-    }
-
-    let meta = load_volt(&plugin_dir)?;
-    Ok(meta)
-}
-
-pub fn install_volt(
-    catalog_rpc: PluginCatalogRpcHandler,
-    workspace: Option<PathBuf>,
-    configurations: Option<HashMap<String, serde_json::Value>>,
-    volt: VoltInfo,
-) -> Result<()> {
-    let download_volt_result = download_volt(&volt);
-    if download_volt_result.is_err() {
-        catalog_rpc
-            .core_rpc
-            .volt_installing(volt, "Could not download Plugin".to_string());
-    }
-    let meta = download_volt_result?;
-    let local_catalog_rpc = catalog_rpc.clone();
-    let local_meta = meta.clone();
-
-    if let Err(err) =
-        start_volt(workspace, configurations, local_catalog_rpc, local_meta)
-    {
-        tracing::error!("{:?}", err);
-    }
-    let icon = volt_icon(&meta);
-    catalog_rpc.core_rpc.volt_installed(meta, icon);
-    Ok(())
 }
 
 pub fn remove_volt(
@@ -1685,137 +1532,4 @@ pub fn remove_volt(
         Ok(())
     });
     Ok(())
-}
-
-fn client_capabilities() -> ClientCapabilities {
-    // https://github.com/rust-lang/rust-analyzer/blob/master/docs/dev/lsp-extensions.md#server-status
-    let mut experimental = Map::new();
-    experimental.insert("serverStatusNotification".into(), true.into());
-    let command_vec = ["rust-analyzer.runSingle", "rust-analyzer.debugSingle"]
-        .map(Value::from)
-        .to_vec();
-
-    let mut commands = Map::new();
-    experimental.insert("serverStatusNotification".into(), true.into());
-    commands.insert("commands".into(), command_vec.into());
-    experimental.insert("commands".into(), commands.into());
-    ClientCapabilities {
-        text_document: Some(TextDocumentClientCapabilities {
-            synchronization: Some(TextDocumentSyncClientCapabilities {
-                did_save: Some(true),
-                dynamic_registration: Some(true),
-                ..Default::default()
-            }),
-            completion: Some(CompletionClientCapabilities {
-                completion_item: Some(CompletionItemCapability {
-                    snippet_support: Some(true),
-                    resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                        properties: vec!["additionalTextEdits".to_string()],
-                    }),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            signature_help: Some(SignatureHelpClientCapabilities {
-                signature_information: Some(SignatureInformationSettings {
-                    documentation_format: Some(vec![
-                        MarkupKind::Markdown,
-                        MarkupKind::PlainText,
-                    ]),
-                    parameter_information: Some(ParameterInformationSettings {
-                        label_offset_support: Some(true),
-                    }),
-                    active_parameter_support: Some(true),
-                }),
-                ..Default::default()
-            }),
-            hover: Some(HoverClientCapabilities {
-                content_format: Some(vec![
-                    MarkupKind::Markdown,
-                    MarkupKind::PlainText,
-                ]),
-                ..Default::default()
-            }),
-            inlay_hint: Some(InlayHintClientCapabilities {
-                ..Default::default()
-            }),
-            code_action: Some(CodeActionClientCapabilities {
-                data_support: Some(true),
-                resolve_support: Some(CodeActionCapabilityResolveSupport {
-                    properties: vec!["edit".to_string()],
-                }),
-                code_action_literal_support: Some(CodeActionLiteralSupport {
-                    code_action_kind: CodeActionKindLiteralSupport {
-                        value_set: vec![
-                            CodeActionKind::EMPTY.as_str().to_string(),
-                            CodeActionKind::QUICKFIX.as_str().to_string(),
-                            CodeActionKind::REFACTOR.as_str().to_string(),
-                            CodeActionKind::REFACTOR_EXTRACT.as_str().to_string(),
-                            CodeActionKind::REFACTOR_INLINE.as_str().to_string(),
-                            CodeActionKind::REFACTOR_REWRITE.as_str().to_string(),
-                            CodeActionKind::SOURCE.as_str().to_string(),
-                            CodeActionKind::SOURCE_ORGANIZE_IMPORTS
-                                .as_str()
-                                .to_string(),
-                            "quickassist".to_string(),
-                            "source.fixAll".to_string(),
-                        ],
-                    },
-                }),
-                ..Default::default()
-            }),
-            semantic_tokens: Some(SemanticTokensClientCapabilities {
-                ..Default::default()
-            }),
-            type_definition: Some(GotoCapability {
-                // Note: This is explicitly specified rather than left to the Default because
-                // of a bug in lsp-types https://github.com/gluon-lang/lsp-types/pull/244
-                link_support: Some(false),
-                ..Default::default()
-            }),
-            definition: Some(GotoCapability {
-                ..Default::default()
-            }),
-            publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
-                ..Default::default()
-            }),
-            inline_completion: Some(InlineCompletionClientCapabilities {
-                ..Default::default()
-            }),
-            call_hierarchy: Some(CallHierarchyClientCapabilities {
-                dynamic_registration: Some(true),
-            }),
-            document_symbol: Some(DocumentSymbolClientCapabilities {
-                hierarchical_document_symbol_support: Some(true),
-                ..Default::default()
-            }),
-            folding_range: Some(FoldingRangeClientCapabilities {
-                dynamic_registration: Some(false),
-                range_limit: None,
-                line_folding_only: Some(false),
-                folding_range_kind: None,
-                folding_range: None,
-            }),
-            ..Default::default()
-        }),
-        window: Some(WindowClientCapabilities {
-            work_done_progress: Some(true),
-            show_message: Some(ShowMessageRequestClientCapabilities {
-                message_action_item: Some(MessageActionItemCapabilities {
-                    additional_properties_support: Some(true),
-                }),
-            }),
-            ..Default::default()
-        }),
-        workspace: Some(WorkspaceClientCapabilities {
-            symbol: Some(WorkspaceSymbolClientCapabilities {
-                ..Default::default()
-            }),
-            configuration: Some(false),
-            workspace_folders: Some(true),
-            ..Default::default()
-        }),
-        experimental: Some(experimental.into()),
-        ..Default::default()
-    }
 }

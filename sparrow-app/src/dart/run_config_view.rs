@@ -233,6 +233,17 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     if let Some(mut draft) = add.drafts.with_untracked(|v| {
                         v.get(add.selected.get_untracked()).cloned()
                     }) {
+                        if !draft.original.is_dart_flutter() {
+                            draft.original.ty = Some("flutter".into());
+                            draft.original.program =
+                                crate::dart::sdk::find_flutter_binary(
+                                    add.window.workspace.path.as_deref(),
+                                )
+                                .unwrap_or_else(|| "flutter".into())
+                                .display()
+                                .to_string();
+                            draft.entry = "lib/main.dart".into();
+                        }
                         draft.name = "New configuration".into();
                         draft.original.dap_id = Default::default();
                         if draft.flutter() {
@@ -325,8 +336,13 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         let active = d.selected;
                         let name = d.fields[0];
                         stack((
-                            svg(|| include_str!("../../../icons/dart-flutter/flutter_logo.svg").to_string())
-                                .style(|s| s.size(16.0, 16.0)),
+                            svg(|| {
+                                include_str!(
+                                    "../../../icons/dart-flutter/flutter_logo.svg"
+                                )
+                                .to_string()
+                            })
+                            .style(|s| s.size(16.0, 16.0)),
                             label(move || {
                                 if active.get() == i {
                                     name.get()

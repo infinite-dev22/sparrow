@@ -46,7 +46,7 @@ impl PanelKind {
             PanelKind::Terminal => SparrowIcons::TERMINAL,
             PanelKind::FileExplorer => SparrowIcons::FILE_EXPLORER,
             PanelKind::SourceControl => SparrowIcons::SCM,
-            PanelKind::Plugin => SparrowIcons::EXTENSIONS,
+            PanelKind::Plugin => SparrowIcons::SETTINGS,
             PanelKind::Search => SparrowIcons::SEARCH,
             PanelKind::Problem => SparrowIcons::PROBLEM,
             PanelKind::Debug => SparrowIcons::DEBUG,

@@ -1,64 +1,53 @@
-<h1 align="center">
-  <a href="https://sparrow.dev" target="_blank">
-  <img src="extra/images/logo.png" width=200 height=200/><br>
-  Sparrow
-  </a>
-</h1>
+# Sparrow
 
-<h4 align="center">Lightning-fast And Powerful Code Editor</h4>
+Sparrow is a native **Dart and Flutter IDE**, implemented in Rust with Floem.
 
-<div align="center">
-  <a href="https://github.com/infinite-dev22/sparrow/actions/workflows/ci.yml" target="_blank">
-    <img src="https://github.com/infinite-dev22/sparrow/actions/workflows/ci.yml/badge.svg" />
-  </a>
-  <a href="https://discord.gg/n8tGJ6Rn6D" target="_blank">
-    <img src="https://img.shields.io/discord/946858761413328946?logo=discord" />
-  </a>
-  <a href="https://docs.sparrow.dev" target="_blank">
-      <img src="https://img.shields.io/static/v1?label=Docs&message=docs.sparrow.dev&color=blue" alt="Sparrow Docs">
-  </a>
-</div>
-<br/>
+Language intelligence comes from the Dart SDK: analysis, completion, navigation,
+rename and code actions. Flutter tooling covers project creation, asset paths,
+run/debug configurations, device discovery, testing and DevTools. The IDE also
+provides an integrated terminal, Git history, pull requests, notifications and
+local appearance themes.
 
+Dart is the supported application language. Flutter project configuration,
+localization, documentation, shaders, web resources and generated platform/build
+files remain editable, with syntax coloring where available. Other programming
+languages open as plain text; executable language plugins and the inherited
+plugin marketplace are not supported.
 
-Sparrow (IPA: /læps/) is written in pure Rust, with a UI in [Floem](https://github.com/infinite-dev22/floem). It is designed with [Rope Science](https://xi-editor.io/docs/rope_science_00.html) from the [Xi-Editor](https://github.com/xi-editor/xi-editor), enabling lightning-fast computation, and leverages [wgpu](https://github.com/gfx-rs/wgpu) for rendering. More information about the features of Sparrow can be found on the [main website](https://sparrow.dev) and user documentation can be found on [GitBook](https://docs.sparrow.dev/).
+## Getting started
 
-![](https://github.com/infinite-dev22/sparrow/blob/master/extra/images/screenshot.png?raw=true)
+Install the Dart SDK or Flutter SDK and open a local Dart/Flutter project.
+Configure SDK paths in Settings if they cannot be found automatically. Use
+`pubspec.yaml` for package/project metadata and the run-configuration selector to
+configure Dart/Flutter SDK targets. The integrated terminal remains available
+for package commands and auxiliary platform builds.
 
-## Features
+## Guides
 
-* Built-in LSP ([Language Server Protocol](https://microsoft.github.io/language-server-protocol/)) support to give you intelligent code features such as: completion, diagnostics and code actions
-* Modal editing support as first class citizen (Vim-like, and toggleable)
-* Built-in remote development support inspired by [VSCode Remote Development](https://code.visualstudio.com/docs/remote/remote-overview). Enjoy the benefits of a "local" experience, and seamlessly gain the full power of a remote system. We also have [Lapdev](https://lap.dev/) which can help manage your remote dev environments. 
-* Plugins can be written in programming languages that can compile to the [WASI](https://wasi.dev/) format (C, Rust, [AssemblyScript](https://www.assemblyscript.org/))
-* Built-in terminal, so you can execute commands in your workspace, without leaving Sparrow.
-* [Flutter testing](docs/flutter-testing.md): gutter Run/Debug actions, live test results, assertion comparisons, and failed-test reruns.
+- [Build from source](docs/building-from-source.md)
+- [Flutter testing](docs/flutter-testing.md)
+- [Project creation and assets](docs/flutter-projects-and-assets.md)
+- [DevTools](docs/flutter-devtools.md)
+- [Run/Debug Configurations](docs/run-debug-configurations.md)
+- [Settings](docs/settings-dialog.md)
+- [Android Studio appearance and visual verification](docs/android-studio-appearance.md)
+- [Dart/Flutter scope and upstream cleanup](docs/dart-flutter-scope.md)
 
-Flutter project creation and asset path completion are described in the [project and assets guide](docs/flutter-projects-and-assets.md).
+## Development
 
-Flutter memory and network profiling is available through the [DevTools integration](docs/flutter-devtools.md).
+```sh
+cargo build --workspace --locked
+cargo test --workspace --lib --locked
+```
 
-The [Run/Debug Configurations dialog](docs/run-debug-configurations.md) supports Flutter entrypoints, flavors, environment variables, before-launch tasks, and local or project storage.
+Rust is the implementation/build language of the IDE, not an additional language
+service supplied by Sparrow. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-[Settings](docs/settings-dialog.md) opens as a searchable modal with category navigation and Apply/Cancel controls.
+## Provenance and license
 
-## Installation
-
-You can find pre-built releases for Windows, Linux and macOS [here](https://github.com/infinite-dev22/sparrow/releases), or [installing with a package manager](docs/installing-with-package-manager.md).
-If you'd like to compile from source, you can find the [guide](docs/building-from-source.md).
-
-## Contributing
-
-Guidelines for contributing to Sparrow can be found in [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-## Feedback & Contact
-
-The most popular place for Sparrow developers and users is on the [Discord server](https://discord.gg/n8tGJ6Rn6D).
-
-Or, join the discussion on [Reddit](https://www.reddit.com/r/sparrow/) where we are just getting started.
-
-There is also a [Matrix Space](https://matrix.to/#/#sparrow-editor:matrix.org), which is linked to the content from the Discord server.
-
-## License
-
-Sparrow is released under the Apache License Version 2, which is an open source license. You may contribute to this project, or use the code as you please as long as you adhere to its conditions. You can find a copy of the license text here: [`LICENSE`](LICENSE).
+The editor infrastructure originated in Lapce. Sparrow continues to use
+third-party components including Floem and the Xi rope text engine. Their real
+package names, source URLs, copyright notices and licenses are preserved.
+[Inherited historical documentation](docs/history/upstream-changelog.md) is
+separate from current feature documentation. Sparrow is distributed under the
+[Apache-2.0 license](LICENSE); individual dependencies retain their own licenses.

@@ -286,7 +286,7 @@ pub enum SparrowWorkbenchCommand {
     OpenThemesDirectory,
 
     #[strum(serialize = "open_plugins_directory")]
-    #[strum(message = "Open Plugins Directory")]
+    #[strum(message = "Open Local Themes Directory")]
     OpenPluginsDirectory,
 
     #[strum(serialize = "open_grammars_directory")]
@@ -458,7 +458,7 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "toggle_source_control_focus")]
     ToggleSourceControlFocus,
 
-    #[strum(message = "Toggle Plugin Focus")]
+    #[strum(message = "Toggle Themes Focus")]
     #[strum(serialize = "toggle_plugin_focus")]
     TogglePluginFocus,
 
@@ -533,7 +533,7 @@ pub enum SparrowWorkbenchCommand {
     InstallTheme,
 
     #[strum(serialize = "change_file_language")]
-    #[strum(message = "Change current file language")]
+    #[strum(message = "Change file syntax (Dart / Flutter project files)")]
     ChangeFileLanguage,
 
     #[strum(serialize = "change_file_line_ending")]

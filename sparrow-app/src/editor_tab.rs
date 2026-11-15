@@ -380,17 +380,9 @@ impl EditorTabChild {
                     .installed
                     .with(|volts| volts.get(&id).cloned())
                     .map(|volt| volt.meta.with(|m| m.display_name.clone()))
-                    .or_else(|| {
-                        plugin.available.volts.with(|volts| {
-                            let volt = volts.get(&id);
-                            volt.map(|volt| {
-                                volt.info.with(|m| m.display_name.clone())
-                            })
-                        })
-                    })
                     .unwrap_or_else(|| id.name.clone());
                 EditorTabChildViewInfo {
-                    icon: config.ui_svg(SparrowIcons::EXTENSIONS),
+                    icon: config.ui_svg(SparrowIcons::SETTINGS),
                     color: Some(config.color(SparrowColor::SPARROW_ICON_ACTIVE)),
                     name: display_name,
                     path: None,
