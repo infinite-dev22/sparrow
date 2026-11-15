@@ -41,6 +41,13 @@ pub fn discover_defaults(root: &Path) -> Vec<RunDebugConfig> {
     }).into_iter().collect()
 }
 
+pub fn is_flutter_run(config: &RunDebugConfig) -> bool {
+    config.debug_command.is_none() && Path::new(&config.program).file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("flutter"))
+        && config.args.as_ref().and_then(|args| args.first())
+            .is_some_and(|arg| matches!(arg.as_str(), "run" | "attach"))
+}
+
 pub fn launch_directory(root: &Path, configured: Option<&str>) -> PathBuf {
     let Some(configured) = configured else {
         return root.to_path_buf();
@@ -572,5 +579,24 @@ mod toolbar_tests {
                 flutter
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod flutter_session_tests {
+    use super::*;
+    #[test]
+    fn cli_sessions_exclude_tests_tools_and_adapter_owned_processes() {
+        let mut config: RunDebugConfig = serde_json::from_value(serde_json::json!({"name":"app","program":"/sdk/flutter","args":["run","--target","lib/main.dart"]})).unwrap();
+        assert!(is_flutter_run(&config));
+        config.debug_command = Some(vec!["dart".into()]);
+        assert!(!is_flutter_run(&config));
+        config.debug_command = None;
+        config.args = Some(vec!["test".into()]);
+        assert!(!is_flutter_run(&config));
+        config.args = Some(vec!["attach".into()]);
+        assert!(is_flutter_run(&config));
+        config.program = "dart".into();
+        assert!(!is_flutter_run(&config));
     }
 }

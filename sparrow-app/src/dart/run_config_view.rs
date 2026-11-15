@@ -1,3 +1,4 @@
+use crate::text_input::modal_text_input as text_input;
 use super::run_config::{self, Draft};
 use crate::{
     app::clickable_icon,
@@ -16,7 +17,6 @@ use floem::{
     style::CursorStyle,
     views::{
         Decorators, container, dyn_stack, empty, label, scroll, stack, svg,
-        text_input,
     },
 };
 use std::rc::Rc;

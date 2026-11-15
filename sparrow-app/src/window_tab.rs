@@ -107,6 +107,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Focus {
     Workbench,
+    Modal,
     Palette,
     CodeAction,
     Rename,
@@ -582,7 +583,6 @@ impl WindowTabData {
         {
             let notification = create_signal_from_channel(term_notification_rx);
             let terminal = terminal.clone();
-            let flutter_inspector = flutter_inspector.clone();
             cx.create_effect(move |_| {
                 notification.with(|notification| {
                     if let Some(notification) = notification.as_ref() {
@@ -602,8 +602,9 @@ impl WindowTabData {
                                     flutter_hot_reload.state.get_untracked()
                                         == crate::dart::FlutterRunState::Running;
                                 if running && tracked == Some(*term_id) {
-                                    flutter_inspector
-                                        .on_vm_url(*term_id, url.to_string());
+                                    flutter_hot_reload.ws_uri.set(Some(url.to_string()));
+                                    // Inspector connection is explicit; discovering a VM is not an inspection request.
+
                                 }
                             }
                         }
@@ -686,6 +687,43 @@ impl WindowTabData {
             run_config_modal_visible,
         };
 
+        {
+            let settings = window_tab_data.settings_modal_visible;
+            let run = window_tab_data.run_config_modal_visible;
+            let wizard = window_tab_data.flutter_project.active;
+            let focus = window_tab_data.common.focus;
+            let root = window_tab_data.common.view_id;
+            cx.create_effect(move |_| {
+                if settings.get() || run.get() || wizard.get() {
+                    focus.set(Focus::Modal);
+                } else if focus.get_untracked() == Focus::Modal {
+                    focus.set(Focus::Workbench);
+                    root.get_untracked().request_focus();
+                }
+            });
+        }
+
+        // Terminal data owns the Flutter run session, independent of its view.
+        {
+            let terminal = window_tab_data.terminal.clone();
+            let flutter = window_tab_data.flutter_hot_reload.clone();
+            cx.create_effect(move |_| {
+                let processes = terminal.run_debug_process(true);
+                let session = processes.iter().rev().find(|(_, process)| {
+                    process.mode == RunDebugMode::Run && !process.stopped
+                        && (!process.is_prelaunch || process.config.prelaunch.is_none())
+                        && crate::dart::run_config::is_flutter_run(&process.config)
+                });
+                if let Some((id, _)) = session {
+                    flutter.active_term.set(Some(*id));
+                    flutter.state.set(crate::dart::FlutterRunState::Running);
+                } else if flutter.active_term.get_untracked().is_some() {
+                    flutter.state.set(crate::dart::FlutterRunState::Idle);
+                    flutter.ws_uri.set(None);
+                }
+            });
+        }
+
         // Only a run-state transition opens the console. Device discovery and
         // manual panel toggles must not steal editor space in an idle workspace.
         {
@@ -694,9 +732,7 @@ impl WindowTabData {
             cx.create_effect(move |previous: Option<bool>| {
                 let running = state.get() == crate::dart::FlutterRunState::Running;
                 floem::reactive::untrack(|| {
-                    if running && previous != Some(true) {
-                        panel.show_panel(&PanelKind::FlutterRun);
-                    } else if previous.is_none() && !running {
+                    if previous.is_none() && !running {
                         if let Some((PanelKind::FlutterRun, true)) = panel
                             .active_panel_at_position(
                                 &crate::panel::position::PanelPosition::BottomLeft,
@@ -1031,12 +1067,14 @@ impl WindowTabData {
         // ── Flutter inspector: connect when VM Service URL is received from daemon ──
         {
             let inspector = flutter_inspector.clone();
+            let inspector_panel = window_tab_data.panel.clone();
             let hot_reload = flutter_hot_reload.clone();
             cx.create_effect(move |_| {
                 if let Some(ws_uri) = hot_reload.ws_uri.get() {
                     let running = hot_reload.state.get()
                         == crate::dart::FlutterRunState::Running;
-                    if running && !ws_uri.is_empty() {
+                    let _ = inspector_panel.styles.get();
+                    if running && !ws_uri.is_empty() && inspector_panel.is_panel_visible(&PanelKind::FlutterInspector) {
                         let term_id = hot_reload
                             .active_term
                             .get_untracked()
@@ -2025,18 +2063,12 @@ impl WindowTabData {
                 let mode = if cmd == RunSelectedConfiguration { RunDebugMode::Run } else { RunDebugMode::Debug };
                 self.launch_selected_configuration(mode);
             }
-            FlutterRun => {
-                if self.flutter_hot_reload.is_flutter_project() {
-                    self.flutter_hot_reload.launch();
-                } else {
-                    self.launch_selected_configuration(RunDebugMode::Run);
-                }
-            }
+            FlutterRun => self.launch_selected_configuration(RunDebugMode::Run),
             FlutterHotReload => {
-                self.flutter_hot_reload.hot_reload();
+                self.reload_flutter_after_saving(false);
             }
             FlutterHotRestart => {
-                self.flutter_hot_reload.hot_restart();
+                self.reload_flutter_after_saving(true);
             }
             FlutterStop => {
                 self.flutter_hot_reload.stop();
@@ -2871,6 +2903,7 @@ impl WindowTabData {
     pub fn key_down<'a>(&self, event: impl Into<EventRef<'a>> + Copy) -> bool {
         if self.settings_modal_visible.get_untracked()
             || self.run_config_modal_visible.get_untracked()
+            || self.flutter_project.active.get_untracked()
         {
             return false;
         }
@@ -3305,6 +3338,11 @@ impl WindowTabData {
 
     pub fn show_panel(&self, kind: PanelKind) {
         let kind = kind.canonical();
+        if kind == PanelKind::FlutterInspector {
+            if let (Some(term), Some(uri)) = (self.flutter_hot_reload.active_term.get_untracked(), self.flutter_hot_reload.ws_uri.get_untracked()) {
+                self.flutter_inspector.on_vm_url(term, uri);
+            }
+        }
         if kind == PanelKind::Terminal
             && self
                 .terminal
@@ -3334,11 +3372,42 @@ impl WindowTabData {
         self.common.focus.set(Focus::Panel(kind));
     }
 
+    fn reload_flutter_after_saving(&self, restart: bool) {
+        let mut paths = HashSet::new();
+        let mut dirty = Vec::new();
+        self.main_split.editors.with_editors_untracked(|editors| {
+            for editor in editors.values() {
+                let doc = editor.doc();
+                if !doc.is_pristine() {
+                    if let Some(path) = doc.content.with_untracked(|content| content.path().cloned()) {
+                        if paths.insert(path) { dirty.push(editor.clone()); }
+                    }
+                }
+            }
+        });
+        let flutter = self.flutter_hot_reload.clone();
+        if dirty.is_empty() {
+            if restart { flutter.hot_restart(); } else { flutter.hot_reload(); }
+            return;
+        }
+        let remaining = Rc::new(std::cell::Cell::new(dirty.len()));
+        for editor in dirty {
+            let remaining = remaining.clone();
+            let flutter = flutter.clone();
+            editor.save(false, move || {
+                remaining.set(remaining.get() - 1);
+                if remaining.get() == 0 {
+                    if restart { flutter.hot_restart(); } else { flutter.hot_reload(); }
+                }
+            });
+        }
+    }
+
     pub fn launch_selected_configuration(&self, mode: RunDebugMode) {
         let selected = self.active_run_config_idx.get_untracked();
         if let Some(config) = self.run_configs.with_untracked(|configs| configs.get(selected).cloned()) {
             if let Some((term_id, _)) = self.terminal.run_debug_process(false).into_iter().find(|(_, process)| !process.stopped && process.mode == mode && process.config.name == config.name) {
-                self.show_panel(PanelKind::Terminal);
+                self.show_panel(if mode == RunDebugMode::Run && crate::dart::run_config::is_flutter_run(&config) { PanelKind::FlutterRun } else { PanelKind::Terminal });
                 self.terminal.focus_terminal(term_id);
                 return;
             }
@@ -3429,6 +3498,9 @@ impl WindowTabData {
             );
             new_terminal_tab.active_terminal(false).unwrap().term_id
         };
+        if *mode == RunDebugMode::Run && crate::dart::run_config::is_flutter_run(config) {
+            self.flutter_hot_reload.active_term.set(Some(term_id));
+        }
         if config.flutter_options.focus_tool_window {
             self.common.focus.set(Focus::Panel(PanelKind::Terminal));
             self.terminal.focus_terminal(term_id);
@@ -3442,12 +3514,13 @@ impl WindowTabData {
             );
         });
 
-        if (config.flutter_options.activate_tool_window
-            || config.flutter_options.focus_tool_window)
-            && !self.panel.is_panel_visible(&PanelKind::Terminal)
-        {
-            self.panel.show_panel(&PanelKind::Terminal);
+        if config.flutter_options.activate_tool_window || config.flutter_options.focus_tool_window {
+            let panel = if *mode == RunDebugMode::Run && crate::dart::run_config::is_flutter_run(config) {
+                PanelKind::FlutterRun
+            } else { PanelKind::Terminal };
+            self.panel.show_panel(&panel);
         }
+
     }
 
     pub fn open_paths(&self, paths: &[PathObject]) {

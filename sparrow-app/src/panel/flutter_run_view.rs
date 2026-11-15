@@ -3,12 +3,11 @@
 use std::rc::Rc;
 
 use floem::{
-    View,
-    reactive::SignalGet,
+    View, IntoView,
+    reactive::{SignalGet, SignalUpdate},
     style::CursorStyle,
     views::{
-        Decorators, empty, label, scroll, stack, virtual_stack,
-        VirtualVector,
+        Decorators, dyn_container, empty, label, stack,
     },
 };
 
@@ -29,16 +28,30 @@ pub fn flutter_run_panel(
     let devtools_window = window_tab_data.clone();
     let hot_reload = window_tab_data.flutter_hot_reload.clone();
     let config = window_tab_data.common.config;
-    let ui_line_height = window_tab_data.common.ui_line_height;
-    let internal_command = window_tab_data.common.internal_command;
-    let workspace = window_tab_data.workspace.clone();
 
-    let logs = hot_reload.run_logs;
     let state = hot_reload.state;
 
     let run_name = window_tab_data.run_configs;
     let run_index = window_tab_data.active_run_config_idx;
     let device = hot_reload.selected_device;
+    let console_window = window_tab_data.clone();
+    let tracked = hot_reload.active_term;
+    let console = dyn_container(move || tracked.get(), move |id| {
+        let window = console_window.clone();
+        if let Some(terminal) = id.and_then(|id| window.terminal.get_terminal(&id)) {
+            let panel = window.terminal.clone();
+            let focus = window.common.focus;
+            let id = terminal.term_id;
+            crate::terminal::view::terminal_view(id, terminal.raw.read_only(),
+                terminal.mode.read_only(), terminal.run_debug.read_only(), panel.clone(),
+                terminal.launch_error, window.common.internal_command, window.workspace.clone())
+                .on_event_cont(floem::event::EventListener::PointerDown, move |_| {
+                    panel.focus_terminal(id);
+                    focus.set(crate::window_tab::Focus::Panel(super::kind::PanelKind::Terminal));
+                }).style(|s| s.size_full()).into_any()
+        } else { label(|| "Run a Flutter configuration to start a session.")
+            .style(|s| s.padding(12.0)).into_any() }
+    }).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     stack((
         stack((
             label(|| "Run").style(|s| s.margin_horiz(12.0).font_bold()),
@@ -54,7 +67,7 @@ pub fn flutter_run_panel(
                 || SparrowIcons::FLUTTER_HOT_RELOAD,
                 {
                     let hr = hot_reload.clone();
-                    move || hr.hot_reload()
+                    move || hr.common.workbench_command.send(crate::command::SparrowWorkbenchCommand::FlutterHotReload)
                 },
                 || false,
                 move || state.get() != FlutterRunState::Running,
@@ -65,7 +78,7 @@ pub fn flutter_run_panel(
                 || SparrowIcons::FLUTTER_HOT_RESTART,
                 {
                     let hr = hot_reload.clone();
-                    move || hr.hot_restart()
+                    move || hr.common.workbench_command.send(crate::command::SparrowWorkbenchCommand::FlutterHotRestart)
                 },
                 || false,
                 move || state.get() != FlutterRunState::Running,
@@ -129,19 +142,8 @@ pub fn flutter_run_panel(
                 .border_color(c.color(SparrowColor::SPARROW_BORDER))
         }),
 
-        // Log viewer with clickable file paths
-        scroll(
-            virtual_stack(
-                move || LogList::new(logs.get()),
-                move |(i, line)| (*i, line.clone()),
-                move |(_, line)| {
-                    log_line_row(line, config, internal_command, workspace.path.clone())
-                },
-            )
-            .item_size_fixed(move || ui_line_height.get())
-            .style(|s| s.absolute().flex_col().min_width_full()),
-        )
-        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full()),
+        console,
+
     ))
     .style(|s| s.absolute().size_full().flex_col())
     .debug_name("Flutter Run Panel")
@@ -260,30 +262,6 @@ fn resolve_package_path(
         .join(relative)
         .ok()?;
     uri.to_file_path().ok()
-}
-
-struct LogList {
-    items: Vec<(usize, String)>,
-}
-
-impl LogList {
-    fn new(logs: im::Vector<String>) -> Self {
-        Self {
-            items: logs.into_iter().enumerate().collect(),
-        }
-    }
-}
-
-impl VirtualVector<(usize, String)> for LogList {
-    fn total_len(&self) -> usize {
-        self.items.len()
-    }
-
-    fn slice(&mut self, range: std::ops::Range<usize>) -> impl Iterator<Item = (usize, String)> {
-        let start = range.start.min(self.items.len());
-        let end = range.end.min(self.items.len());
-        self.items[start..end].iter().cloned()
-    }
 }
 
 #[cfg(test)]

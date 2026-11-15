@@ -1,4 +1,5 @@
 //! Reference-style modal settings with deferred, validated edits.
+use crate::text_input::modal_text_input as text_input;
 use super::{SettingsData, SettingsItem, SettingsValue};
 use crate::{
     app::{clickable_icon, tooltip_label},
@@ -14,7 +15,6 @@ use floem::{
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::{
         Decorators, container, dyn_stack, empty, label, scroll, stack, svg,
-        text_input,
     },
 };
 use std::{collections::BTreeMap, rc::Rc};
@@ -275,7 +275,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             query.set(String::new());
             error.set(String::new());
             epoch.update(|n| *n += 1);
-            search_id.request_focus();
+            floem::action::exec_after(std::time::Duration::from_millis(30), move |_| {
+                if visible.get_untracked() { search_id.request_focus(); }
+            });
         }
     });
     let all = cx.create_rw_signal(Vec::<SettingsItem>::new());

@@ -253,7 +253,7 @@ impl TerminalPanelData {
                 } else {
                     let active = info.active.min(info.tabs.len().saturating_sub(1));
                     if !info.tabs.is_empty() {
-                        info.tabs.remove(active);
+                        close_tab = Some(info.tabs.remove(active).1.terminals.get_untracked());
                     }
                 }
                 let new_active = info.active.min(info.tabs.len().saturating_sub(1));
@@ -362,7 +362,8 @@ impl TerminalPanelData {
     }
 
     pub fn close_terminal(&self, term_id: &TermId) {
-        if let Some((_, tab, index, _)) = self.get_terminal_in_tab(term_id) {
+        if let Some((_, tab, index, terminal)) = self.get_terminal_in_tab(term_id) {
+            terminal.stop();
             let active = tab.active.get_untracked();
             let len = tab
                 .terminals

@@ -1,27 +1,21 @@
 //! Flutter `flutter run` integration — hot reload / restart / stop.
 //!
-//! When `launch` runs, we create a terminal whose process is
-//! `flutter run` (wired through the existing `RunDebugProcess`
-//! machinery so it shows up in the debug panel and terminal tabs).
-//! Subsequent reloads send `r` (or `R` for restart) directly to that
-//! terminal's stdin — Flutter's CLI is in raw mode, so single chars
-//! are keystrokes.
+//! Selected run configurations create one tracked terminal-backed CLI session.
+//! Reload and restart write Flutter's interactive commands to that session;
+//! device discovery uses a separate daemon and does not launch applications.
 
-use std::{rc::Rc, time::Instant};
+use std::rc::Rc;
 
 use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith};
 use serde::Deserialize;
 use sparrow_rpc::{
-    dap_types::{ConfigSource, RunDebugConfig},
     terminal::TermId,
 };
 
 use super::daemon::{DaemonNotification, FlutterDaemonService};
 use crate::{
-    debug::{RunDebugMode, RunDebugProcess},
-    panel::kind::PanelKind,
     terminal::panel::TerminalPanelData,
-    window_tab::{CommonData, Focus},
+    window_tab::CommonData,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -269,6 +263,14 @@ impl FlutterHotReloadData {
 
     pub fn clear_logs(&self) {
         self.run_logs.set(im::Vector::new());
+        if let Some(terminal) = self.active_term.get_untracked().and_then(|id| self.terminal.get_terminal(&id)) {
+            use alacritty_terminal::vte::ansi::{Handler, ClearMode};
+            let raw = terminal.raw.get_untracked();
+            let mut raw = raw.write();
+            raw.term.clear_screen(ClearMode::All);
+            raw.term.clear_screen(ClearMode::Saved);
+            self.common.view_id.get_untracked().request_paint();
+        }
     }
 
     /// True when the manifest identifies a Flutter project. Plain Dart
@@ -403,114 +405,18 @@ impl FlutterHotReloadData {
         });
     }
 
-    /// Start `flutter run` in a new terminal (or reuse the existing
-    /// stopped one, so relaunch is instant).
-    pub fn launch(&self) {
-        if self.state.get_untracked() == FlutterRunState::Running {
-            return;
-        }
-
-        let cwd = self
-            .common
-            .workspace
-            .path
-            .as_ref()
-            .and_then(|p| p.to_str().map(|s| s.to_string()));
-
-        // Fetch device ID if one is selected
-        let device_id = self.selected_device.get_untracked().map(|d| d.id);
-
-        // If daemon is active and we have a workspace path, also dispatch start_app via daemon
-        if let Some(daemon) = self.daemon.get_untracked() {
-            if daemon.is_running() {
-                if let Some(ref path) = self.common.workspace.path {
-                    daemon.start_app(
-                        path.clone(),
-                        device_id.clone(),
-                        Some("debug".to_string()),
-                        None,
-                        None,
-                    );
-                }
-            }
-        }
-
-        // Reuse the existing terminal if it's still alive but stopped.
-        if let Some(term_id) = self.active_term.get_untracked() {
-            if let Some(terminal) = self.terminal.get_terminal(&term_id) {
-                let stopped = terminal.run_debug.with_untracked(|r| {
-                    r.as_ref().map(|p| p.stopped).unwrap_or(true)
-                });
-                if stopped {
-                    // Restart in place — same terminal tab, fresh process.
-                    terminal.new_process(Some(RunDebugProcess {
-                        mode: RunDebugMode::Run,
-                        config: flutter_config(cwd, device_id),
-                        stopped: false,
-                        created: Instant::now(),
-                        is_prelaunch: false,
-                    }));
-                    self.state.set(FlutterRunState::Running);
-                    self.message.set(None);
-                    self.common
-                        .focus
-                        .set(Focus::Panel(PanelKind::Terminal));
-                    return;
-                }
-            }
-        }
-
-        // Fresh launch — new terminal tab.
-        let process = RunDebugProcess {
-            mode: RunDebugMode::Run,
-            config: flutter_config(cwd, device_id),
-            stopped: false,
-            created: Instant::now(),
-            is_prelaunch: false,
-        };
-        let tab = self.terminal.new_tab_run_debug(Some(process), None);
-        match tab.active_terminal(false).map(|t| t.term_id) {
-            Some(term_id) => {
-                self.active_term.set(Some(term_id));
-                self.state.set(FlutterRunState::Running);
-                self.message.set(None);
-                self.common.focus.set(Focus::Panel(PanelKind::Terminal));
-            }
-            None => {
-                self.state.set(FlutterRunState::Error);
-                self.message
-                    .set(Some("Failed to create terminal for flutter".to_string()));
-            }
-        }
-    }
-
-    /// Send hot reload command to daemon or active terminal.
+    /// Reload/restart never launches another process and only addresses the
+    /// currently owned CLI session. Device discovery remains daemon-owned.
     pub fn hot_reload(&self) {
-        if let Some(daemon) = self.daemon.get_untracked() {
-            if let Some(app_id) = self.active_app_id.get_untracked() {
-                daemon.restart_app(&app_id, false);
-            }
-        }
-
-        if let Some(term_id) = self.active_term.get_untracked() {
-            self.common.proxy.terminal_write(term_id, "r".to_string());
-        } else if self.active_app_id.get_untracked().is_none() {
-            self.launch();
+        if self.state.get_untracked() != FlutterRunState::Running { return; }
+        if let Some(id) = self.active_term.get_untracked() {
+            self.common.proxy.terminal_write(id, "r".into());
         }
     }
-
-    /// Send hot restart command to daemon or active terminal.
     pub fn hot_restart(&self) {
-        if let Some(daemon) = self.daemon.get_untracked() {
-            if let Some(app_id) = self.active_app_id.get_untracked() {
-                daemon.restart_app(&app_id, true);
-            }
-        }
-
-        if let Some(term_id) = self.active_term.get_untracked() {
-            self.common.proxy.terminal_write(term_id, "R".to_string());
-        } else if self.active_app_id.get_untracked().is_none() {
-            self.launch();
+        if self.state.get_untracked() != FlutterRunState::Running { return; }
+        if let Some(id) = self.active_term.get_untracked() {
+            self.common.proxy.terminal_write(id, "R".into());
         }
     }
 
@@ -526,45 +432,13 @@ impl FlutterHotReloadData {
         self.fetch_devices();
     }
 
-    /// Send stop command to daemon or active terminal.
     pub fn stop(&self) {
-        if let Some(daemon) = self.daemon.get_untracked() {
-            if let Some(app_id) = self.active_app_id.get_untracked() {
-                daemon.stop_app(&app_id);
-            }
+        if self.state.get_untracked() != FlutterRunState::Running { return; }
+        if let Some(id) = self.active_term.get_untracked() {
+            // Closing the owned PTY also handles build failures/hung startups,
+            // where Flutter is not yet accepting its interactive q command.
+            self.terminal.stop_run_debug(id);
         }
-
-        if let Some(term_id) = self.active_term.get_untracked() {
-            self.common.proxy.terminal_write(term_id, "q".to_string());
-        }
-    }
-}
-
-fn flutter_config(cwd: Option<String>, device_id: Option<String>) -> RunDebugConfig {
-    let mut args = vec!["run".to_string()];
-    if let Some(id) = device_id {
-        args.push("-d".to_string());
-        args.push(id);
-    }
-
-    let program = crate::dart::sdk::find_flutter_binary(cwd.as_ref().map(std::path::Path::new))
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| "flutter".to_string());
-
-    RunDebugConfig {
-        ty: None,
-        name: "Flutter Run".to_string(),
-        program,
-        args: Some(args),
-        cwd,
-        env: None,
-        prelaunch: None,
-        flutter_options: Default::default(),
-        debug_adapter: None,
-        debug_command: None,
-        dap_id: Default::default(),
-        tracing_output: false,
-        config_source: ConfigSource::Palette,
     }
 }
 

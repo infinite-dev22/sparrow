@@ -485,12 +485,8 @@ impl TerminalView {
     }
 }
 
-impl Drop for TerminalView {
-    fn drop(&mut self) {
-        self.proxy.terminal_close(self.term_id);
-    }
-}
-
+// Closing a terminal is owned by TerminalPanelData. Recreating/moving a
+// console view must not kill the process that supplies it.
 impl View for TerminalView {
     fn id(&self) -> ViewId {
         self.id

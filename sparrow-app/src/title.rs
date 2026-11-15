@@ -563,7 +563,7 @@ fn right(
             )
             .disabled(move || !is_running())
             .on_click_stop(move |_| {
-                hr.hot_reload();
+                hr.common.workbench_command.send(SparrowWorkbenchCommand::FlutterHotReload);
             })
             .style(move |s| {
                 let config = config.get();
@@ -599,7 +599,7 @@ fn right(
             )
             .disabled(move || !is_running())
             .on_click_stop(move |_| {
-                hr.hot_restart();
+                hr.common.workbench_command.send(SparrowWorkbenchCommand::FlutterHotRestart);
             })
             .style(move |s| {
                 let config = config.get();

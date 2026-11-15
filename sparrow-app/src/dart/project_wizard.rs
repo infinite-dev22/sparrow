@@ -1,8 +1,9 @@
+use crate::text_input::modal_text_input as text_input;
 use crate::{config::color::SparrowColor, window_tab::WindowTabData};
 use floem::{
     View,
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate},
-    views::{Decorators, container, dyn_stack, label, stack, text_input},
+    views::{Decorators, container, dyn_stack, label, stack},
 };
 use std::{path::PathBuf, rc::Rc};
 const PLATFORMS: [&str; 6] = ["android", "ios", "web", "linux", "macos", "windows"];
