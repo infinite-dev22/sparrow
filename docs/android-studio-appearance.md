@@ -13,3 +13,11 @@ This is a reference-matching implementation, not a verified pixel-perfect match.
 ## Idle and running states
 
 At startup, a saved Flutter Run panel is collapsed when no Flutter session is active. Starting a Flutter session opens Run. Merely discovering devices does not open it. Idle toolbar controls use an outlined green Run icon and a dimmed, disabled hot-reload icon; Stop and hot restart appear only while running. Stopping a session preserves its console output instead of discarding or forcibly hiding it. Run remains available through its tool-window stripe.
+
+## Tool-window reference pass
+
+Dart Analysis at the bottom uses a virtualized Description/Location table with severity filters, live counts, source navigation, and an empty state. Side-docked diagnostics keep the existing grouped view. Device Manager uses connected-device and installed-emulator metadata in a Name/SDK/Type table, supports device selection and emulator launch, and displays unavailable metadata as a dash. Its scroll area sits below the headers rather than covering them.
+
+Dart Analysis and Device Manager share title-bar Hide, Move, and maximize controls. Terminal has compact session tabs, a New Terminal button and a Hide action. The reference preset sizes the right column to approximately 466 px at 1920 px width. Active tool stripes use blue, except Project's neutral selection.
+
+The additional screenshots also document Git history, Logcat, Notifications, pull requests, and Running Devices. This pass does not implement those additional services or substitute mock data for them.

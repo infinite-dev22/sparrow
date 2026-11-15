@@ -101,7 +101,6 @@ use crate::{
     window::WindowCommonData,
     workspace::{SparrowWorkspace, SparrowWorkspaceType, WorkspaceInfo},
 };
-use crate::debug::RunDebugConfigs;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Focus {
@@ -199,6 +198,7 @@ pub struct WindowTabData {
     pub call_hierarchy_data: CallHierarchyData,
     pub about_data: AboutData,
     pub alert_data: AlertBoxData,
+    pub settings_modal_visible: RwSignal<bool>,
     pub layout_rect: RwSignal<Rect>,
     pub title_height: RwSignal<f64>,
     pub status_height: RwSignal<f64>,
@@ -607,12 +607,7 @@ impl WindowTabData {
 
         let mut loaded_configs = Vec::new();
         if let Some(workspace_path) = &workspace.path {
-            let run_toml = workspace_path.join(".sparrow").join("run.toml");
-            if let Ok(content) = std::fs::read_to_string(&run_toml) {
-                if let Ok(parsed) = toml::from_str::<RunDebugConfigs>(&content) {
-                    loaded_configs = parsed.configs;
-                }
-            }
+            if let Some(configs) = crate::dart::run_config::load(workspace_path) { loaded_configs = configs; }
         }
         if loaded_configs.is_empty() {
             loaded_configs.push(sparrow_rpc::dap_types::RunDebugConfig {
@@ -623,6 +618,7 @@ impl WindowTabData {
                 cwd: workspace.path.as_ref().map(|p| p.to_string_lossy().to_string()),
                 env: None,
                 prelaunch: None,
+                flutter_options: Default::default(),
                 debug_adapter: None,
                 debug_command: None,
                 dap_id: Default::default(),
@@ -665,6 +661,7 @@ impl WindowTabData {
             },
             about_data,
             alert_data,
+            settings_modal_visible: cx.create_rw_signal(false),
             layout_rect: cx.create_rw_signal(Rect::ZERO),
             title_height,
             status_height,
@@ -1256,7 +1253,7 @@ impl WindowTabData {
 
             // ==== Configuration / Info Files and Folders ====
             OpenSettings => {
-                self.main_split.open_settings();
+                self.settings_modal_visible.set(true);
             }
             OpenSettingsFile => {
                 if let Some(path) = SparrowConfig::settings_file() {
@@ -1968,6 +1965,7 @@ impl WindowTabData {
                             cwd: None,
                             env: None,
                             prelaunch: None,
+                            flutter_options: Default::default(),
                             debug_adapter: None,
                             debug_command: None,
                             dap_id: Default::default(),
@@ -2235,6 +2233,7 @@ impl WindowTabData {
                         cwd,
                         env: None,
                         prelaunch: None,
+                        flutter_options: Default::default(),
                         debug_adapter: None,
                         debug_command: None,
                         dap_id: Default::default(),
@@ -3383,8 +3382,10 @@ impl WindowTabData {
             );
             new_terminal_tab.active_terminal(false).unwrap().term_id
         };
-        self.common.focus.set(Focus::Panel(PanelKind::Terminal));
-        self.terminal.focus_terminal(term_id);
+        if config.flutter_options.focus_tool_window {
+            self.common.focus.set(Focus::Panel(PanelKind::Terminal));
+            self.terminal.focus_terminal(term_id);
+        }
 
         self.terminal.debug.active_term.set(Some(term_id));
         self.terminal.debug.daps.update(|daps| {
@@ -3394,7 +3395,7 @@ impl WindowTabData {
             );
         });
 
-        if !self.panel.is_panel_visible(&PanelKind::Terminal) {
+        if (config.flutter_options.activate_tool_window || config.flutter_options.focus_tool_window) && !self.panel.is_panel_visible(&PanelKind::Terminal) {
             self.panel.show_panel(&PanelKind::Terminal);
         }
     }
@@ -3594,6 +3595,7 @@ impl WindowTabData {
         let available = self.common.workbench_size.get_untracked();
         self.panel.size.update(|size| {
             size.left = 400.0_f64.min((available.width * 0.4).max(150.0));
+            size.right = (self.layout_rect.get_untracked().width() * 0.243).max(250.0);
             size.bottom = (self.layout_rect.get_untracked().height() * 342.0 / 1048.0).max(150.0);
         });
         self.panel.panels.set(crate::panel::data::default_panel_order());
@@ -3751,6 +3753,7 @@ impl WindowTabData {
                 cwd: root.map(|p| p.display().to_string()),
                 env: None,
                 prelaunch: None,
+                flutter_options: Default::default(),
                 debug_adapter: Some(sparrow_rpc::dap_types::RunDebugProgram {
                     program: flutter.display().to_string(),
                     args: Some(vec!["debug-adapter".into(), "--test".into()]),

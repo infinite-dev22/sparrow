@@ -56,7 +56,9 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
     let scroll_size = create_rw_signal(Size::ZERO);
     let workbench_command = window_tab_data.common.workbench_command;
 
+    let hide_panel = window_tab_data.panel.clone();
     stack((
+        label(|| "Terminal").style(|s| s.margin_left(12.0).margin_right(12.0).font_bold()),
         scroll(dyn_stack(
             move || {
                 let tabs = terminal.tab_info.with(|info| info.tabs.clone());
@@ -127,7 +129,7 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                                         ))
                                     }),
                             )
-                            .style(|s| s.padding_horiz(10.0).padding_vert(12.0)),
+                            .style(|s| s.padding_horiz(6.0).padding_vert(3.0)),
                             label(title).style(|s| {
                                 s.min_width(0.0)
                                     .flex_basis(0.0)
@@ -160,7 +162,9 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                             }),
                         ))
                         .style(move |s| {
-                            s.items_center().width(200.0).border_color(
+                            s.items_center().width(140.0).height(24.0).border_radius(4.0)
+                                .apply_if(active_index() == index.get(), |s| s.border(1.0).background(config.get().color(SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND)))
+                                .border_color(
                                 config.get().color(SparrowColor::SPARROW_BORDER),
                             )
                         })
@@ -170,7 +174,7 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                         label(|| "".to_string()).style(move |s| {
                             s.size_pct(100.0, 100.0)
                                 .border_bottom(if active_index() == index.get() {
-                                    2.0
+                                    0.0
                                 } else {
                                     0.0
                                 })
@@ -214,16 +218,9 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
             }
         })
         .style(move |s| {
-            let header_width = header_width.get();
-            let icon_width = icon_width.get();
             s.set(VerticalScrollAsHorizontal, true)
-                .absolute()
-                .max_width(header_width - icon_width)
+                .flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full()
                 .set(Thickness, 3)
-        }),
-        empty().style(move |s| {
-            let size = scroll_size.get();
-            s.size(size.width, size.height).pointer_events_none()
         }),
         container(clickable_icon(
             || SparrowIcons::ADD,
@@ -241,7 +238,8 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
                 icon_width.set(width);
             }
         })
-        .style(|s| s.padding_horiz(10)),
+        .style(|s| s.padding_horiz(4)),
+        clickable_icon(|| SparrowIcons::WINDOW_MINIMIZE, move || hide_panel.hide_panel(&PanelKind::Terminal), || false, || false, || "Hide Terminal", config),
     ))
     .on_resize(move |rect| {
         let size = rect.size();
@@ -261,6 +259,7 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
     .style(move |s| {
         let config = config.get();
         s.width_pct(100.0)
+            .height(32.0).flex_shrink(0.0_f32)
             .items_center()
             .border_bottom(1.0)
             .border_color(config.color(SparrowColor::SPARROW_BORDER))

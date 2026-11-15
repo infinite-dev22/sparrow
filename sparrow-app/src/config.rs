@@ -1000,6 +1000,17 @@ impl SparrowConfig {
         Some(())
     }
 
+    /// Apply a validated settings draft in one atomic write.
+    pub fn update_settings_batch(changes: Vec<(String, String, toml_edit::Value)>) -> Result<(), String> {
+        let path = Self::settings_file().ok_or("Cannot locate the settings file.")?;
+        let contents = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let updated = settings_transaction(&contents, changes)?;
+        let temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap()).map_err(|e| e.to_string())?;
+        std::fs::write(temporary.path(), updated).map_err(|e| e.to_string())?;
+        temporary.persist(&path).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     /// Update the config file with the given edit.
     /// This should be called whenever the configuration is changed, so that it is persisted.
     pub fn update_file(
@@ -1039,5 +1050,38 @@ impl SparrowConfig {
         std::fs::write(path, main_table.to_string().as_bytes()).ok()?;
 
         Some(())
+    }
+}
+fn settings_transaction(contents: &str, changes: Vec<(String, String, toml_edit::Value)>) -> Result<String, String> {
+    let mut document = contents.parse::<toml_edit::Document>().map_err(|e| e.to_string())?;
+    for (parent, key, value) in changes {
+        let parent = if parent == "terminal" && key == "default-profile" { "terminal.default-profile".to_string() } else { parent };
+        let key = if parent == "terminal.default-profile" && key == "default-profile" { std::env::consts::OS.to_string() } else { key };
+        let mut table = document.as_table_mut();
+        for segment in parent.split('.') {
+            if !table.contains_key(segment) { table.insert(segment, toml_edit::Item::Table(toml_edit::Table::new())); }
+            table = table.get_mut(segment).and_then(toml_edit::Item::as_table_mut).ok_or_else(|| format!("Settings section '{parent}' is not a table."))?;
+        }
+        table.insert(&key, toml_edit::Item::Value(value));
+    }
+    Ok(document.to_string())
+}
+
+#[cfg(test)]
+mod settings_transaction_tests {
+    use super::*;
+    #[test] fn preserves_comments_and_unrelated_values() {
+        let output=settings_transaction("# user settings\n[ui]\nfont-size = 13\n[editor]\nfont-size = 14\n", vec![("ui".into(),"font-size".into(),16.into()),("core".into(),"modal".into(),false.into())]).unwrap();
+        assert!(output.contains("# user settings"));let parsed=output.parse::<toml_edit::Document>().unwrap();
+        assert_eq!(parsed["ui"]["font-size"].as_integer(),Some(16));assert_eq!(parsed["editor"]["font-size"].as_integer(),Some(14));
+    }
+    #[test] fn targets_terminal_profile_for_the_current_os() {
+        let output=settings_transaction("",vec![("terminal".into(),"default-profile".into(),"zsh".into())]).unwrap();
+        let parsed=output.parse::<toml_edit::Document>().unwrap();
+        assert_eq!(parsed["terminal"]["default-profile"][std::env::consts::OS].as_str(),Some("zsh"));
+    }
+    #[test] fn rejects_malformed_input_and_section_collisions() {
+        assert!(settings_transaction("[broken",vec![]).is_err());
+        assert!(settings_transaction("ui = 42",vec![("ui".into(),"font-size".into(),13.into())]).is_err());
     }
 }

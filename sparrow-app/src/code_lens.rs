@@ -117,6 +117,7 @@ impl CodeLensData {
                 cwd: None,
                 env: None,
                 prelaunch: None,
+                flutter_options: Default::default(),
                 debug_adapter: None,
                 debug_command: None,
                 dap_id: Default::default(),

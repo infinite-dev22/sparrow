@@ -3553,6 +3553,7 @@ fn window_tab(
         crate::dart::project_wizard::view(window_tab_data.clone()),
 
         run_config_modal(window_tab_data.clone()),
+        crate::settings::modal::view(window_tab_data.clone()),
         debug_floating_toolbar(window_tab_data.clone()),
 
         project_switcher(window_tab_data.clone(), window_tabs, project_chip_origin),

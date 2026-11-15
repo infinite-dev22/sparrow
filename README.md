@@ -38,6 +38,10 @@ Flutter project creation and asset path completion are described in the [project
 
 Flutter memory and network profiling is available through the [DevTools integration](docs/flutter-devtools.md).
 
+The [Run/Debug Configurations dialog](docs/run-debug-configurations.md) supports Flutter entrypoints, flavors, environment variables, before-launch tasks, and local or project storage.
+
+[Settings](docs/settings-dialog.md) opens as a searchable modal with category navigation and Apply/Cancel controls.
+
 ## Installation
 
 You can find pre-built releases for Windows, Linux and macOS [here](https://github.com/infinite-dev22/sparrow/releases), or [installing with a package manager](docs/installing-with-package-manager.md).

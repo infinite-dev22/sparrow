@@ -1,7 +1,7 @@
 use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 use floem::{
-    View,
+    View, IntoView,
     peniko::Color,
     reactive::{
         ReadSignal, SignalGet, SignalUpdate, SignalWith, create_effect,
@@ -49,6 +49,9 @@ pub fn problem_panel(
     window_tab_data: Rc<WindowTabData>,
     position: PanelPosition,
 ) -> impl View {
+    if position.is_bottom() {
+        return super::dart_analysis_view::panel(window_tab_data).into_any();
+    }
     let config = window_tab_data.common.config;
     let is_bottom = position.is_bottom();
     PanelBuilder::new(config, position)
@@ -78,7 +81,7 @@ pub fn problem_panel(
             window_tab_data.panel.section_open(PanelSection::Lint),
         )
         .build()
-        .debug_name("Problem Panel")
+        .debug_name("Problem Panel").into_any()
 }
 
 fn problem_section(

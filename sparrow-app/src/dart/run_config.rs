@@ -1,0 +1,383 @@
+//! Editable run configuration drafts and argument/storage helpers.
+use crate::debug::RunDebugConfigs;
+use sparrow_rpc::dap_types::{RunDebugConfig, RunDebugProgram};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+
+pub fn split_args(text: &str) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut word = String::new();
+    let mut quote = None;
+    let mut started = false;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            } else if ch == '\\'
+                && q == '"'
+                && chars.peek().is_some_and(|c| matches!(c, '"' | '\\'))
+            {
+                word.push(chars.next().unwrap());
+            } else {
+                word.push(ch);
+            }
+        } else if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            started = true;
+        } else if ch.is_whitespace() {
+            if started {
+                args.push(std::mem::take(&mut word));
+                started = false;
+            }
+        } else if ch == '\\'
+            && chars
+                .peek()
+                .is_some_and(|c| c.is_whitespace() || matches!(c, '\'' | '"' | '\\'))
+        {
+            word.push(chars.next().unwrap());
+            started = true;
+        } else {
+            word.push(ch);
+            started = true;
+        }
+    }
+    if quote.is_some() {
+        return Err("Close the quoted argument before saving.".into());
+    }
+    if started {
+        args.push(word);
+    }
+    Ok(args)
+}
+pub fn join_args(args: &[String]) -> String {
+    args.iter()
+        .map(|s| {
+            if !s.is_empty()
+                && !s
+                    .chars()
+                    .any(|c| c.is_whitespace() || matches!(c, '\'' | '"' | '\\'))
+            {
+                s.clone()
+            } else {
+                format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+fn parse_environment(text: &str) -> Result<HashMap<String, String>, String> {
+    let mut parts = Vec::new();
+    let mut part = String::new();
+    let mut quote = None;
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if let Some(q) = quote {
+            part.push(ch);
+            if ch == '\\'
+                && q == '"'
+                && chars.peek().is_some_and(|c| matches!(c, '"' | '\\'))
+            {
+                part.push(chars.next().unwrap());
+            } else if ch == q {
+                quote = None;
+            }
+        } else if matches!(ch, '\'' | '"') {
+            quote = Some(ch);
+            part.push(ch);
+        } else if ch == ';' {
+            parts.push(std::mem::take(&mut part));
+        } else {
+            part.push(ch);
+        }
+    }
+    if quote.is_some() {
+        return Err("Close the quoted environment value.".into());
+    }
+    parts.push(part);
+    let mut env = HashMap::new();
+    for pair in parts.into_iter().filter(|p| !p.trim().is_empty()) {
+        let (key, raw) = pair
+            .split_once('=')
+            .ok_or("Use KEY=value entries separated by semicolons.")?;
+        let key = key.trim();
+        if key.is_empty()
+            || key.chars().enumerate().any(|(i, c)| {
+                !(c == '_'
+                    || c.is_ascii_alphabetic()
+                    || (i > 0 && c.is_ascii_digit()))
+            })
+        {
+            return Err("Invalid environment variable name.".into());
+        }
+        let raw = raw.trim();
+        let value = if raw.starts_with(['\'', '"']) {
+            let words = split_args(raw)?;
+            if words.len() != 1 {
+                return Err("Quote the complete environment value.".into());
+            }
+            words[0].clone()
+        } else {
+            raw.into()
+        };
+        env.insert(key.into(), value);
+    }
+    Ok(env)
+}
+
+#[derive(Clone, PartialEq)]
+pub struct Draft {
+    pub original: RunDebugConfig,
+    pub name: String,
+    pub entry: String,
+    pub args: String,
+    pub attach: String,
+    pub flavor: String,
+    pub env: String,
+    pub before: String,
+    pub before_args: String,
+    pub activate: bool,
+    pub focus: bool,
+}
+impl Draft {
+    pub fn flutter(&self) -> bool {
+        self.original.ty.as_deref() == Some("flutter")
+            || Path::new(&self.original.program)
+                .file_stem()
+                .is_some_and(|p| p == "flutter")
+    }
+    pub fn from_config(c: RunDebugConfig) -> Self {
+        let mut d = Self {
+            name: c.name.clone(),
+            entry: c.program.clone(),
+            args: String::new(),
+            attach: join_args(&c.flutter_options.attach_args),
+            flavor: String::new(),
+            env: String::new(),
+            before: c
+                .prelaunch
+                .as_ref()
+                .map(|p| p.program.clone())
+                .unwrap_or_default(),
+            before_args: c
+                .prelaunch
+                .as_ref()
+                .and_then(|p| p.args.as_ref())
+                .map(|a| join_args(a))
+                .unwrap_or_default(),
+            activate: c.flutter_options.activate_tool_window,
+            focus: c.flutter_options.focus_tool_window,
+            original: c.clone(),
+        };
+        let mut args = c.args.unwrap_or_default();
+        if d.flutter() {
+            if args.first().is_some_and(|a| a == "run" || a == "attach") {
+                args.remove(0);
+            }
+            d.entry = "lib/main.dart".into();
+            let mut rest = Vec::new();
+            let mut iter = args.into_iter();
+            while let Some(a) = iter.next() {
+                match a.as_str() {
+                    "-t" | "--target" => {
+                        if let Some(v) = iter.next() {
+                            d.entry = v;
+                        }
+                    }
+                    "--flavor" => {
+                        if let Some(v) = iter.next() {
+                            d.flavor = v;
+                        }
+                    }
+                    _ if a.starts_with("--target=") => d.entry = a[9..].into(),
+                    _ if a.starts_with("--flavor=") => d.flavor = a[9..].into(),
+                    _ => rest.push(a),
+                }
+            }
+            args = rest;
+        }
+        d.args = join_args(&args);
+        let mut env = c.env.unwrap_or_default().into_iter().collect::<Vec<_>>();
+        env.sort();
+        d.env = env
+            .into_iter()
+            .map(|(k, v)| {
+                format!(
+                    "{k}={}",
+                    if v.contains(';') {
+                        format!(
+                            "\"{}\"",
+                            v.replace('\\', "\\\\").replace('"', "\\\"")
+                        )
+                    } else {
+                        join_args(&[v])
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";");
+        d
+    }
+    pub fn build(&self) -> Result<RunDebugConfig, String> {
+        if self.name.trim().is_empty() || self.entry.trim().is_empty() {
+            return Err("Name and entrypoint/program are required.".into());
+        }
+        let mut c = self.original.clone();
+        c.name = self.name.trim().into();
+        let extra = split_args(&self.args)?;
+        if self.flutter() {
+            if extra.iter().any(|a| {
+                matches!(a.as_str(), "--target" | "-t" | "--flavor")
+                    || a.starts_with("--target=")
+                    || a.starts_with("--flavor=")
+            }) {
+                return Err(
+                    "Set entrypoint and flavor in their dedicated fields.".into()
+                );
+            }
+            let mut args =
+                vec!["run".into(), "--target".into(), self.entry.trim().into()];
+            if !self.flavor.trim().is_empty() {
+                args.extend(["--flavor".into(), self.flavor.trim().into()]);
+            }
+            args.extend(extra);
+            c.args = Some(args);
+        } else {
+            c.program = self.entry.trim().into();
+            c.args = Some(extra);
+        }
+        let env = parse_environment(&self.env)?;
+        c.env = if env.is_empty() { None } else { Some(env) };
+        c.flutter_options.attach_args = split_args(&self.attach)?;
+        c.flutter_options.activate_tool_window = self.activate;
+        c.flutter_options.focus_tool_window = self.focus;
+        c.prelaunch = if self.before.trim().is_empty() {
+            None
+        } else {
+            Some(RunDebugProgram {
+                program: self.before.trim().into(),
+                args: Some(split_args(&self.before_args)?),
+            })
+        };
+        Ok(c)
+    }
+}
+pub fn local_file(root: &Path) -> Option<PathBuf> {
+    use sha2::{Digest, Sha256};
+    let key = format!("{:x}", Sha256::digest(root.to_string_lossy().as_bytes()));
+    Some(
+        sparrow_core::directory::Directory::config_directory()?
+            .join("run-configurations")
+            .join(format!("{key}.toml")),
+    )
+}
+pub fn load(root: &Path) -> Option<Vec<RunDebugConfig>> {
+    [local_file(root), Some(root.join(".sparrow/run.toml"))]
+        .into_iter()
+        .flatten()
+        .find_map(|path| {
+            std::fs::read_to_string(path)
+                .ok()
+                .and_then(|s| toml::from_str::<RunDebugConfigs>(&s).ok())
+                .map(|c| c.configs)
+        })
+}
+pub fn save(
+    root: &Path,
+    configs: Vec<RunDebugConfig>,
+    project: bool,
+) -> Result<(), String> {
+    let local =
+        local_file(root).ok_or("Cannot locate user configuration directory.")?;
+    let path = if project {
+        root.join(".sparrow/run.toml")
+    } else {
+        local.clone()
+    };
+    save_to(&path, configs)?;
+    if project && local.is_file() {
+        std::fs::remove_file(local).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+fn save_to(path: &Path, configs: Vec<RunDebugConfig>) -> Result<(), String> {
+    let text = toml_edit::ser::to_string_pretty(&RunDebugConfigs { configs })
+        .map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    let temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap())
+        .map_err(|e| e.to_string())?;
+    std::fs::write(temporary.path(), text).map_err(|e| e.to_string())?;
+    temporary.persist(&path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn sample() -> RunDebugConfig {
+        serde_json::from_value(serde_json::json!({"name":"main.dart","type":"flutter","program":"/sdk/flutter","args":["run","-t","lib/main.dart","--flavor","dev","--dart-define","VALUE=hello world"]})).unwrap()
+    }
+    #[test]
+    fn arguments_roundtrip_and_validation() {
+        let args = vec![
+            "".into(),
+            "hello world".into(),
+            r"C:\work dir\main.dart".into(),
+            "a\"b".into(),
+            "$(literal)".into(),
+        ];
+        assert_eq!(split_args(&join_args(&args)).unwrap(), args);
+        assert!(split_args("'unterminated").is_err());
+    }
+    #[test]
+    fn flutter_fields_preserve_executable_and_flags() {
+        let d = Draft::from_config(sample());
+        let c = d.build().unwrap();
+        assert_eq!(c.program, "/sdk/flutter");
+        let reloaded = Draft::from_config(c);
+        assert_eq!(reloaded.entry, d.entry);
+        assert_eq!(reloaded.args, d.args);
+        assert_eq!(reloaded.flavor, d.flavor);
+    }
+    #[test]
+    fn storage_preserves_flutter_and_environment_options() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("run.toml");
+        let mut c = sample();
+        c.flutter_options.attach_args = vec!["--debug-port".into(), "1234".into()];
+        c.env = Some(HashMap::from([
+            ("LIST".into(), "one;two".into()),
+            ("SPACED".into(), "hello world".into()),
+        ]));
+        let d = Draft::from_config(c);
+        let built = d.build().unwrap();
+        assert_eq!(built.env.as_ref().unwrap()["LIST"], "one;two");
+        save_to(&path, vec![built.clone()]).unwrap();
+        let saved: RunDebugConfigs =
+            toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved.configs[0].env, built.env);
+        assert_eq!(saved.configs[0].flutter_options, built.flutter_options);
+    }
+
+    #[test]
+    fn generic_commands_preserve_executable_and_quoted_arguments() {
+        let original: RunDebugConfig = serde_json::from_value(serde_json::json!({"name":"tool", "program":"/usr/bin/dart", "args":["run", "tool/my script.dart"]})).unwrap();
+        let built = Draft::from_config(original.clone()).build().unwrap();
+        assert_eq!(built.program, original.program);
+        assert_eq!(built.args, original.args);
+    }
+
+    #[test]
+    fn env_and_prelaunch_are_validated() {
+        let mut d = Draft::from_config(sample());
+        d.env = "TOKEN=a=b;MODE=dev".into();
+        d.before = "dart".into();
+        d.before_args = "run tool/build.dart".into();
+        let c = d.build().unwrap();
+        assert_eq!(c.env.unwrap()["TOKEN"], "a=b");
+        assert_eq!(c.prelaunch.unwrap().program, "dart");
+        d.env = "1INVALID=x".into();
+        assert!(d.build().is_err());
+    }
+}

@@ -680,7 +680,7 @@ fn stripe_picker(
                 PanelKind::SourceControl => "Source Control",
                 PanelKind::Plugin => "Plugins",
                 PanelKind::Search => "Search",
-                PanelKind::Problem => "Problems",
+                PanelKind::Problem => "Dart Analysis",
                 PanelKind::Debug => "Debug",
                 PanelKind::CallHierarchy => "Call Hierarchy",
                 PanelKind::DocumentSymbol => "Document Symbol",
@@ -743,7 +743,7 @@ fn stripe_picker(
                     let config = config.get();
                     s.padding(1.0).margin_vert(2.0).border_radius(6.0).apply_if(
                         is_active(),
-                        |s| s.background(config.color(SparrowColor::ACTIVITY_CURRENT)),
+                        |s| s.background(config.color(if p == PanelKind::FileExplorer { SparrowColor::ACTIVITY_CURRENT } else { SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND })),
                     )
                 })
         },

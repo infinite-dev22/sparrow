@@ -20,3 +20,6 @@ pub mod flutter_run_view;
 pub mod device_manager_view;
 pub mod flutter_performance_view;
 pub mod flutter_test_view;
+
+pub mod chrome;
+pub mod dart_analysis_view;

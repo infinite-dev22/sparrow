@@ -183,7 +183,7 @@ impl PanelData {
             left_split: 0.5,
             bottom: 342.0,
             bottom_split: 0.5,
-            right: 250.0,
+            right: 466.0,
             right_split: 0.5,
         });
         let sections = cx.create_rw_signal(

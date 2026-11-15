@@ -55,6 +55,8 @@ pub struct RunDebugConfig {
     pub prelaunch: Option<RunDebugProgram>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_adapter: Option<RunDebugProgram>,
+    #[serde(default)]
+    pub flutter_options: FlutterRunOptions,
     #[serde(skip)]
     pub debug_command: Option<Vec<String>>,
     #[serde(skip)]
@@ -63,6 +65,17 @@ pub struct RunDebugConfig {
     pub tracing_output: bool,
     #[serde(default)]
     pub config_source: ConfigSource,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct FlutterRunOptions {
+    pub attach_args: Vec<String>,
+    pub activate_tool_window: bool,
+    pub focus_tool_window: bool,
+}
+impl Default for FlutterRunOptions {
+    fn default() -> Self { Self { attach_args: Vec::new(), activate_tool_window: true, focus_tool_window: false } }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
