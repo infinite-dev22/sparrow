@@ -118,6 +118,10 @@ impl UIConfig {
         self.font_size.clamp(6, 32)
     }
 
+    pub fn list_line_height(&self) -> usize {
+        self.list_line_height.max(self.font_size())
+    }
+
     pub fn font_family(&self) -> Vec<FamilyOwned> {
         FamilyOwned::parse_list(&self.font_family).collect()
     }

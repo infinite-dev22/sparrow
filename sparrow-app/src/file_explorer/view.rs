@@ -77,7 +77,7 @@ pub fn file_explorer_panel(
             move |s| s.apply_if(!config.get().ui.open_editors_visible, |s| s.hide()),
         )
         .add(
-            "File Explorer",
+            "Project",
             container(file_explorer_view(data, source_control))
                 .style(|s| s.size_full()),
             window_tab_data
@@ -471,7 +471,7 @@ fn file_explorer_view(
             .item_size_fixed(move || ui_line_height.get())
             .style(|s| s.absolute().flex_col().min_width_full()),
     )
-        .style(|s| s.absolute().size_full().line_height(1.8))
+        .style(|s| s.absolute().size_full().line_height(1.0))
         .on_secondary_click_stop(move |_| {
             if let Naming::None = naming.get_untracked() {
                 if let Some(path) = &secondary_click_data.common.workspace.path {
@@ -622,6 +622,6 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
         )
             .style(|s| s.flex_col().width_pct(100.0)),
     )
-        .style(|s| s.absolute().size_full().line_height(1.8))
+        .style(|s| s.absolute().size_full().line_height(1.0))
         .debug_name("Open Editors")
 }

@@ -655,6 +655,9 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "flutter_new_project")]
     #[strum(message = "Flutter: New Project")]
     FlutterNewProject,
+    #[strum(serialize = "android_studio_reference_layout")]
+    #[strum(message = "Appearance: Apply Android Studio Reference Layout")]
+    AndroidStudioReferenceLayout,
     #[strum(serialize = "flutter_open_devtools")]
     #[strum(message = "Flutter: Open DevTools")]
     FlutterOpenDevTools,

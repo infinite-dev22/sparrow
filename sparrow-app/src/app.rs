@@ -2172,25 +2172,17 @@ fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
     let main_split_width = window_tab_data.main_split.width;
     stack((
         tool_window_stripe(window_tab_data.clone(), true),
-        panel_container_view(window_tab_data.clone(), PanelContainerPosition::Left),
-        {
-            let window_tab_data = window_tab_data.clone();
+        stack((
             stack((
-                main_split(window_tab_data.clone()),
-                panel_container_view(
-                    window_tab_data,
-                    PanelContainerPosition::Bottom,
-                ),
-            ))
-            .on_resize(move |rect| {
-                let width = rect.size().width;
-                if main_split_width.get_untracked() != width {
-                    main_split_width.set(width);
-                }
-            })
-            .style(|s| s.flex_col().flex_grow(1.0f32).gap(4.0))
-        },
-        panel_container_view(window_tab_data.clone(), PanelContainerPosition::Right),
+                panel_container_view(window_tab_data.clone(), PanelContainerPosition::Left),
+                main_split(window_tab_data.clone()).on_resize(move |rect| {
+                    let width = rect.width();
+                    if main_split_width.get_untracked() != width { main_split_width.set(width); }
+                }),
+                panel_container_view(window_tab_data.clone(), PanelContainerPosition::Right),
+            )).style(|s| s.width_full().flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).gap(3.0)),
+            panel_container_view(window_tab_data.clone(), PanelContainerPosition::Bottom),
+        )).style(|s| s.height_full().flex_col().flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).gap(3.0)),
         tool_window_stripe(window_tab_data.clone(), false),
         window_message_view(window_tab_data.messages, window_tab_data.common.config),
     ))
@@ -2200,7 +2192,7 @@ fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
             workbench_size.set(size);
         }
     })
-    .style(move |s| s.size_full().gap(4.0).padding_bottom(2.0))
+    .style(move |s| s.size_full().gap(0.0).padding_bottom(2.0))
     .debug_name("Workbench")
 }
 
@@ -3961,6 +3953,15 @@ pub fn launch() {
     #[cfg(feature = "vendored-fonts")]
     {
         use floem::text::{FONT_SYSTEM, fontdb::Source};
+
+        for bytes in [
+            include_bytes!("../../extra/fonts/Inter/Inter-Regular.otf").as_slice(),
+            include_bytes!("../../extra/fonts/Inter/Inter-SemiBold.otf").as_slice(),
+            include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-Regular.ttf").as_slice(),
+            include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-Italic.ttf").as_slice(),
+        ] {
+            FONT_SYSTEM.lock().db_mut().load_font_source(Source::Binary(Arc::new(bytes)));
+        }
 
         const FONT_DEJAVU_SANS_REGULAR: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),

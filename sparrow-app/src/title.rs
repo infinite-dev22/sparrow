@@ -147,7 +147,7 @@ fn left(
                     None => Color::TRANSPARENT,
                 }
             };
-            s.height_pct(100.0)
+            s.apply_if(is_local, |s| s.hide()).height_pct(100.0)
                 .padding_horiz(10.0)
                 .items_center()
                 .background(color)
@@ -184,41 +184,6 @@ fn middle(
     let current_tab_id = window_tab_data.window_tab_id;
     let branch_menu_visible = window_tab_data.branch_menu_visible;
     let project_menu_visible = window_tab_data.project_menu_visible;
-
-    let can_jump_backward = {
-        let main_split = main_split.clone();
-        create_memo(move |_| main_split.can_jump_location_backward(true))
-    };
-    let can_jump_forward =
-        create_memo(move |_| main_split.can_jump_location_forward(true));
-
-    let jump_backward = move || {
-        clickable_icon(
-            || SparrowIcons::LOCATION_BACKWARD,
-            move || {
-                workbench_command
-                    .send(SparrowWorkbenchCommand::JumpLocationBackward);
-            },
-            || false,
-            move || !can_jump_backward.get(),
-            || "Jump Backward",
-            config,
-        )
-        .style(move |s| s.margin_horiz(6.0))
-    };
-    let jump_forward = move || {
-        clickable_icon(
-            || SparrowIcons::LOCATION_FORWARD,
-            move || {
-                workbench_command.send(SparrowWorkbenchCommand::JumpLocationForward);
-            },
-            || false,
-            move || !can_jump_forward.get(),
-            || "Jump Forward",
-            config,
-        )
-        .style(move |s| s.margin_right(6.0))
-    };
 
     let initial_workspace = workspace.clone();
     let project_avatar = container(
@@ -407,8 +372,7 @@ fn middle(
     stack((
         project_chip,
         branch_chip,
-        jump_backward(),
-        jump_forward(),
+
         drag_window_area(empty())
             .style(|s| s.height_pct(100.0).flex_basis(0.0).flex_grow(1.0f32)),
     ))
@@ -508,25 +472,28 @@ fn right(
             })
     };
 
-    // The Run button next to the chip
+    let run_state = hot_reload.state;
+    let is_running = move || run_state.get() == crate::dart::FlutterRunState::Running;
     let run_button = {
         let wt_data = window_tab_data.clone();
-        clickable_icon(
-            || SparrowIcons::START,
-            move || {
+        tooltip_label(
+            config,
+            container(svg(move || config.get().ui_svg(SparrowIcons::START)).style(move |s| {
+                let c = config.get();
+                let size = c.ui.icon_size() as f32;
+                s.size(size, size).color(if is_running() { Color::WHITE } else { c.color(SparrowColor::SPARROW_RUN_ICON) })
+            }))
+            .on_click_stop(move |_| {
                 let idx = wt_data.active_run_config_idx.get_untracked();
                 if let Some(c) = wt_data.run_configs.with_untracked(|c| c.get(idx).cloned()) {
-                    wt_data.common.internal_command.send(InternalCommand::RunAndDebug {
-                        mode: RunDebugMode::Run,
-                        config: c,
-                    });
+                    wt_data.common.internal_command.send(InternalCommand::RunAndDebug { mode: RunDebugMode::Run, config: c });
                 }
-            },
-            || false,
-            || false,
+            })
+            .style(move |s| s.padding(4.0).margin_horiz(2.0).border_radius(4.0)
+                .apply_if(is_running(), |s| s.background(Color::from_rgb8(0x2D, 0x85, 0x50)))
+                .hover(|s| s.cursor(CursorStyle::Pointer).background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND)))),
             || "Run (Shift+F10)",
-            config,
-        ).style(move |s| s.margin_horiz(2.0).color(config.get().color(SparrowColor::SPARROW_RUN_ICON)))
+        )
     };
 
     // Green bug button next to Run (opens the same Run and Debug palette).
@@ -563,9 +530,10 @@ fn right(
                     let config = config.get();
                     let size = config.ui.icon_size() as f32;
                     s.size(size, size)
-                        .color(config.color(SparrowColor::SPARROW_HOT_RELOAD_ICON))
+                        .color(config.color(if is_running() { SparrowColor::SPARROW_HOT_RELOAD_ICON } else { SparrowColor::SPARROW_ICON_INACTIVE }))
                 },
             ))
+            .disabled(move || !is_running())
             .on_click_stop(move |_| {
                 hr.hot_reload();
             })
@@ -590,9 +558,10 @@ fn right(
                     let config = config.get();
                     let size = config.ui.icon_size() as f32;
                     s.size(size, size)
-                        .color(config.color(SparrowColor::SPARROW_HOT_RESTART_ICON))
+                        .color(config.color(if is_running() { SparrowColor::SPARROW_HOT_RESTART_ICON } else { SparrowColor::SPARROW_ICON_INACTIVE }))
                 },
             ))
+            .disabled(move || !is_running())
             .on_click_stop(move |_| {
                 hr.hot_restart();
             })
@@ -617,21 +586,22 @@ fn right(
                     let config = config.get();
                     let size = config.ui.icon_size() as f32;
                     s.size(size, size)
-                        .color(config.color(SparrowColor::SPARROW_STOP_ICON))
+                        .color(Color::WHITE)
                 },
             ))
+            .disabled(move || !is_running())
             .on_click_stop(move |_| {
                 hr.stop();
             })
             .style(move |s| {
                 let config = config.get();
-                s.padding(4.0).margin_horiz(2.0).border_radius(6.0).hover(|s| {
+                s.padding(4.0).margin_horiz(2.0).border_radius(4.0).background(config.color(SparrowColor::SPARROW_STOP_ICON)).hover(|s| {
                     s.cursor(CursorStyle::Pointer)
                         .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
                 })
             }),
             || "Stop (Ctrl+F2)",
-        )
+        ).style(move |s| s.apply_if(!is_running(), |s| s.hide()))
     };
 
     // Flutter Inspector toggle button
@@ -662,18 +632,19 @@ fn right(
     };
 
     stack((
-        run_config_chip,
         device_selector(
             hot_reload.clone(),
             config,
             device_chip_origin,
             device_menu_visible,
         ),
+        run_config_chip,
         run_button,
         debug_button,
-        hot_reload_button,
-        hot_restart_button,
         stop_button,
+        inspector_button,
+        hot_reload_button,
+        hot_restart_button.style(move |s| s.apply_if(!is_running(), |s| s.hide())),
         clickable_icon(
             || SparrowIcons::SEARCH,
             move || {
@@ -684,7 +655,6 @@ fn right(
             || "Search Everywhere (Double Shift)",
             config,
         ),
-        inspector_button,
         stack((
             not_clickable_icon(
                 || SparrowIcons::SETTINGS,
@@ -829,9 +799,14 @@ pub fn title(
     .style(move |s| {
         let config = config.get();
         s.width_pct(100.0)
-            .height(config.ui.header_height().max(32) as f32)
+            .height(config.ui.header_height().max(34) as f32)
+            .flex_shrink(0.0_f32)
             .items_center()
             .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
+            .apply_if(config.color_theme.name == "Islands Dark", |s| {
+                s.background(floem::peniko::Gradient::new_linear((0.0, 0.0), (620.0, 32.0))
+                    .with_stops([Color::from_rgb8(0x41, 0x4D, 0x68), Color::from_rgb8(0x26, 0x28, 0x2C)]))
+            })
     })
     .debug_name("Title / Top Bar")
 }
@@ -854,7 +829,7 @@ pub fn window_controls_view(
             || "Minimize",
             config,
         )
-        .style(|s| s.margin_right(16.0).margin_left(10.0)),
+        .style(|s| s.margin_right(4.0).margin_left(4.0)),
         clickable_icon(
             move || {
                 if window_maximized.get() {
@@ -873,7 +848,7 @@ pub fn window_controls_view(
             || "Maximize",
             config,
         )
-        .style(|s| s.margin_right(16.0)),
+        .style(|s| s.margin_right(4.0)),
         clickable_icon(
             || SparrowIcons::WINDOW_CLOSE,
             move || {

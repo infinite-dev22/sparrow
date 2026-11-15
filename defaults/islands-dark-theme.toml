@@ -5,10 +5,10 @@
 name = "Islands Dark"
 
 [ui]
-font-family = ""
+font-family = "Inter, Noto Sans, sans-serif"
 font-size = 13
 header-height = 32
-status-height = 22
+status-height = 24
 tab-min-width = 100
 icon-size = 16
 tool-window-stripe-width = 36
@@ -37,7 +37,7 @@ text = "#BCBEC4"
 dim-text = "#6F737A"
 
 [color-theme.syntax]
-"comment" = "#7A7E85"
+"comment" = "#6A8759"
 "constant" = "#C77DBB"
 "type" = "#BCBEC4"
 "typeAlias" = "#BCBEC4"
@@ -102,10 +102,10 @@ dim-text = "#6F737A"
 "sparrow.button.primary.foreground" = "#FFFFFF"
 
 # tabs: the active tab is a rounded blue pill, inactive tabs are plain text
-"sparrow.tab.active.background" = "#233558"
+"sparrow.tab.active.background" = "#29354D"
 "sparrow.tab.active.foreground" = "#DFE1E5"
 "sparrow.tab.active.underline" = "#233558"
-"sparrow.tab.active.border" = "#2E4D89"
+"sparrow.tab.active.border" = "#415F9C"
 
 "sparrow.tab.inactive.background" = "#00000000"
 "sparrow.tab.inactive.foreground" = "#BCBEC4"

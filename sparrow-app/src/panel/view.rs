@@ -463,6 +463,7 @@ pub fn panel_container_view(
             s.apply_if(!panel.is_container_shown(&position, true), |s| s.hide())
                 .apply_if(position == PanelContainerPosition::Bottom, |s| {
                     s.width_pct(100.0)
+                        .flex_shrink(0.0_f32)
                         .apply_if(!is_maximized, |s| s.height(size as f32))
                         .apply_if(is_maximized, |s| s.flex_grow(1.0f32))
                         .background(config.color(SparrowColor::PANEL_BACKGROUND))

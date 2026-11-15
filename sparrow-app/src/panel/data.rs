@@ -149,7 +149,7 @@ impl PanelData {
             PanelPosition::BottomLeft,
             PanelStyle {
                 active: 0,
-                shown: true,
+                shown: false,
                 maximized: false,
             },
         );
@@ -179,9 +179,9 @@ impl PanelData {
         );
         let styles = cx.create_rw_signal(styles);
         let size = cx.create_rw_signal(PanelSize {
-            left: 250.0,
+            left: 400.0,
             left_split: 0.5,
-            bottom: 300.0,
+            bottom: 342.0,
             bottom_split: 0.5,
             right: 250.0,
             right_split: 0.5,

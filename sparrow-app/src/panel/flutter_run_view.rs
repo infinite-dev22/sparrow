@@ -36,28 +36,20 @@ pub fn flutter_run_panel(
     let logs = hot_reload.run_logs;
     let state = hot_reload.state;
 
+    let run_name = window_tab_data.run_configs;
+    let run_index = window_tab_data.active_run_config_idx;
+    let device = hot_reload.selected_device;
     stack((
+        stack((
+            label(|| "Run").style(|s| s.margin_horiz(12.0).font_bold()),
+            label(move || {
+                let name = run_name.get().get(run_index.get()).map(|c| c.name.clone()).unwrap_or_else(|| "Flutter".into());
+                device.get().map(|d| format!("{name} ({})", d.name)).unwrap_or(name)
+            }).style(move |s| s.padding_horiz(10.0).padding_vert(3.0).border_radius(4.0)
+                .border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+        )).style(|s| s.height(32.0).items_center().flex_shrink(0.0_f32)),
         // Header toolbar with quick actions
         stack((
-            label(move || match state.get() {
-                FlutterRunState::Idle => "Flutter: Idle".to_string(),
-                FlutterRunState::Running => {
-                    if let Some(msg) = hot_reload.progress_message.get() {
-                        format!("Flutter: {msg}")
-                    } else {
-                        "Flutter: Running".to_string()
-                    }
-                }
-                FlutterRunState::Error => "Flutter: Stopped / Error".to_string(),
-            })
-            .style(move |s| {
-                let c = config.get();
-                s.color(c.color(SparrowColor::PANEL_FOREGROUND_DIM))
-                    .font_size(11.0)
-                    .margin_left(10.0)
-                    .selectable(false)
-            }),
-            empty().style(|s| s.flex_grow(1.0f32)),
             clickable_icon(
                 || SparrowIcons::FLUTTER_HOT_RELOAD,
                 {
@@ -108,6 +100,26 @@ pub fn flutter_run_panel(
                 config,
             )
             .style(|s| s.margin_right(4.0)),
+            empty().style(|s| s.flex_grow(1.0_f32)),
+            label(move || match state.get() {
+                FlutterRunState::Idle => "Flutter: Idle".to_string(),
+                FlutterRunState::Running => {
+                    if let Some(msg) = hot_reload.progress_message.get() {
+                        format!("Flutter: {msg}")
+                    } else {
+                        "Flutter: Running".to_string()
+                    }
+                }
+                FlutterRunState::Error => "Flutter: Stopped / Error".to_string(),
+            })
+            .style(move |s| {
+                let c = config.get();
+                s.color(c.color(SparrowColor::PANEL_FOREGROUND_DIM))
+                    .font_size(11.0)
+                    .margin_left(10.0)
+                    .selectable(false)
+            }),
+
         ))
         .style(move |s| {
             let c = config.get();
@@ -129,7 +141,7 @@ pub fn flutter_run_panel(
             .item_size_fixed(move || ui_line_height.get())
             .style(|s| s.absolute().flex_col().min_width_full()),
         )
-        .style(|s| s.absolute().size_full()),
+        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full()),
     ))
     .style(|s| s.absolute().size_full().flex_col())
     .debug_name("Flutter Run Panel")

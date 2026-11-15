@@ -630,6 +630,11 @@ impl SparrowConfig {
             .resolve_path_to_icon(paths)
             .and_then(|p| self.svg_store.write().get_svg_on_disk(&p));
 
+        let svg = svg.or_else(|| {
+            let path = DEFAULT_ICON_THEME_ICON_CONFIG.resolve_path_to_icon(paths)?;
+            let name = path.file_name()?.to_str()?;
+            Some(self.svg_store.write().get_default_svg(name))
+        });
         if let Some(svg) = svg {
             let color = if self.icon_theme.use_editor_color.unwrap_or(false) {
                 Some(self.color(SparrowColor::SPARROW_ICON_ACTIVE))

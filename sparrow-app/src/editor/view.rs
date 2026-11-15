@@ -2107,7 +2107,7 @@ fn editor_gutter(
     });
     stack((
         stack((
-            empty().style(move |s| s.width(icon_total_width() * 2.0 - 8.0)),
+            empty().style(|s| s.width(0.0)),
             label(move || {
                 let doc = doc.get();
                 doc.buffer.with(|b| b.last_line() + 1).to_string()

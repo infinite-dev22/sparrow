@@ -1,16 +1,16 @@
 [core]
 modal = false
 color-theme = "Islands Dark"
-icon-theme = "sparrow Codicons"
+icon-theme = "sparrow Modern"
 custom-titlebar = true
 file-explorer-double-click = false
 auto-reload-plugin = false
 
 [editor]
-font-family = "monospace"
+font-family = "JetBrains Mono, Noto Sans Mono, monospace"
 font-size = 13
 code-glance-font-size = 2
-line-height = 1.5
+line-height = 1.65
 smart-tab = true
 tab-width = 4
 show-tab = true
@@ -89,7 +89,7 @@ font-family = ""
 font-size = 13
 icon-size = 16
 header-height = 32
-status-height = 22
+status-height = 24
 tab-min-width = 100
 tab-separator-height = "Content"
 scroll-width = 8
@@ -102,4 +102,4 @@ list-line-height = 22
 tab-close-button = "Right"
 open-editors-visible = false
 rounded-corners = true
-tool-window-stripe-width = 36
+tool-window-stripe-width = 35

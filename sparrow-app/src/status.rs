@@ -363,8 +363,6 @@ pub fn status(
         .style(move |s| {
             let config = config.get();
             s.background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND)) // Match title bar
-                .border_top(1.0) // Subtle separator
-                .border_color(config.color(SparrowColor::SPARROW_BORDER))
                 .flex_basis(config.ui.status_height() as f32)
                 .flex_grow(0.0f32)
                 .flex_shrink(0.0f32)

@@ -383,10 +383,10 @@ impl WindowTabData {
             let attrs = Attrs::new()
                 .family(&family)
                 .font_size(config.ui.font_size() as f32)
-                .line_height(LineHeightValue::Normal(1.8));
+                .line_height(LineHeightValue::Normal(1.0));
             let attrs_list = AttrsList::new(attrs);
             text_layout.set_text("W", attrs_list, None);
-            text_layout.size().height
+            text_layout.size().height.max(config.ui.list_line_height() as f64)
         });
 
         let (dart_lsp, dart_lsp_rx) = match &workspace.kind {
@@ -681,6 +681,26 @@ impl WindowTabData {
             active_run_config_idx,
             run_config_modal_visible,
         };
+
+        // Only a run-state transition opens the console. Device discovery and
+        // manual panel toggles must not steal editor space in an idle workspace.
+        {
+            let state = flutter_hot_reload.state;
+            let panel = window_tab_data.panel.clone();
+            cx.create_effect(move |previous: Option<bool>| {
+                let running = state.get() == crate::dart::FlutterRunState::Running;
+                floem::reactive::untrack(|| {
+                    if running && previous != Some(true) {
+                        panel.show_panel(&PanelKind::FlutterRun);
+                    } else if previous.is_none() && !running {
+                        if let Some((PanelKind::FlutterRun, true)) = panel.active_panel_at_position(&crate::panel::position::PanelPosition::BottomLeft, false) {
+                            panel.hide_panel(&PanelKind::FlutterRun);
+                        }
+                    }
+                });
+                running
+            });
+        }
 
         {
             let focus = window_tab_data.common.focus;
@@ -2029,6 +2049,7 @@ impl WindowTabData {
                 };
                 self.open_devtools(page);
             }
+            AndroidStudioReferenceLayout => self.apply_android_studio_layout(),
             PubAdd => {
                 self.palette.run(PaletteKind::PubPackage);
             }
@@ -3549,6 +3570,40 @@ impl WindowTabData {
             item.get_untracked().item.as_ref().clone(),
             send,
         );
+    }
+
+    fn apply_android_studio_layout(&self) {
+        let values: Vec<(&str, &str, toml_edit::Value)> = vec![
+            ("core", "color-theme", "Islands Dark".into()),
+            ("core", "icon-theme", "sparrow Modern".into()),
+            ("ui", "font-family", "Inter, Noto Sans, sans-serif".into()),
+            ("ui", "font-size", 13.into()), ("ui", "icon-size", 16.into()),
+            ("ui", "header-height", 32.into()), ("ui", "status-height", 24.into()),
+            ("ui", "tool-window-stripe-width", 35.into()), ("ui", "list-line-height", 22.into()),
+            ("ui", "scroll-width", 8.into()), ("ui", "open-editors-visible", false.into()),
+            ("ui", "rounded-corners", true.into()),
+            ("editor", "font-family", "JetBrains Mono, Noto Sans Mono, monospace".into()),
+            ("editor", "font-size", 13.into()), ("editor", "line-height", 1.65.into()),
+        ];
+        for (section, key, value) in values {
+            if SparrowConfig::update_file(section, key, value).is_none() {
+                self.show_alert("Appearance".into(), "Could not save appearance settings.".into(), Vec::new()); return;
+            }
+        }
+        self.reload_config();
+        let available = self.common.workbench_size.get_untracked();
+        self.panel.size.update(|size| {
+            size.left = 400.0_f64.min((available.width * 0.4).max(150.0));
+            size.bottom = (self.layout_rect.get_untracked().height() * 342.0 / 1048.0).max(150.0);
+        });
+        self.panel.panels.set(crate::panel::data::default_panel_order());
+        self.panel.styles.update(|styles| {
+            for (_, style) in styles.iter_mut() { style.shown = false; style.maximized = false; }
+        });
+        self.panel.show_panel(&PanelKind::FileExplorer);
+        if self.flutter_hot_reload.state.get_untracked() == crate::dart::FlutterRunState::Running {
+            self.panel.show_panel(&PanelKind::FlutterRun);
+        }
     }
 
     pub fn open_devtools(&self, page: crate::dart::devtools::DevToolsPage) {
