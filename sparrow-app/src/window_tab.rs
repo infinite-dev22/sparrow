@@ -190,6 +190,7 @@ pub struct WindowTabData {
     pub dart_lsp: DartLspService,
     pub flutter_hot_reload: FlutterHotReloadData,
     pub flutter_inspector: FlutterInspectorData,
+    pub flutter_test: crate::dart::test_service::FlutterTestData,
     pub source_control: SourceControlData,
     pub rename: RenameData,
     pub global_search: GlobalSearchData,
@@ -619,6 +620,7 @@ impl WindowTabData {
                 cwd: workspace.path.as_ref().map(|p| p.to_string_lossy().to_string()),
                 env: None,
                 prelaunch: None,
+                debug_adapter: None,
                 debug_command: None,
                 dap_id: Default::default(),
                 tracing_output: true,
@@ -636,6 +638,10 @@ impl WindowTabData {
             terminal,
             flutter_hot_reload: flutter_hot_reload.clone(),
             flutter_inspector: flutter_inspector.clone(),
+            flutter_test: crate::dart::test_service::FlutterTestData::new(
+                cx,
+                common.proxy.clone(),
+            ),
             panel,
             file_explorer,
             code_action,
@@ -1444,8 +1450,17 @@ impl WindowTabData {
                 }
                 self.common.focus.set(Focus::Panel(PanelKind::Terminal));
             }
+            FlutterDebugTestAtCursor => self.run_test_at_cursor(true),
+            FlutterRunTestFile => {
+                if let Some(editor) = self.main_split.active_editor.get_untracked() {
+                    if let Some(path) = editor.doc().content.with_untracked(|c| c.path().cloned()) {
+                        self.prepare_flutter_tests(vec![(path, String::new())], false, false);
+                    }
+                }
+            }
+            FlutterRerunFailedTests => self.rerun_flutter_tests(true),
             FlutterRunTestAtCursor => {
-                self.run_test_at_cursor();
+                self.run_test_at_cursor(false);
             }
             CloseTerminalTab => {
                 self.terminal.close_tab(None);
@@ -1928,6 +1943,7 @@ impl WindowTabData {
                             cwd: None,
                             env: None,
                             prelaunch: None,
+                            debug_adapter: None,
                             debug_command: None,
                             dap_id: Default::default(),
                             tracing_output: false,
@@ -2184,6 +2200,7 @@ impl WindowTabData {
                         cwd,
                         env: None,
                         prelaunch: None,
+                        debug_adapter: None,
                         debug_command: None,
                         dap_id: Default::default(),
                         tracing_output: false,
@@ -2538,8 +2555,19 @@ impl WindowTabData {
             InternalCommand::CallHierarchyIncoming { item_id } => {
                 self.call_hierarchy_incoming(item_id);
             }
+            InternalCommand::FlutterRunTest { path, name, debug } => {
+                self.prepare_flutter_tests(vec![(path, name)], debug, false);
+            }
+            InternalCommand::FlutterStartTests {
+                targets,
+                debug,
+                exact,
+            } => self.start_flutter_tests(targets, debug, exact),
+            InternalCommand::FlutterRerunTests { failed_only } => {
+                self.rerun_flutter_tests(failed_only)
+            }
             InternalCommand::FlutterRunTestAtCursor { term_id: _ } => {
-                self.run_test_at_cursor();
+                self.run_test_at_cursor(false);
             }
         }
     }
@@ -2547,6 +2575,17 @@ impl WindowTabData {
     fn handle_core_notification(&self, rpc: &CoreNotification) {
         let cx = self.scope;
         match rpc {
+            CoreNotification::FlutterTestEvent { dap_id, event } => {
+                self.flutter_test.debug_event(*dap_id, event);
+                if self.terminal.debug.active_dap.get_untracked() == Some(*dap_id)
+                    && self.flutter_test.debug_dap.get_untracked().is_none()
+                {
+                    self.terminal.debug.active_dap.set(None);
+                    self.terminal.debug.daps.update(|daps| {
+                        daps.remove(dap_id);
+                    });
+                }
+            }
             CoreNotification::ProxyStatus { status } => {
                 self.common.proxy_status.set(Some(status.to_owned()));
             }
@@ -3157,6 +3196,7 @@ impl WindowTabData {
             | PanelKind::DocumentSymbol
             | PanelKind::FlutterInspector
             | PanelKind::FlutterRun
+            | PanelKind::FlutterTest
             | PanelKind::DeviceManager
             | PanelKind::FlutterPerformance
             | PanelKind::FileExplorer => self.is_panel_focused(kind),
@@ -3497,7 +3537,7 @@ impl WindowTabData {
         );
     }
 
-    fn run_test_at_cursor(&self) {
+    fn run_test_at_cursor(&self, debug: bool) {
         use crate::dart::test_runner;
 
         let Some(editor) = self.main_split.active_editor.get_untracked() else {
@@ -3507,7 +3547,7 @@ impl WindowTabData {
         let Some(path) = doc.content.with_untracked(|c| c.path().cloned()) else {
             return;
         };
-        if !crate::dart::is_dart_path(&path) {
+        if !test_runner::is_test_file(&path) {
             return;
         }
         let source = doc.buffer.with_untracked(|b| b.to_string());
@@ -3523,14 +3563,144 @@ impl WindowTabData {
             return;
         };
 
-        let (program, args) = test_runner::build_test_command(&path, &test.name);
-        self.common
-            .internal_command
-            .send(InternalCommand::RunProcessInTerminal {
-                program,
-                args,
-                name: format!("Test: {}", test.name),
+        self.prepare_flutter_tests(vec![(path, test.name)], debug, false);
+    }
+
+    fn rerun_flutter_tests(&self, failed_only: bool) {
+        let targets = if failed_only {
+            self.flutter_test.run.with_untracked(|r| r.failed_targets())
+        } else {
+            self.flutter_test.last_targets.get_untracked()
+        };
+        self.prepare_flutter_tests(
+            targets,
+            false,
+            failed_only || self.flutter_test.last_exact.get_untracked(),
+        );
+    }
+
+    fn prepare_flutter_tests(
+        &self,
+        targets: Vec<(PathBuf, String)>,
+        debug: bool,
+        exact: bool,
+    ) {
+        if self.flutter_test.run.with_untracked(|r| r.running) || targets.is_empty()
+        {
+            return;
+        }
+        if self.workspace.kind != SparrowWorkspaceType::Local {
+            self.show_alert(
+                "Flutter Test".into(),
+                "Flutter tests currently require a local workspace.".into(),
+                Vec::new(),
+            );
+            return;
+        }
+        if targets
+            .iter()
+            .any(|(path, _)| !crate::dart::test_runner::is_test_file(path))
+        {
+            return;
+        }
+        // Save all edited files before starting, including implementation files
+        // used by the tests. A failed save never launches stale code.
+        let dirty = self.main_split.docs.with_untracked(|docs| {
+            docs.values()
+                .filter(|doc| !doc.buffer.with_untracked(|b| b.is_pristine()))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let internal = self.common.internal_command;
+        let remaining = Rc::new(std::cell::Cell::new(dirty.len()));
+        if dirty.is_empty() {
+            internal.send(InternalCommand::FlutterStartTests {
+                targets,
+                debug,
+                exact,
             });
+        } else {
+            for doc in dirty {
+                let remaining = remaining.clone();
+                let targets = targets.clone();
+                doc.save(move || {
+                    remaining.set(remaining.get() - 1);
+                    if remaining.get() == 0 {
+                        internal.send(InternalCommand::FlutterStartTests {
+                            targets,
+                            debug,
+                            exact,
+                        });
+                    }
+                });
+            }
+        }
+    }
+
+    fn start_flutter_tests(
+        &self,
+        targets: Vec<(PathBuf, String)>,
+        debug: bool,
+        exact: bool,
+    ) {
+        if self.flutter_test.run.with_untracked(|r| r.running) {
+            return;
+        }
+        if debug {
+            let Some((path, name)) = targets.first() else {
+                return;
+            };
+            let root = crate::dart::test_runner::project_root(path);
+            let Some(flutter) =
+                crate::dart::sdk::find_flutter_binary(root.as_deref())
+            else {
+                self.show_alert(
+                    "Flutter SDK not found".into(),
+                    "Configure a Flutter SDK before debugging tests.".into(),
+                    Vec::new(),
+                );
+                return;
+            };
+            let config = RunDebugConfig {
+                ty: Some("flutter-test".into()),
+                name: format!("Debug Test: {name}"),
+                program: path.display().to_string(),
+                args: Some(if name.is_empty() {
+                    vec![]
+                } else {
+                    vec!["--plain-name".into(), name.clone()]
+                }),
+                cwd: root.map(|p| p.display().to_string()),
+                env: None,
+                prelaunch: None,
+                debug_adapter: Some(sparrow_rpc::dap_types::RunDebugProgram {
+                    program: flutter.display().to_string(),
+                    args: Some(vec!["debug-adapter".into(), "--test".into()]),
+                }),
+                debug_command: None,
+                dap_id: Default::default(),
+                tracing_output: false,
+                config_source: Default::default(),
+            };
+            self.terminal.debug.active_dap.set(Some(config.dap_id));
+            self.terminal.debug.daps.update(|daps| {
+                daps.insert(
+                    config.dap_id,
+                    DapData::new(
+                        self.scope,
+                        config.dap_id,
+                        TermId::next(),
+                        self.common.clone(),
+                    ),
+                );
+            });
+            self.flutter_test.begin_debug(config.dap_id, targets);
+            self.show_panel(PanelKind::FlutterTest);
+            self.run_and_debug(self.scope, &RunDebugMode::Debug, &config);
+        } else {
+            self.flutter_test.start(targets, exact);
+            self.show_panel(PanelKind::FlutterTest);
+        }
     }
 }
 

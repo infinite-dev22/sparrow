@@ -23,6 +23,7 @@ pub enum PanelKind {
     DartOutline,
     FlutterInspector,
     FlutterRun,
+    FlutterTest,
     DeviceManager,
     FlutterPerformance,
 }
@@ -45,6 +46,7 @@ impl PanelKind {
             PanelKind::DartOutline => SparrowIcons::DOCUMENT_SYMBOL,
             PanelKind::FlutterInspector => SparrowIcons::FLUTTER_INSPECTOR,
             PanelKind::FlutterRun => SparrowIcons::FLUTTER_RUN,
+            PanelKind::FlutterTest => SparrowIcons::START,
             PanelKind::DeviceManager => SparrowIcons::DEVICE_MANAGER,
             PanelKind::FlutterPerformance => SparrowIcons::FLUTTER_PERFORMANCE,
         }
@@ -77,6 +79,7 @@ impl PanelKind {
             PanelKind::DartOutline => PanelPosition::LeftTop,
             PanelKind::FlutterInspector => PanelPosition::RightTop,
             PanelKind::FlutterRun => PanelPosition::BottomLeft,
+            PanelKind::FlutterTest => PanelPosition::BottomLeft,
             PanelKind::DeviceManager => PanelPosition::RightTop,
             PanelKind::FlutterPerformance => PanelPosition::RightTop,
         }

@@ -68,6 +68,8 @@ pub struct RunDebugConfigs {
 #[derive(Clone)]
 pub struct RunDebugData {
     pub active_term: RwSignal<Option<TermId>>,
+    /// Adapter-owned sessions (Flutter tests) do not allocate a terminal.
+    pub active_dap: RwSignal<Option<DapId>>,
     pub daps: RwSignal<im::HashMap<DapId, DapData>>,
     pub breakpoints: RwSignal<BTreeMap<PathBuf, BTreeMap<usize, SparrowBreakpoint>>>,
 }
@@ -83,6 +85,7 @@ impl RunDebugData {
 
         Self {
             active_term,
+            active_dap: cx.create_rw_signal(None),
             daps,
             breakpoints,
         }
@@ -748,6 +751,7 @@ pub fn run_config_modal(
                         .map(|p| p.to_string_lossy().to_string()),
                     env: None,
                     prelaunch: None,
+                    debug_adapter: None,
                     debug_command: None,
                     dap_id: Default::default(),
                     tracing_output: true,

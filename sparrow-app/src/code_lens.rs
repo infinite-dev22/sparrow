@@ -117,6 +117,7 @@ impl CodeLensData {
                 cwd: None,
                 env: None,
                 prelaunch: None,
+                debug_adapter: None,
                 debug_command: None,
                 dap_id: Default::default(),
                 tracing_output: mode == RunDebugMode::Debug,

@@ -594,11 +594,17 @@ impl PluginCatalog {
             } => {
                 let workspace = self.workspace.clone();
                 let plugin_rpc = self.plugin_rpc.clone();
-                if let Some(debugger) = config
-                    .ty
-                    .as_ref()
-                    .and_then(|ty| self.debuggers.get(ty).cloned())
-                {
+                let adapter = config.debug_adapter.clone().or_else(|| {
+                    config
+                        .ty
+                        .as_ref()
+                        .and_then(|ty| self.debuggers.get(ty))
+                        .map(|debugger| dap_types::RunDebugProgram {
+                            program: debugger.program.clone(),
+                            args: debugger.args.clone(),
+                        })
+                });
+                if let Some(debugger) = adapter {
                     thread::spawn(move || {
                         match DapClient::start(
                             DapServer {
@@ -615,14 +621,26 @@ impl PluginCatalog {
                                     plugin_rpc.dap_loaded(dap_rpc.clone())
                                 {
                                     tracing::error!("{:?}", err);
+                                    if config.ty.as_deref() == Some("flutter-test") {
+                                        plugin_rpc.core_rpc.flutter_test_event(config.dap_id,
+                                            serde_json::json!({"type":"sparrow.launchError", "output":err.to_string()}));
+                                    }
                                 }
 
                                 if let Err(err) = dap_rpc.launch(&config) {
                                     tracing::error!("{:?}", err);
+                                    if config.ty.as_deref() == Some("flutter-test") {
+                                        plugin_rpc.core_rpc.flutter_test_event(config.dap_id,
+                                            serde_json::json!({"type":"sparrow.launchError", "output":err.to_string()}));
+                                    }
                                 }
                             }
                             Err(err) => {
                                 tracing::error!("{:?}", err);
+                                if config.ty.as_deref() == Some("flutter-test") {
+                                    plugin_rpc.core_rpc.flutter_test_event(config.dap_id,
+                                        serde_json::json!({"type":"sparrow.launchError", "output":err.to_string()}));
+                                }
                             }
                         }
                     });

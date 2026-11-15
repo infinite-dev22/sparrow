@@ -53,6 +53,8 @@ pub struct RunDebugConfig {
     pub cwd: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub prelaunch: Option<RunDebugProgram>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_adapter: Option<RunDebugProgram>,
     #[serde(skip)]
     pub debug_command: Option<Vec<String>>,
     #[serde(skip)]
@@ -114,6 +116,8 @@ pub enum DapEvent {
         thread_id: ThreadId,
     },
     Output(Output),
+    #[serde(rename = "dart.testNotification")]
+    DartTestNotification(Value),
     Breakpoint {
         reason: String,
         breakpoint: Breakpoint,
@@ -873,4 +877,33 @@ impl Request for StepOut {
     type Arguments = StepOutArguments;
     type Result = ();
     const COMMAND: &'static str = "stepOut";
+}
+
+#[cfg(test)]
+mod flutter_test_protocol_tests {
+    use super::*;
+    #[test]
+    fn decodes_sdk_test_notifications() {
+        let event: DapEvent = serde_json::from_value(serde_json::json!({
+            "event":"dart.testNotification", "body":{"type":"done","success":true}
+        }))
+        .unwrap();
+        assert!(
+            matches!(event, DapEvent::DartTestNotification(v) if v["success"] == true)
+        );
+    }
+    #[test]
+    fn existing_launch_configs_need_no_adapter_field() {
+        let config: RunDebugConfig = serde_json::from_value(serde_json::json!({
+            "name":"Example", "program":"app", "tracing-output":false
+        }))
+        .unwrap();
+        assert!(config.debug_adapter.is_none());
+        assert!(
+            serde_json::to_value(config)
+                .unwrap()
+                .get("debug-adapter")
+                .is_none()
+        );
+    }
 }

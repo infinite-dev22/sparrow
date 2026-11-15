@@ -294,9 +294,20 @@ impl DapClient {
             DapEvent::Continued(_) => {
                 self.plugin_rpc.core_rpc.dap_continued(self.dap_rpc.dap_id);
             }
-            DapEvent::Exited(_exited) => {}
+            DapEvent::Exited(exited) => {
+                if self.config.ty.as_deref() == Some("flutter-test") {
+                    self.plugin_rpc.core_rpc.flutter_test_event(self.config.dap_id,
+                        serde_json::json!({"type": "sparrow.exit", "success": exited.exit_code == 0}));
+                }
+            }
             DapEvent::Terminated(_) => {
                 self.terminated = true;
+                if self.config.ty.as_deref() == Some("flutter-test") {
+                    self.plugin_rpc.core_rpc.flutter_test_event(
+                        self.config.dap_id,
+                        serde_json::json!({"type": "sparrow.terminated"}),
+                    );
+                }
                 // self.plugin_rpc.core_rpc.dap_terminated(self.dap_rpc.dap_id);
                 if let Some(term_id) = self.term_id {
                     self.plugin_rpc.proxy_rpc.terminal_close(term_id);
@@ -306,7 +317,17 @@ impl DapClient {
                 }
             }
             DapEvent::Thread { .. } => {}
-            DapEvent::Output(_) => {}
+            DapEvent::DartTestNotification(event) => {
+                self.plugin_rpc
+                    .core_rpc
+                    .flutter_test_event(self.config.dap_id, event.clone());
+            }
+            DapEvent::Output(output) => {
+                if self.config.ty.as_deref() == Some("flutter-test") {
+                    self.plugin_rpc.core_rpc.flutter_test_event(self.config.dap_id,
+                        serde_json::json!({"type": "sparrow.output", "output": output.output}));
+                }
+            }
             DapEvent::Breakpoint { .. } => {}
             DapEvent::Module { .. } => {}
             DapEvent::LoadedSource { .. } => {}
@@ -499,6 +520,12 @@ impl DapRpcHandler {
                 }
                 DapRpc::Disconnected => {
                     dap_client.disconnected = true;
+                    if dap_client.config.ty.as_deref() == Some("flutter-test") {
+                        dap_client.plugin_rpc.core_rpc.flutter_test_event(
+                            dap_client.config.dap_id,
+                            serde_json::json!({"type": "sparrow.terminated"}),
+                        );
+                    }
                     if let Some(term_id) = dap_client.term_id {
                         dap_client.plugin_rpc.proxy_rpc.terminal_close(term_id);
                     }
@@ -621,10 +648,11 @@ impl DapRpcHandler {
 
     pub fn launch(&self, config: &RunDebugConfig) -> Result<()> {
         let params = serde_json::json!({
+            "console": if config.ty.as_deref() == Some("flutter-test") { "debugConsole" } else { "terminal" },
             "program": config.program,
             "args": config.args,
             "cwd": config.cwd,
-            "runInTerminal": true,
+            "runInTerminal": config.ty.as_deref() != Some("flutter-test"),
             "env": config.env
         });
         let _resp = self

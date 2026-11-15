@@ -559,6 +559,7 @@ fn flutter_config(cwd: Option<String>, device_id: Option<String>) -> RunDebugCon
         cwd,
         env: None,
         prelaunch: None,
+        debug_adapter: None,
         debug_command: None,
         dap_id: Default::default(),
         tracing_output: false,

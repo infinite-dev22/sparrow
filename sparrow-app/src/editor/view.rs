@@ -1986,6 +1986,90 @@ fn editor_gutter_code_actions(
     .debug_name("Code Action LightBulb")
 }
 
+fn editor_gutter_tests(
+    window: Rc<WindowTabData>,
+    e_data: RwSignal<EditorData>,
+) -> impl View {
+    let (ed, doc, config) = e_data
+        .with_untracked(|e| (e.editor.clone(), e.doc_signal(), e.common.config));
+    let screen_lines = ed.screen_lines;
+    let viewport = ed.viewport;
+    let internal = window.common.internal_command;
+    // Cache discovery by buffer revision, rather than rescanning on scroll.
+    let tests = create_memo(move |_| {
+        let doc = doc.get();
+        let path = doc.content.with(|c| c.path().cloned());
+        let Some(path) = path.filter(|p| crate::dart::test_runner::is_test_file(p))
+        else {
+            return Vec::new();
+        };
+        let source = doc.buffer.with(|b| b.to_string());
+        crate::dart::test_runner::discover_tests(&source)
+            .into_iter()
+            .map(|test| (path.clone(), test))
+            .collect::<Vec<_>>()
+    });
+    dyn_stack(
+        move || tests.get(),
+        |(path, test)| (path.clone(), test.byte_range.0, test.name.clone()),
+        move |(path, test)| {
+            let line = test.line;
+            let debug_path = path.clone();
+            let debug_name = test.name.clone();
+            stack((
+                crate::app::tooltip_label(
+                    config,
+                    container(svg(move || config.get().ui_svg(SparrowIcons::START))
+                        .style(move |s| {
+                            let config = config.get();
+                            let size = config.ui.icon_size() as f32;
+                            s.size(size, size).color(config.color(SparrowColor::SOURCE_CONTROL_ADDED))
+                        }))
+                        .style(move |s| s.padding(4.0).border_radius(6.0)
+                            .hover(|s| s.cursor(CursorStyle::Pointer)
+                                .background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND))))
+                        .on_click_stop(move |_| {
+                            internal.send(InternalCommand::FlutterRunTest {
+                                path: path.clone(), name: test.name.clone(), debug: false,
+                            });
+                        }),
+                    || "Run Test / Group",
+                ),
+                clickable_icon(
+                    || SparrowIcons::DEBUG,
+                    move || {
+                        internal.send(InternalCommand::FlutterRunTest {
+                            path: debug_path.clone(),
+                            name: debug_name.clone(),
+                            debug: true,
+                        })
+                    },
+                    || false,
+                    || false,
+                    || "Debug Test / Group",
+                    config,
+                ),
+            ))
+            .style(move |s| {
+                let info = screen_lines.with(|s| s.info_for_line(line));
+                let y = info.map(|i| i.y).unwrap_or(-100.0) - viewport.get().y0;
+                s.absolute()
+                    .height(config.get().editor.line_height() as f32)
+                    .items_center()
+                    .margin_top(y as f32)
+            })
+        },
+    )
+    .style(move |s| {
+        s.absolute()
+            .inset_right(0.0)
+            .width(48.0)
+            .height_full()
+            .apply_if(tests.with(|t| t.is_empty()), |s| s.hide())
+    })
+    .debug_name("Dart Test Gutter")
+}
+
 fn editor_gutter(
     window_tab_data: Rc<WindowTabData>,
     e_data: RwSignal<EditorData>,
@@ -2006,8 +2090,21 @@ fn editor_gutter(
         icon_size + icon_padding * 2.0
     };
 
-    let gutter_padding_right = create_memo(move |_| icon_total_width() + 6.0);
+    let gutter_padding_right = create_memo(move |_| {
+        let is_test = doc.get().content.with(|c| {
+            c.path()
+                .is_some_and(|p| crate::dart::test_runner::is_test_file(p))
+        });
+        icon_total_width() + 6.0 + if is_test { 48.0 } else { 0.0 }
+    });
 
+    let actions_width = create_memo(move |_| {
+        let is_test = doc.get().content.with(|c| {
+            c.path()
+                .is_some_and(|p| crate::dart::test_runner::is_test_file(p))
+        });
+        gutter_width.get() - if is_test { 48.0 } else { 0.0 }
+    });
     stack((
         stack((
             empty().style(move |s| s.width(icon_total_width() * 2.0 - 8.0)),
@@ -2039,7 +2136,8 @@ fn editor_gutter(
                         }
                     })
                     .style(|s| s.size_pct(100.0, 100.0)),
-                editor_gutter_code_actions(e_data, gutter_width, icon_padding),
+                editor_gutter_code_actions(e_data, actions_width, icon_padding),
+                editor_gutter_tests(window_tab_data.clone(), e_data),
             ))
             .style(|s| s.size_pct(100.0, 100.0)),
         )

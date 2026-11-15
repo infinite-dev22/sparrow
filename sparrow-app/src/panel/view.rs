@@ -562,6 +562,9 @@ fn panel_view(
                     )
                         .into_any()
                 }
+                PanelKind::FlutterTest => {
+                    crate::panel::flutter_test_view::flutter_test_panel(window_tab_data.clone(), position).into_any()
+                }
                 PanelKind::FlutterRun => {
                     crate::panel::flutter_run_view::flutter_run_panel(
                         window_tab_data.clone(),
@@ -684,6 +687,7 @@ fn stripe_picker(
                 PanelKind::DartOutline => "Outline",
                 PanelKind::FlutterInspector => "Flutter Inspector",
                 PanelKind::FlutterRun => "Run / Flutter Logs",
+                PanelKind::FlutterTest => "Flutter Test",
                 PanelKind::DeviceManager => "Device Manager",
                 PanelKind::FlutterPerformance => "Flutter Performance",
             };

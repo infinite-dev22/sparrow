@@ -637,6 +637,18 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "Flutter: Run Test at Cursor")]
     FlutterRunTestAtCursor,
 
+    #[strum(serialize = "flutter_debug_test_at_cursor")]
+    #[strum(message = "Flutter: Debug Test at Cursor")]
+    FlutterDebugTestAtCursor,
+
+    #[strum(serialize = "flutter_run_test_file")]
+    #[strum(message = "Flutter: Run Test File")]
+    FlutterRunTestFile,
+
+    #[strum(serialize = "flutter_rerun_failed_tests")]
+    #[strum(message = "Flutter: Re-run Failed Tests")]
+    FlutterRerunFailedTests,
+
     #[strum(serialize = "pub_add")]
     #[strum(message = "Flutter: Add Package")]
     PubAdd,
@@ -844,7 +856,20 @@ pub enum InternalCommand {
     },
     FlutterRunTestAtCursor {
         term_id: TermId,
-    }
+    },
+    FlutterRunTest {
+        path: PathBuf,
+        name: String,
+        debug: bool,
+    },
+    FlutterStartTests {
+        targets: Vec<(PathBuf, String)>,
+        debug: bool,
+        exact: bool,
+    },
+    FlutterRerunTests {
+        failed_only: bool,
+    },
 }
 
 #[derive(Clone)]

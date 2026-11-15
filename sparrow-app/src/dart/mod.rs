@@ -11,6 +11,7 @@ pub mod semantic_tokens;
 pub mod signature_help;
 pub mod swatches;
 pub mod test_runner;
+pub mod test_service;
 pub mod vm_service;
 pub mod widget_guides;
 pub mod widget_lsp;

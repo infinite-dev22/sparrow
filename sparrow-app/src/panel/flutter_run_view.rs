@@ -129,9 +129,11 @@ pub fn flutter_run_panel(
     .debug_name("Flutter Run Panel")
 }
 
-fn log_line_row(
+pub(super) fn log_line_row(
     line: String,
-    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
+    config: floem::reactive::ReadSignal<
+        std::sync::Arc<crate::config::SparrowConfig>,
+    >,
     internal_command: crate::listener::Listener<InternalCommand>,
     workspace_path: Option<std::path::PathBuf>,
 ) -> impl View {
@@ -178,38 +180,68 @@ fn parse_stack_trace_link(
     workspace_root: Option<&std::path::Path>,
 ) -> Option<EditorLocation> {
     let ws = workspace_root?;
-    // Match pattern: `path/to/file.dart:line:col` or `path/to/file.dart:line`
-    for word in line.split_whitespace() {
-        let trimmed = word.trim_matches(|c| c == '(' || c == ')' || c == '[' || c == ']');
-        if trimmed.contains(".dart:") {
-            let parts: Vec<&str> = trimmed.split(':').collect();
-            if parts.len() >= 2 {
-                let file_part = parts[0];
-                let line_num: u32 = parts[1].parse().ok()?;
-                let col_num: u32 = parts.get(2).and_then(|c| c.parse().ok()).unwrap_or(1);
-
-                let full_path = if std::path::Path::new(file_part).is_absolute() {
-                    std::path::PathBuf::from(file_part)
-                } else {
-                    ws.join(file_part)
-                };
-
-                if full_path.exists() {
-                    return Some(EditorLocation {
-                        path: full_path,
-                        position: Some(EditorPosition::Position(lsp_types::Position::new(
-                            line_num.saturating_sub(1),
-                            col_num.saturating_sub(1),
-                        ))),
-                        scroll_offset: None,
-                        ignore_unconfirmed: false,
-                        same_editor_tab: false,
-                    });
-                }
-            }
-        }
+    // Accept both VM traces (`file.dart:12:3`) and package:test traces
+    // (`file.dart 12:3`). URI prefixes must survive parsing the line/column.
+    static TRACE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"([^\s()\[\]]+\.dart)(?::|\s+)(\d+)(?::(\d+))?")
+                .unwrap()
+        });
+    for captures in TRACE.captures_iter(line) {
+        let path = &captures[1];
+        let full_path = if path.starts_with("file:") {
+            url::Url::parse(path)
+                .ok()
+                .and_then(|u| u.to_file_path().ok())
+        } else if let Some(package_path) = path.strip_prefix("package:") {
+            resolve_package_path(ws, package_path)
+        } else if std::path::Path::new(path).is_absolute() {
+            Some(std::path::PathBuf::from(path))
+        } else {
+            Some(ws.join(path))
+        };
+        let Some(full_path) = full_path.filter(|p| p.is_file()) else {
+            continue;
+        };
+        let line_num = captures[2].parse::<u32>().ok()?;
+        let col_num = captures
+            .get(3)
+            .and_then(|c| c.as_str().parse::<u32>().ok())
+            .unwrap_or(1);
+        return Some(EditorLocation {
+            path: full_path,
+            position: Some(EditorPosition::Position(lsp_types::Position::new(
+                line_num.saturating_sub(1),
+                col_num.saturating_sub(1),
+            ))),
+            scroll_offset: None,
+            ignore_unconfirmed: false,
+            same_editor_tab: false,
+        });
     }
     None
+}
+
+fn resolve_package_path(
+    root: &std::path::Path,
+    package_path: &str,
+) -> Option<std::path::PathBuf> {
+    let (package, relative) = package_path.split_once('/')?;
+    let config_path = root.join(".dart_tool/package_config.json");
+    let config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&config_path).ok()?).ok()?;
+    let entry = config["packages"]
+        .as_array()?
+        .iter()
+        .find(|p| p["name"] == package)?;
+    let base = url::Url::from_file_path(config_path).ok()?;
+    let root_uri = base.join(entry["rootUri"].as_str()?).ok()?;
+    let uri = root_uri
+        .join(entry["packageUri"].as_str().unwrap_or("lib/"))
+        .ok()?
+        .join(relative)
+        .ok()?;
+    uri.to_file_path().ok()
 }
 
 struct LogList {
@@ -233,5 +265,55 @@ impl VirtualVector<(usize, String)> for LogList {
         let start = range.start.min(self.items.len());
         let end = range.end.min(self.items.len());
         self.items[start..end].iter().cloned()
+    }
+}
+
+#[cfg(test)]
+mod trace_tests {
+    use super::*;
+    #[test]
+    fn parses_both_test_and_vm_traces() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("test")).unwrap();
+        let file = root.path().join("test/widget_test.dart");
+        std::fs::write(&file, "").unwrap();
+        for trace in [
+            "test/widget_test.dart 12:7 main.<fn>",
+            "#0 test/widget_test.dart:12:7",
+            "missing.dart:2:1 test/widget_test.dart:12:7",
+        ] {
+            let location = parse_stack_trace_link(trace, Some(root.path())).unwrap();
+            assert_eq!(location.path, file);
+            assert!(
+                matches!(location.position, Some(EditorPosition::Position(p)) if p.line == 11 && p.character == 6)
+            );
+        }
+        let uri = url::Url::from_file_path(&file).unwrap();
+        assert_eq!(
+            parse_stack_trace_link(&format!("({uri}:12:7)"), Some(root.path()))
+                .unwrap()
+                .path,
+            file
+        );
+    }
+    #[test]
+    fn resolves_package_config_relative_uris() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".dart_tool")).unwrap();
+        std::fs::create_dir_all(root.path().join("lib")).unwrap();
+        let file = root.path().join("lib/main.dart");
+        std::fs::write(&file, "").unwrap();
+        std::fs::write(
+            root.path().join(".dart_tool/package_config.json"),
+            r#"{"packages":[{"name":"demo","rootUri":"../","packageUri":"lib/"}]}"#,
+        )
+        .unwrap();
+        let loc =
+            parse_stack_trace_link("package:demo/main.dart 4:2", Some(root.path()))
+                .unwrap();
+        assert_eq!(
+            loc.path.canonicalize().unwrap(),
+            file.canonicalize().unwrap()
+        );
     }
 }

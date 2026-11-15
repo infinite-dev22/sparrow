@@ -132,6 +132,10 @@ pub enum CoreNotification {
         message: String,
         target: Option<String>,
     },
+    FlutterTestEvent {
+        dap_id: DapId,
+        event: serde_json::Value,
+    },
     DapStopped {
         dap_id: DapId,
         stopped: Stopped,
@@ -365,6 +369,10 @@ impl CoreRpcHandler {
 
     pub fn update_terminal(&self, term_id: TermId, content: Vec<u8>) {
         self.notification(CoreNotification::UpdateTerminal { term_id, content });
+    }
+
+    pub fn flutter_test_event(&self, dap_id: DapId, event: serde_json::Value) {
+        self.notification(CoreNotification::FlutterTestEvent { dap_id, event });
     }
 
     pub fn dap_stopped(

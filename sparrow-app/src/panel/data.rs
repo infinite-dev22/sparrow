@@ -37,6 +37,7 @@ pub fn default_panel_order() -> PanelOrder {
         PanelPosition::BottomLeft,
         im::vector![
             PanelKind::FlutterRun,
+            PanelKind::FlutterTest,
             PanelKind::Problem,
             PanelKind::Terminal,
             PanelKind::Search,
@@ -115,6 +116,16 @@ impl PanelData {
         sections: im::HashMap<PanelSection, bool>,
         common: Rc<CommonData>,
     ) -> Self {
+        let mut panels = panels;
+        if !panels
+            .values()
+            .any(|items| items.contains(&PanelKind::FlutterTest))
+        {
+            panels
+                .entry(PanelPosition::BottomLeft)
+                .or_default()
+                .push_back(PanelKind::FlutterTest);
+        }
         let panels = cx.create_rw_signal(panels);
 
         let mut styles = im::HashMap::new();

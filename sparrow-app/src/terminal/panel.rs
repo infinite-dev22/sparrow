@@ -64,9 +64,16 @@ impl TerminalPanelData {
         let debug = RunDebugData::new(cx, common.breakpoints);
 
         let breakline = {
+            let adapter_dap = debug.active_dap;
             let active_term = debug.active_term;
             let daps = debug.daps;
             cx.create_memo(move |_| {
+                if let Some(id) = adapter_dap.get() {
+                    return daps
+                        .with(|daps| daps.get(&id).cloned())
+                        .filter(|dap| dap.stopped.get())
+                        .and_then(|dap| dap.breakline.get());
+                }
                 let active_term = active_term.get();
                 let active_term = match active_term {
                     Some(active_term) => active_term,
@@ -741,6 +748,20 @@ impl TerminalPanelData {
     }
 
     pub fn get_active_dap(&self, tracked: bool) -> Option<DapData> {
+        let adapter = if tracked {
+            self.debug.active_dap.get()
+        } else {
+            self.debug.active_dap.get_untracked()
+        };
+        if let Some(id) = adapter {
+            return if tracked {
+                self.debug.daps.with(|daps| daps.get(&id).cloned())
+            } else {
+                self.debug
+                    .daps
+                    .with_untracked(|daps| daps.get(&id).cloned())
+            };
+        }
         let active_term = if tracked {
             self.debug.active_term.get()?
         } else {
