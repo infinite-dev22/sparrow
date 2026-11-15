@@ -190,6 +190,7 @@ pub struct WindowTabData {
     pub dart_lsp: DartLspService,
     pub flutter_hot_reload: FlutterHotReloadData,
     pub flutter_inspector: FlutterInspectorData,
+    pub flutter_project: crate::dart::project_wizard::ProjectWizard,
     pub flutter_test: crate::dart::test_service::FlutterTestData,
     pub source_control: SourceControlData,
     pub rename: RenameData,
@@ -395,6 +396,7 @@ impl WindowTabData {
             _ => DartLspService::spawn_unavailable(),
         };
 
+        if let Some(root) = &workspace.path { if workspace.kind == SparrowWorkspaceType::Local { crate::dart::assets::start(root.clone()); } }
         let signature_help = cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
 
         let common = Rc::new(CommonData {
@@ -638,6 +640,7 @@ impl WindowTabData {
             terminal,
             flutter_hot_reload: flutter_hot_reload.clone(),
             flutter_inspector: flutter_inspector.clone(),
+            flutter_project: crate::dart::project_wizard::ProjectWizard::new(cx, common.workspace.path.as_ref().and_then(|p| p.parent()).unwrap_or(std::env::temp_dir().as_path()).display().to_string()),
             flutter_test: crate::dart::test_service::FlutterTestData::new(
                 cx,
                 common.proxy.clone(),
@@ -2015,6 +2018,7 @@ impl WindowTabData {
             FlutterStop => {
                 self.flutter_hot_reload.stop();
             }
+            FlutterNewProject => self.flutter_project.active.set(true),
             PubAdd => {
                 self.palette.run(PaletteKind::PubPackage);
             }

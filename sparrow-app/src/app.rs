@@ -3559,6 +3559,7 @@ fn window_tab(
         palette(window_tab_data.clone()),
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
+        crate::dart::project_wizard::view(window_tab_data.clone()),
 
         run_config_modal(window_tab_data.clone()),
         debug_floating_toolbar(window_tab_data.clone()),

@@ -652,6 +652,9 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "pub_add")]
     #[strum(message = "Flutter: Add Package")]
     PubAdd,
+    #[strum(serialize = "flutter_new_project")]
+    #[strum(message = "Flutter: New Project")]
+    FlutterNewProject,
 }
 
 #[derive(Clone, Debug)]

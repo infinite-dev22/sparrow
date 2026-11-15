@@ -34,6 +34,8 @@ Sparrow (IPA: /læps/) is written in pure Rust, with a UI in [Floem](https://git
 * Built-in terminal, so you can execute commands in your workspace, without leaving Sparrow.
 * [Flutter testing](docs/flutter-testing.md): gutter Run/Debug actions, live test results, assertion comparisons, and failed-test reruns.
 
+Flutter project creation and asset path completion are described in the [project and assets guide](docs/flutter-projects-and-assets.md).
+
 ## Installation
 
 You can find pre-built releases for Windows, Linux and macOS [here](https://github.com/infinite-dev22/sparrow/releases), or [installing with a package manager](docs/installing-with-package-manager.md).

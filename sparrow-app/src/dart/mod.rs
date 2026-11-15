@@ -44,3 +44,6 @@ pub(crate) fn is_dart_path(path: &std::path::Path) -> bool {
         .map(|e| e.eq_ignore_ascii_case("dart"))
         .unwrap_or(false)
 }
+
+pub mod assets;
+pub mod project_wizard;

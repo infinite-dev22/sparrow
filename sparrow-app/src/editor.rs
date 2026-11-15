@@ -1850,6 +1850,10 @@ impl EditorData {
             // Dart fast path — resolve first so we get the full edit
             // (textEdit, additionalTextEdits for auto-imports, detail,
             // documentation).
+            if item.item.data.as_ref().is_some_and(|v| v["sparrowAsset"] == true) {
+                if let Err(err) = self.apply_completion_item(&item.item) { tracing::error!("asset completion: {err}"); }
+                return;
+            }
             if item.plugin_id == PluginId(0) {
                 use floem::ext_event::create_ext_action;
                 let editor = self.clone();
@@ -2042,6 +2046,78 @@ impl EditorData {
         };
 
         let offset = self.cursor().with_untracked(|c| c.offset());
+        if crate::dart::is_dart_path(&path)
+            && self.common.workspace.kind
+                == crate::workspace::SparrowWorkspaceType::Local
+        {
+            let source = doc.buffer.with_untracked(|b| b.to_string());
+            let root = crate::dart::test_runner::project_root(&path);
+            if let Some(root) = &root {
+                crate::dart::assets::start(root.clone());
+            }
+            if let Some((start, paths)) = root
+                .and_then(|root| crate::dart::assets::complete(&root, &source, offset))
+            {
+                let items = doc.buffer.with_untracked(|b| {
+                    paths
+                        .into_iter()
+                        .map(|asset| lsp_types::CompletionItem {
+                            label: asset.clone(),
+                            data: Some(serde_json::json!({"sparrowAsset":true})),
+                            kind: Some(lsp_types::CompletionItemKind::FILE),
+                            text_edit: Some(lsp_types::CompletionTextEdit::Edit(
+                                lsp_types::TextEdit {
+                                    range: lsp_types::Range::new(
+                                        b.offset_to_position(start),
+                                        b.offset_to_position(
+                                            offset
+                                                + source[offset..]
+                                                    .find(
+                                                        source.as_bytes()[start - 1]
+                                                            as char,
+                                                    )
+                                                    .unwrap_or(0),
+                                        ),
+                                    ),
+                                    new_text: asset
+                                        .replace('\\', "\\\\")
+                                        .replace('$', "\\$")
+                                        .replace(
+                                            source.as_bytes()[start - 1] as char,
+                                            &format!(
+                                                "\\{}",
+                                                source.as_bytes()[start - 1] as char
+                                            ),
+                                        ),
+                                },
+                            )),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>()
+                });
+                self.common.completion.update(|c| {
+                    c.request_id += 1;
+                    c.status = CompletionStatus::Started;
+                    c.offset = start;
+                    c.path = path.clone();
+                    c.input = source[start..offset].into();
+                    c.filtered_items.clear();
+                    c.input_items.clear();
+                    c.active.set(0);
+                    c.latest_editor_id = Some(self.id());
+                    c.receive_direct(
+                        c.request_id,
+                        items,
+                        sparrow_rpc::plugin::PluginId(0),
+                    );
+                });
+                self.common
+                    .completion
+                    .get_untracked()
+                    .update_document_completion(self, offset);
+                return;
+            }
+        }
         let (start_offset, input, char) = doc.buffer.with_untracked(|buffer| {
             let start_offset = buffer.prev_code_boundary(offset);
             let end_offset = buffer.next_code_boundary(offset);
