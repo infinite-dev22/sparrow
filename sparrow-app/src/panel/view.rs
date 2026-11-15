@@ -506,6 +506,9 @@ fn panel_view(
         |p| *p,
         move |kind| {
             let view = match kind {
+                PanelKind::Notifications => super::workflow_tools::notifications(window_tab_data.clone()).into_any(),
+                PanelKind::PullRequests => super::workflow_tools::pull_requests(window_tab_data.clone()).into_any(),
+                PanelKind::RunningDevices => super::workflow_tools::running_devices(window_tab_data.clone()).into_any(),
                 PanelKind::Problems => super::reference_tools::problems(window_tab_data.clone()).into_any(),
                 PanelKind::Logcat => super::reference_tools::logcat(window_tab_data.clone()).into_any(),
                 PanelKind::GitHistory => super::reference_tools::history(window_tab_data.clone()).into_any(),
@@ -678,6 +681,9 @@ fn stripe_picker(
         move |p| {
             let window_tab_data = window_tab_data.clone();
             let tooltip = match p {
+                PanelKind::Notifications => "Notifications",
+                PanelKind::PullRequests => "Pull Requests",
+                PanelKind::RunningDevices => "Running Devices",
                 PanelKind::Problems => "Problems",
                 PanelKind::Logcat => "Logcat",
                 PanelKind::GitHistory => "Git History",

@@ -25,3 +25,5 @@ The additional screenshots also document Git history, Logcat, Notifications, pul
 Native before/after captures and interaction results for Dart Analysis, Device Manager, and Terminal are in [the panel visual check](visual-checks/panels.md).
 
 Problems, Logcat, and Git History now have separate bottom tool-stripe entries. Their real-data behavior, native captures, validation, and remaining limitations are documented in [the additional tool-window check](visual-checks/tools.md).
+
+Notifications, Pull Requests and Running Devices now use real Dart/Flutter IDE events, GitHub repository data, and Flutter device discovery. Shared file icons distinguish Flutter project file types in Project and editor tabs. See [workflow captures, checks and limitations](visual-checks/workflows.md).

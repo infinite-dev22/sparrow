@@ -25,3 +25,5 @@ pub mod chrome;
 pub mod dart_analysis_view;
 
 pub mod reference_tools;
+
+pub mod workflow_tools;

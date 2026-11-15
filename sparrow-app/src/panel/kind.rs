@@ -9,6 +9,9 @@ use crate::config::icon::SparrowIcons;
 )]
 pub enum PanelKind {
     Terminal,
+    Notifications,
+    PullRequests,
+    RunningDevices,
     Problems,
     Logcat,
     GitHistory,
@@ -34,6 +37,9 @@ pub enum PanelKind {
 impl PanelKind {
     pub fn svg_name(&self) -> &'static str {
         match &self {
+            PanelKind::Notifications => "notifications",
+            PanelKind::PullRequests => "pull_requests",
+            PanelKind::RunningDevices => "running_devices",
             PanelKind::Problems => SparrowIcons::ERROR,
             PanelKind::Logcat => SparrowIcons::DOCUMENT_SYMBOL,
             PanelKind::GitHistory => SparrowIcons::SCM,
@@ -71,6 +77,8 @@ impl PanelKind {
     pub fn default_position(&self) -> PanelPosition {
         match self {
             PanelKind::Problems | PanelKind::Logcat | PanelKind::GitHistory => PanelPosition::BottomLeft,
+            PanelKind::Notifications | PanelKind::RunningDevices => PanelPosition::RightTop,
+            PanelKind::PullRequests => PanelPosition::LeftTop,
             PanelKind::Terminal => PanelPosition::BottomLeft,
             PanelKind::FileExplorer => PanelPosition::LeftTop,
             PanelKind::SourceControl => PanelPosition::LeftTop,

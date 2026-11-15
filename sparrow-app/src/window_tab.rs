@@ -207,6 +207,7 @@ pub struct WindowTabData {
     pub update_in_progress: RwSignal<bool>,
     pub progresses: RwSignal<IndexMap<ProgressToken, WorkProgress>>,
     pub messages: RwSignal<Vec<(String, ShowMessageParams)>>,
+    pub notifications: RwSignal<Vec<crate::panel::workflow_tools::Notice>>,
     pub common: Rc<CommonData>,
     pub widget_tree: WidgetTreeData,
     pub outline: OutlineData,
@@ -670,6 +671,7 @@ impl WindowTabData {
             update_in_progress: cx.create_rw_signal(false),
             progresses: cx.create_rw_signal(IndexMap::new()),
             messages: cx.create_rw_signal(Vec::new()),
+            notifications: cx.create_rw_signal(Vec::new()),
             common,
             project_menu_visible: cx.create_rw_signal(false),
             branch_menu_visible: cx.create_rw_signal(false),
@@ -828,6 +830,7 @@ impl WindowTabData {
                 parking_lot::Mutex<std::collections::HashMap<PathBuf, i64>>,
             > = Default::default();
 
+            let notices = window_tab_data.notifications;
             let main_split_apply = main_split.clone();
             let notification = create_signal_from_channel(dart_lsp_rx);
 
@@ -880,8 +883,10 @@ impl WindowTabData {
                         }
                         DartNotification::Error(e) => {
                             tracing::warn!("dart lsp: {e}");
+                            crate::panel::workflow_tools::record(notices, "Dart analysis", e);
                         }
                         DartNotification::Ready => {
+                            crate::panel::workflow_tools::record(notices, "Dart analysis", "Analysis server is ready.");
                             // LSP handshake done — request semantic tokens for every open Dart doc.
                             main_split_apply.docs.with_untracked(|docs| {
                                 for (path, doc) in docs.iter() {
@@ -3241,6 +3246,9 @@ impl WindowTabData {
             | PanelKind::Problems
             | PanelKind::Logcat
             | PanelKind::GitHistory
+            | PanelKind::Notifications
+            | PanelKind::PullRequests
+            | PanelKind::RunningDevices
             | PanelKind::FileExplorer => self.is_panel_focused(kind),
         };
         if should_hide {
@@ -3450,6 +3458,7 @@ impl WindowTabData {
     }
 
     pub fn show_alert(&self, title: String, msg: String, buttons: Vec<AlertButton>) {
+        crate::panel::workflow_tools::record(self.notifications, &title, &msg);
         self.alert_data.title.set(title);
         self.alert_data.msg.set(msg);
         self.alert_data.buttons.set(buttons);
@@ -3489,6 +3498,7 @@ impl WindowTabData {
     }
 
     fn show_message(&self, title: &str, message: &ShowMessageParams) {
+        crate::panel::workflow_tools::record(self.notifications, title, &message.message);
         self.messages.update(|messages| {
             messages.push((title.to_string(), message.clone()));
         });

@@ -25,7 +25,7 @@ use std::{
 };
 
 // Read stdout and stderr concurrently so a full pipe cannot block timeout/kill.
-fn output(
+pub(super) fn output(
     program: &Path,
     args: &[&str],
     cwd: Option<&Path>,
@@ -79,7 +79,7 @@ fn output(
         Err(String::from_utf8_lossy(&errors).trim().to_string())
     }
 }
-fn adb() -> PathBuf {
+pub(super) fn adb() -> PathBuf {
     for var in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
         if let Some(root) = std::env::var_os(var) {
             let p = PathBuf::from(root).join("platform-tools/adb");
@@ -419,6 +419,8 @@ pub fn logcat(window: Rc<WindowTabData>) -> impl View {
         let _ = tick.get();
         let serial = device.get();
         let paused_now = paused.get();
+        let _ = panel.styles.get();
+        let _ = panel.panels.get();
         if !panel.is_panel_visible(&PanelKind::Logcat)
             || paused_now
             || busy.get_untracked()

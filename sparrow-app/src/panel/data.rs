@@ -31,6 +31,7 @@ pub fn default_panel_order() -> PanelOrder {
             PanelKind::Plugin,
             PanelKind::SourceControl,
             PanelKind::Debug,
+            PanelKind::PullRequests,
         ],
     );
     order.insert(
@@ -52,6 +53,8 @@ pub fn default_panel_order() -> PanelOrder {
     order.insert(
         PanelPosition::RightTop,
         im::vector![
+            PanelKind::Notifications,
+            PanelKind::RunningDevices,
             PanelKind::FlutterInspector,
             PanelKind::FlutterPerformance,
             PanelKind::DeviceManager,

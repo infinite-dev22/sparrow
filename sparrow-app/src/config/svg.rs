@@ -91,3 +91,20 @@ impl SvgStore {
         self.svgs_on_disk.get(path).unwrap().clone()
     }
 }
+
+#[cfg(test)]
+mod file_icon_tests {
+    use super::*;
+    #[test]
+    fn flutter_project_file_types_resolve_to_distinct_embedded_icons() {
+        let mut store=SvgStore::default();
+        let mut rendered=std::collections::HashSet::new();
+        for name in ["main.dart","pubspec.yaml","config.yaml","data.json","app.arb","README.md","image.png","drawing.svg","font.ttf","AndroidManifest.xml"] {
+            let path=crate::config::DEFAULT_ICON_THEME_ICON_CONFIG.resolve_path_to_icon(&[Path::new(name)]).expect("file type must have an icon");
+            let svg=store.get_default_svg(path.file_name().unwrap().to_str().unwrap());
+            assert!(svg.contains("<svg"));
+            rendered.insert(svg);
+        }
+        assert_eq!(rendered.len(),10);
+    }
+}
