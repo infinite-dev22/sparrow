@@ -513,6 +513,7 @@ impl AppData {
         let config = window_data.config;
         // The KeyDown and PointerDown event handlers both need ownership of a WindowData object.
         let key_down_window_data = window_data.clone();
+        let key_up_window_data = window_data.clone();
         let view = stack((
             workspace_tab_header(window_data.clone()),
             window(window_data.clone()),
@@ -624,6 +625,29 @@ impl AppData {
 
         view.window_scale(move || window_scale.get())
             .keyboard_navigable()
+            .on_event(EventListener::KeyUp, move |event| {
+                // Floem sends keys directly to the focused field, without
+                // bubbling to its modal. Escape clears text-input focus on
+                // key-down; dismiss the topmost configuration modal on key-up.
+                if let Event::KeyUp(key) = event {
+                    if key.key.logical_key == floem::keyboard::Key::Named(floem::keyboard::NamedKey::Escape) {
+                        let active = key_up_window_data.active.get_untracked();
+                        if let Some((_, tab)) = key_up_window_data.window_tabs.with_untracked(|tabs| tabs.get(active).cloned()) {
+                            let modal = if tab.settings_modal_visible.get_untracked() {
+                                Some(tab.settings_modal_visible)
+                            } else if tab.run_config_modal_visible.get_untracked() {
+                                Some(tab.run_config_modal_visible)
+                            } else { None };
+                            if let Some(modal) = modal {
+                                modal.set(false);
+                                view_id.request_focus();
+                                return EventPropagation::Stop;
+                            }
+                        }
+                    }
+                }
+                EventPropagation::Continue
+            })
             .on_event(EventListener::KeyDown, move |event| {
                 if let Event::KeyDown(key_event) = event {
                     if key_down_window_data.key_down(key_event) {

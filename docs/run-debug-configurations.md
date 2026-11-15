@@ -17,3 +17,5 @@ The dialog follows the supplied Android Studio reference: a 916×684 layout with
 Save errors appear in the dialog. Invalid fields do not replace live configurations. Existing run files without Flutter dialog options remain readable. The dialog does not include placeholder controls for configuration templates or the Android Studio-specific “Show this page” setting.
 
 Tests cover argument quoting, executable/flag mapping, environment validation, before-launch settings and configuration-file round trips.
+
+The before-launch list displays an empty state until **Add** is selected; **Remove** clears the supported task. Native rendering and interaction captures are recorded in [the dialog visual check](visual-checks/dialogs.md).

@@ -15,7 +15,8 @@ use floem::{
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
     views::{
-        Decorators, container, dyn_stack, empty, label, scroll, stack, text_input,
+        Decorators, container, dyn_stack, empty, label, scroll, stack, svg,
+        text_input,
     },
 };
 use std::rc::Rc;
@@ -323,18 +324,23 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         let select = d.clone();
                         let active = d.selected;
                         let name = d.fields[0];
-                        label(move || {
-                            if active.get() == i {
-                                name.get()
-                            } else {
-                                draft.name.clone()
-                            }
-                        })
+                        stack((
+                            svg(|| include_str!("../../../icons/dart-flutter/flutter_logo.svg").to_string())
+                                .style(|s| s.size(16.0, 16.0)),
+                            label(move || {
+                                if active.get() == i {
+                                    name.get()
+                                } else {
+                                    draft.name.clone()
+                                }
+                            }),
+                        ))
                         .on_click_stop(move |_| select.choose(i))
                         .style(move |s| {
-                            s.height(24.0)
+                            s.height(22.0)
                                 .width_full()
                                 .padding_left(36.0)
+                                .gap(4.0)
                                 .items_center()
                                 .border_radius(4.0)
                                 .apply_if(active.get() == i, |s| {
@@ -394,11 +400,21 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             ))
             .style(move |s| {
                 s.flex_col()
-                    .margin_bottom(if title == "Name:" { 20.0 } else { 12.0 })
+                    .margin_bottom(if title == "Name:" { 0.0 } else { 15.0 })
                     .width_full()
             })
         };
     let entry = d.fields[1];
+    let before = d.fields[6];
+    let before_args = d.fields[7];
+    let editing_task = cx.create_rw_signal(false);
+    let selected_task = d.selected;
+    cx.create_effect(move |_| {
+        let _ = selected_task.get();
+        if visible.get() {
+            editing_task.set(!before.get_untracked().is_empty());
+        }
+    });
     let apply = d.clone();
     let ok = d.clone();
     let run = d.clone();
@@ -409,14 +425,36 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let project = d.project;
     let error = d.error;
     let checkbox = move |value: RwSignal<bool>, text: &'static str| {
-        label(move || format!("{} {text}", if value.get() { "☑" } else { "☐" }))
-            .on_click_stop(move |_| value.update(|v| *v = !*v))
-            .style(|s| s.items_center().padding_vert(4.0))
+        stack((
+            label(move || if value.get() { "✓" } else { "" }).style(move |s| {
+                s.size(16.0, 16.0)
+                    .items_center()
+                    .justify_center()
+                    .border(1.0)
+                    .border_radius(3.0)
+                    .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+                    .apply_if(value.get(), |s| {
+                        s.background(
+                            config.get().color(
+                                SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND,
+                            ),
+                        )
+                    })
+            }),
+            label(move || text),
+        ))
+        .on_click_stop(move |_| value.update(|v| *v = !*v))
+        .style(|s| {
+            s.items_center()
+                .gap(8.0)
+                .padding_vert(4.0)
+                .flex_shrink(0.0_f32)
+        })
     };
     let button = move |text: &'static str| {
         label(move || text).style(move |s| {
             s.min_width(72.0)
-                .height(26.0)
+                .height(24.0)
                 .padding_horiz(14.0)
                 .items_center()
                 .justify_center()
@@ -430,26 +468,40 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 })
         })
     };
-    container(container(stack((
+    let dialog = container(container(stack((
         stack((empty().style(|s|s.width(26.0)),label(||"Run/Debug Configurations").style(|s|s.flex_grow(1.0_f32).items_center().justify_center().font_bold()),clickable_icon(||SparrowIcons::CLOSE,move ||visible.set(false),||false,||false,||"Close",config)))
-            .style(move |s|s.height(36.0).items_center().flex_shrink(0.0_f32).background(config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND))),
+            .style(move |s|s.height(36.0).width_full().items_center().flex_shrink(0.0_f32).background(floem::peniko::Color::from_rgb8(40,40,40))),
         stack((sidebar,scroll(stack((
-            stack((form_row("Name:",d.fields[0],"").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),checkbox(project,"Store as project file"))).style(|s|s.items_center().gap(16.0)),
-            stack((form_row("Dart entrypoint / Program:",entry,"The entry-point for the application (e.g. lib/main.dart).").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),clickable_icon(||SparrowIcons::DIRECTORY_CLOSED,move ||open_file(FileDialogOptions::new().title("Choose Dart entrypoint"),move |file|{if let Some(file)=file{if let Some(path)=file.path.first(){entry.set(path.display().to_string());}}}),||false,||false,||"Browse",config))).style(|s|s.items_start()),
-            form_row("Additional run args:",d.fields[2],"Additional arguments to 'flutter run'. Quoted values are supported."),
-            form_row("Additional attach args:",d.fields[3],"Additional arguments used by Attach in the Run menu."),
+            stack((form_row("Name:",d.fields[0],"").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),checkbox(project,"Store as project file"))).style(|s|s.items_center().gap(16.0).margin_bottom(16.0)),
+            stack((form_row("Dart entrypoint:",entry,"The entry-point for the application (e.g. lib/main.dart).").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),clickable_icon(||SparrowIcons::DIRECTORY_CLOSED,move ||open_file(FileDialogOptions::new().title("Choose Dart entrypoint"),move |file|{if let Some(file)=file{if let Some(path)=file.path.first(){entry.set(path.display().to_string());}}}),||false,||false,||"Browse",config))).style(|s|s.items_start()),
+            form_row("Additional run args:",d.fields[2],"Additional arguments to 'flutter run'."),
+            form_row("Additional attach args:",d.fields[3],"Additional arguments to 'flutter attach'."),
             form_row("Build flavor:",d.fields[4],"Optional Gradle product flavor or Xcode custom scheme."),
-            form_row("Environment variables:",d.fields[5],"KEY=value; KEY2=value. Entries are separated by semicolons."),
+            form_row("Environment variables:",d.fields[5],"Additional environment variables. Format: KEY=value; KEY2=value."),
             label(||"⌄  Before launch").style(|s|s.margin_top(6.0).margin_bottom(10.0)),
-            stack((form_row("Program:",d.fields[6],"Leave empty to skip before-launch tasks."),form_row("Arguments:",d.fields[7],""))).style(move |s|s.padding(12.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+            stack((
+                stack((
+                    clickable_icon(||SparrowIcons::ADD,move ||editing_task.set(true),||false,||false,||"Add before-launch task",config),
+                    clickable_icon(||SparrowIcons::REMOVE,move ||{before.set(String::new());before_args.set(String::new());editing_task.set(false);},||false,move ||!editing_task.get(),||"Remove before-launch task",config),
+                )).style(move |s|s.height(26.0).width_full().items_center().border_bottom(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+                label(||"There are no tasks to run before launch").style(move |s|s.width_full().flex_grow(1.0_f32).items_center().justify_center().color(config.get().color(SparrowColor::EDITOR_DIM)).apply_if(editing_task.get(),|s|s.hide())),
+                stack((form_row("Program:",before,""),form_row("Arguments:",before_args,""))).style(move |s|s.flex_col().padding(8.0).width_full().apply_if(!editing_task.get(),|s|s.hide())),
+            )).style(move |s|s.flex_col().height(134.0).margin_left(24.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
             stack((checkbox(activate,"Activate tool window"),checkbox(focus,"Focus tool window"))).style(|s|s.gap(12.0).margin_top(4.0)),
             label(move ||error.get()).style(move |s|s.color(config.get().color(SparrowColor::SPARROW_ERROR)).selectable(true)),
-        )).style(|s|s.flex_col().padding(16.0).min_width_full())).style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full())))
+        )).style(|s|s.flex_col().padding(16.0).width_full())).style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full())))
             .style(|s|s.width_full().flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0)),
         stack((empty().style(|s|s.flex_grow(1.0_f32)),stack((button("▷ Run").on_click_stop(move |_|run.launch(false)),button("▾").style(|s|s.min_width(24.0).padding_horiz(4.0)).popout_menu(move ||{let attach=attach.clone();floem::menu::Menu::new("").entry(floem::menu::MenuItem::new("Attach to Flutter App").action(move ||attach.launch(true)))}))).style(|s|s.gap(0.0)),button("OK").on_click_stop(move |_|{if ok.apply(){visible.set(false);}}).style(move |s|s.background(config.get().color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))),button("Cancel").on_click_stop(move |_|visible.set(false)),button("Apply").on_click_stop(move |_|{apply.apply();}).disabled(move ||!dirty.dirty())))
-            .style(move |s|s.height(46.0).padding_horiz(16.0).gap(12.0).items_center().flex_shrink(0.0_f32).border_top(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
-    ))).style(move |s|s.width(916.0).height(684.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_radius(8.0)))
+            .style(move |s|s.height(46.0).width_full().padding_horiz(16.0).gap(12.0).items_center().flex_shrink(0.0_f32).border_top(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+    )).style(|s|s.flex_col().size_full())).style(move |s|s.font_family(config.get().ui.font_family.clone()).font_size(13.0).width(916.0).height(684.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().color(config.get().color(SparrowColor::EDITOR_FOREGROUND)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_radius(8.0)))
     .on_event_stop(EventListener::PointerDown,|_|{})
     .on_event(EventListener::KeyDown,move |event|{if let Event::KeyDown(key)=event{if key.key.logical_key==Key::Named(NamedKey::Escape){visible.set(false);return floem::event::EventPropagation::Stop;}}floem::event::EventPropagation::Continue})
-    .style(move |s|s.absolute().size_full().items_center().justify_center().z_index(200).background(floem::peniko::Color::from_rgba8(0,0,0,70)).apply_if(!visible.get(),|s|s.hide()))
+    .style(move |s|s.absolute().size_full().padding_bottom(116.0).items_center().justify_center().z_index(200).background(floem::peniko::Color::from_rgba8(0,0,0,70)).apply_if(!visible.get(),|s|s.hide()));
+    let id = dialog.id();
+    cx.create_effect(move |_| {
+        if visible.get() {
+            id.request_focus();
+        }
+    });
+    dialog
 }

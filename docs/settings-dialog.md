@@ -13,3 +13,5 @@ Saving validates the complete pending draft, preserves unrelated TOML values and
 Keymap, plugin management, and Run/Debug Configuration links open Sparrow's existing editors. Pending settings must first be applied or cancelled before leaving for one of those editors. Android Studio-only settings and services are not represented by non-functional controls.
 
 The older Settings editor tab remains available for restoring existing sessions; the standard Open Settings action now opens this modal. Workspace-specific overrides may take precedence over values saved to the user settings file.
+
+Native rendering and interaction captures are recorded in [the dialog visual check](visual-checks/dialogs.md).

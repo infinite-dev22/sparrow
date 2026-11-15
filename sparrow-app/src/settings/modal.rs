@@ -13,7 +13,8 @@ use floem::{
     menu::{Menu, MenuItem},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::{
-        Decorators, container, dyn_stack, empty, label, scroll, stack, svg, text_input,
+        Decorators, container, dyn_stack, empty, label, scroll, stack, svg,
+        text_input,
     },
 };
 use std::{collections::BTreeMap, rc::Rc};
@@ -340,8 +341,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let save = apply.clone();
     let external = window.clone();
     let overview=stack((
-        label(||"Customize IDE appearance and behavior: change themes and font size, tune the keymap, configure plugins and system settings.").style(|s|s.max_width_full().margin_bottom(10.0)),
-        dyn_stack(||vec![Page::Appearance,Page::System,Page::Editor,Page::Terminal,Page::Keymap,Page::Plugins],|p|*p as u8,move |p|label(move ||p.title()).on_click_stop(move |_|navigate(p,page,history,index,query)).style(move |s|s.margin_left(24.0).height(22.0).color(config.get().color(SparrowColor::EDITOR_LINK)).hover(|s|s.cursor(floem::style::CursorStyle::Pointer)))),
+        label(||"Customize IDE appearance and behavior: change themes and font size, tune the keymap, configure plugins and system settings.").style(|s|s.width_full().margin_top(8.0).margin_bottom(10.0)),
+        dyn_stack(||vec![Page::Appearance,Page::System,Page::Editor,Page::Terminal,Page::Keymap,Page::Plugins],|p|*p as u8,move |p|label(move ||p.title()).on_click_stop(move |_|navigate(p,page,history,index,query)).style(move |s|s.margin_left(24.0).height(22.0).color(config.get().color(SparrowColor::EDITOR_LINK)).hover(|s|s.cursor(floem::style::CursorStyle::Pointer)))).style(|s|s.flex_col().width_full()),
     )).style(move |s|s.flex_col().width_full().apply_if(page.get()!=Page::Overview||!query.with(|q|q.is_empty()),|s|s.hide()));
     let launch_page = page;
     let external_button = label(move || match launch_page.get() {
@@ -396,19 +397,19 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     };
     container(container(stack((
         stack((empty().style(|s|s.width(26.0)),label(move ||format!("Settings – {}",workspace.display().unwrap_or_else(||"Sparrow".into()))).style(|s|s.flex_grow(1.0_f32).items_center().justify_center().font_bold()),clickable_icon(||SparrowIcons::CLOSE,close,||false,||false,||"Close Settings",config)))
-            .style(move |s|s.height(36.0).items_center().flex_shrink(0.0_f32).background(config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND))),
+            .style(move |s|s.height(36.0).width_full().items_center().flex_shrink(0.0_f32).background(floem::peniko::Color::from_rgb8(40,40,40))),
         stack((
             stack((stack((
                 svg(move ||config.get().ui_svg(SparrowIcons::SEARCH)).style(move |s|s.size(14.0,14.0).margin_left(6.0).color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))),
                 search.style(|s|s.height_full().flex_grow(1.0_f32).min_width(0.0).padding_horiz(4.0)),
-            )).style(move |s|s.margin(8.0).height(24.0).items_center().border(1.0).border_radius(3.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+            )).style(move |s|s.margin_horiz(8.0).margin_top(11.0).margin_bottom(9.0).height(24.0).items_center().border(1.0).border_radius(3.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
                 dyn_stack(||PAGES.to_vec(),|(p,_,_)|*p as u8,move |(p,title,depth)|stack((
                     label(move ||if p==Page::Overview { if appearance_expanded.get(){"⌄"}else{"›"} }else{""})
                         .on_click_stop(move |_|{if p==Page::Overview {appearance_expanded.update(|v|*v=!*v);}}).style(|s|s.width(16.0)),
                     label(move ||title).style(|s|s.flex_grow(1.0_f32)),
                 )).on_click_stop(move |_|navigate(p,page,history,index,query)).style(move |s|s.height(25.0).width_full().padding_left((18+depth*16) as f32).items_center()
                     .apply_if(depth>0&&!appearance_expanded.get()&&query.with(|q|q.is_empty()),|s|s.hide())
-                    .apply_if(page.get()==p,|s|s.background(config.get().color(SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND))).hover(|s|s.cursor(floem::style::CursorStyle::Pointer)))),
+                    .apply_if(page.get()==p,|s|s.background(config.get().color(SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND))).hover(|s|s.cursor(floem::style::CursorStyle::Pointer)))).style(|s|s.flex_col().width_full()),
             )).style(move |s|s.width(256.0).height_full().flex_col().flex_shrink(0.0_f32).border_right(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
             stack((
                 stack((label(move ||if query.with(|q|q.is_empty()){page.get().title()}else{"Search results"}).style(|s|s.font_bold().flex_grow(1.0_f32)),
@@ -423,11 +424,11 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             )).style(|s|s.flex_col().height_full().flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).padding_horiz(16.0).padding_top(8.0)),
         )).style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full()),
         stack((tooltip_label(config,label(||"?").style(move |s|s.size(22.0,22.0).border_radius(11.0).border(1.0).items_center().justify_center().border_color(config.get().color(SparrowColor::SPARROW_BORDER))),||"Search by setting name or description. Changes are saved only by Apply or OK."),empty().style(|s|s.flex_grow(1.0_f32)),button("OK").on_click_stop(move |_|{if okay(){close();}}).style(move |s|s.background(config.get().color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))),button("Cancel").on_click_stop(move |_|close()),button("Apply").on_click_stop(move |_|{save();}).disabled(move ||pending.with(|p|p.is_empty()))))
-            .style(move |s|s.height(46.0).items_center().gap(12.0).padding_horiz(16.0).flex_shrink(0.0_f32).border_top(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
-    ))).style(move |s|s.width(900.0).height(700.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().border_radius(8.0).background(config.get().color(SparrowColor::PANEL_BACKGROUND))))
+            .style(move |s|s.height(46.0).width_full().items_center().gap(12.0).padding_horiz(16.0).flex_shrink(0.0_f32).border_top(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+    )).style(|s|s.flex_col().size_full())).style(move |s|s.font_family(config.get().ui.font_family.clone()).font_size(13.0).width(900.0).height(700.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().border_radius(8.0).color(config.get().color(SparrowColor::EDITOR_FOREGROUND)).background(config.get().color(SparrowColor::PANEL_BACKGROUND))))
     .on_event_stop(EventListener::PointerDown,|_|{})
     .on_event(EventListener::KeyDown,move |event|{if let Event::KeyDown(key)=event{if key.key.logical_key==Key::Named(NamedKey::Escape){close();return EventPropagation::Stop;}}EventPropagation::Continue})
-    .style(move |s|s.absolute().size_full().items_center().justify_center().z_index(210).background(floem::peniko::Color::from_rgba8(0,0,0,70)).apply_if(!visible.get(),|s|s.hide()))
+    .style(move |s|s.absolute().size_full().padding_bottom(116.0).items_center().justify_center().z_index(210).background(floem::peniko::Color::from_rgba8(0,0,0,70)).apply_if(!visible.get(),|s|s.hide()))
 }
 #[cfg(test)]
 mod tests {

@@ -2867,6 +2867,11 @@ impl WindowTabData {
     }
 
     pub fn key_down<'a>(&self, event: impl Into<EventRef<'a>> + Copy) -> bool {
+        if self.settings_modal_visible.get_untracked()
+            || self.run_config_modal_visible.get_untracked()
+        {
+            return false;
+        }
         if self.alert_data.active.get_untracked() {
             return false;
         }
