@@ -44,8 +44,8 @@ name = "sparrow Modern"
 "flutter_run"         = "player-play.svg"         # Tabler: player-play
 "device_manager"      = "smartphone.svg"          # Lucide: smartphone
 "device.mobile"       = "smartphone.svg"          # Lucide: smartphone
-"device.desktop"      = "screen-normal.svg"       # Codicons: screen-normal
-"device.web"          = "link.svg"                # Lucide: link
+"device.desktop"      = "flutter_desktop.svg"
+"device.web"          = "flutter_web.svg"
 
 # ── Windows ──────────────────────────────────────────────────────────────
 "window.close"     = "chrome-close.svg"          # Lucide: x
@@ -135,13 +135,16 @@ name = "sparrow Modern"
 "widget_layout"     = "symbol-structure.svg"
 "widget_list"       = "symbol-array.svg"
 "widget_grid"       = "symbol-array.svg"
-"flutter_logo"      = "symbol-namespace.svg"
+"dart_logo"         = "dart_logo.svg"
+"flutter_logo"      = "flutter_logo.svg"
 "material_logo"     = "symbol-color.svg"
 "cupertino_logo"    = "symbol-color.svg"
 "dart_future"       = "symbol-event.svg"
 
 "dart_analysis" = "circle-check.svg"
 "commit" = "git-commit.svg"
+"status.read-only" = "lock.svg"
+"status.writable" = "unlock.svg"
 "structure" = "list-tree.svg"
 "logcat" = "debug-console.svg"
 "notifications" = "bell.svg"

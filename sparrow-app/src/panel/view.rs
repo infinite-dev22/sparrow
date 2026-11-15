@@ -156,7 +156,11 @@ impl PanelBuilder {
             let s = s.width_full().flex_col();
             // Use the manual height if given, otherwise if we're open behave flex,
             // otherwise, do nothing so that there's no height
-            let s = if open.get() {
+            let s = if position.is_bottom() {
+                // Bottom tools are columns: vertical section heights must not
+                // become intrinsic widths that squeeze stacks and variables.
+                s.height_full().min_width(0.0).flex_grow(1.0_f32).flex_basis(0.0)
+            } else if open.get() {
                 if let Some(height) = height {
                     s.height(height)
                 } else {

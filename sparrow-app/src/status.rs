@@ -16,13 +16,13 @@ use lsp_types::{DiagnosticSeverity, ProgressToken};
 use sparrow_core::mode::{Mode, VisualMode};
 
 use crate::{
-    app::clickable_icon,
+    app::tooltip_label,
     command::SparrowWorkbenchCommand,
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     editor::EditorData,
     listener::Listener,
     palette::kind::PaletteKind,
-    panel::{kind::PanelKind, position::PanelContainerPosition},
+    panel::kind::PanelKind,
     source_control::SourceControlData,
     window_tab::{WindowTabData, WorkProgress},
 };
@@ -56,24 +56,9 @@ pub fn status(
         }
         (errors, warnings)
     });
-    let branch = source_control.branch;
-    let file_diffs = source_control.file_diffs;
-    let branch = move || {
-        format!(
-            "{}{}",
-            branch.get(),
-            if file_diffs.with(|diffs| diffs.is_empty()) {
-                ""
-            } else {
-                "*"
-            }
-        )
-    };
-
     let progresses = window_tab_data.progresses;
     let tab_data = window_tab_data.mode().clone();
     let mode = create_memo(move |_| tab_data);
-    let pointer_down = floem::reactive::create_rw_signal(false);
 
     stack((
         stack((
@@ -125,7 +110,7 @@ pub fn status(
                     .align_items(Some(AlignItems::Center))
                     .selectable(false)
             }),
-            status_breadcrumbs(window_tab_data.workspace.clone(), editor, config),
+            status_breadcrumbs(window_tab_data.clone(), editor, config),
             {
                 let panel = panel.clone();
                 stack((
@@ -175,7 +160,8 @@ pub fn status(
                 })
                 .style(move |s| {
                     s.height_pct(100.0)
-                        .padding_horiz(10.0)
+                        .apply_if(diagnostic_count.get() == (0, 0), |s| s.hide())
+                        .padding_horiz(8.0)
                         .items_center()
                         .hover(|s| {
                             s.cursor(CursorStyle::Pointer).background(
@@ -186,7 +172,6 @@ pub fn status(
                         })
                 })
             },
-            progress_view(config, progresses),
         ))
         .style(|s| {
             s.height_pct(100.0)
@@ -194,92 +179,6 @@ pub fn status(
                 .flex_basis(0.0)
                 .flex_grow(1.0f32)
                 .items_center()
-        }),
-        stack((
-            {
-                let panel = panel.clone();
-                let icon = {
-                    let panel = panel.clone();
-                    move || {
-                        if panel
-                            .is_container_shown(&PanelContainerPosition::Left, true)
-                        {
-                            SparrowIcons::SIDEBAR_LEFT
-                        } else {
-                            SparrowIcons::SIDEBAR_LEFT_OFF
-                        }
-                    }
-                };
-                clickable_icon(
-                    icon,
-                    move || {
-                        panel.toggle_container_visual(&PanelContainerPosition::Left)
-                    },
-                    || false,
-                    || false,
-                    || "Toggle Left Panel",
-                    config,
-                )
-            },
-            {
-                let panel = panel.clone();
-                let icon = {
-                    let panel = panel.clone();
-                    move || {
-                        if panel.is_container_shown(
-                            &PanelContainerPosition::Bottom,
-                            true,
-                        ) {
-                            SparrowIcons::LAYOUT_PANEL
-                        } else {
-                            SparrowIcons::LAYOUT_PANEL_OFF
-                        }
-                    }
-                };
-                clickable_icon(
-                    icon,
-                    move || {
-                        panel
-                            .toggle_container_visual(&PanelContainerPosition::Bottom)
-                    },
-                    || false,
-                    || false,
-                    || "Toggle Bottom Panel",
-                    config,
-                )
-            },
-            {
-                let panel = panel.clone();
-                let icon = {
-                    let panel = panel.clone();
-                    move || {
-                        if panel
-                            .is_container_shown(&PanelContainerPosition::Right, true)
-                        {
-                            SparrowIcons::SIDEBAR_RIGHT
-                        } else {
-                            SparrowIcons::SIDEBAR_RIGHT_OFF
-                        }
-                    }
-                };
-                clickable_icon(
-                    icon,
-                    move || {
-                        panel.toggle_container_visual(&PanelContainerPosition::Right)
-                    },
-                    || false,
-                    || false,
-                    || "Toggle Right Panel",
-                    config,
-                )
-            },
-        ))
-        .style(move |s| {
-            // Islands look: panel toggles live on the tool-window stripes.
-            s.hide()
-                .height_pct(100.0)
-                .items_center()
-                .color(config.get().color(SparrowColor::STATUS_FOREGROUND))
         }),
         stack({
             let palette_clone = palette.clone();
@@ -325,26 +224,63 @@ pub fn status(
             .on_click_stop(move |_| {
                 palette_clone.run(PaletteKind::LineEnding);
             });
-            let palette_clone = palette.clone();
-            let language_info = status_text(config, editor, move || {
-                if let Some(editor) = editor.get() {
-                    let doc = editor.doc_signal().get();
-                    doc.syntax().with(|s| s.language.name())
-                } else {
-                    "unknown"
-                }
+            let indentation_info = status_text(config, editor, move || {
+                editor
+                    .get()
+                    .map(|editor| {
+                        editor
+                            .doc()
+                            .buffer
+                            .with(|buffer| buffer.indent_style().to_string())
+                    })
+                    .unwrap_or_default()
             })
-            .on_click_stop(move |_| {
-                palette_clone.run(PaletteKind::Language);
+            .popout_menu(move || {
+                floem::menu::Menu::new("").entry(
+                    floem::menu::MenuItem::new("Editor Settings...").action(
+                        move || {
+                            workbench_command
+                                .send(SparrowWorkbenchCommand::OpenSettings)
+                        },
+                    ),
+                )
             });
+            let file_access = tooltip_label(
+                config,
+                svg(move || {
+                    let read_only = editor.get().is_some_and(|editor| {
+                        editor.doc().content.with(|content| content.read_only())
+                    });
+                    config.get().ui_svg(if read_only {
+                        "status.read-only"
+                    } else {
+                        "status.writable"
+                    })
+                })
+                .style(move |s| {
+                    s.size(12.0, 12.0)
+                        .apply_if(editor.get().is_none(), |s| s.hide())
+                        .margin_horiz(8.0)
+                        .color(config.get().color(SparrowColor::STATUS_FOREGROUND))
+                }),
+                move || {
+                    if editor.get().is_some_and(|editor| {
+                        editor.doc().content.with(|content| content.read_only())
+                    }) {
+                        "Read-only"
+                    } else {
+                        "Writable"
+                    }
+                },
+            );
             let encoding_info = status_text(config, editor, || "UTF-8");
-            let flutter_button = flutter_run_button(window_tab_data, config);
             (
-                flutter_button,
+                progress_view(config, progresses),
                 cursor_info,
                 line_ending_info,
                 encoding_info,
-                language_info,
+                indentation_info,
+                file_access,
             )
         })
         .style(|s| {
@@ -360,75 +296,109 @@ pub fn status(
             status_height.set(height);
         }
     })
-        .style(move |s| {
-            let config = config.get();
-            s.background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND)) // Match title bar
-                .flex_basis(config.ui.status_height() as f32)
-                .flex_grow(0.0f32)
-                .flex_shrink(0.0f32)
-                .items_center()
-        })
+    .style(move |s| {
+        let config = config.get();
+        s.background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND)) // Match title bar
+            .flex_basis(config.ui.status_height() as f32)
+            .flex_grow(0.0f32)
+            .flex_shrink(0.0f32)
+            .items_center()
+    })
     .debug_name("Status/Bottom Bar")
 }
 
 /// Islands style breadcrumb trail: `project > dir > dir > file`.
 fn status_breadcrumbs(
-    workspace: Arc<crate::workspace::SparrowWorkspace>,
+    window: Rc<WindowTabData>,
     editor: Memo<Option<EditorData>>,
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> impl View {
-    use crate::doc::DocContent;
+    let workspace = window.workspace.clone();
     dyn_stack(
         move || {
-            let mut sections: Vec<String> = Vec::new();
             let Some(editor) = editor.get() else {
                 return Vec::new().into_iter().enumerate();
             };
-            let doc = editor.doc_signal().get();
-            let content = doc.content.get();
-            let full_path = if let DocContent::History(history) = &content {
-                Some(history.path.clone())
-            } else {
-                content.path().cloned()
-            };
-            let Some(full_path) = full_path else {
-                return Vec::new().into_iter().enumerate();
-            };
-            let mut path = full_path.clone();
-            if let Some(workspace_path) = workspace.path.as_ref() {
-                if let Ok(stripped) = full_path.strip_prefix(workspace_path) {
-                    path = stripped.to_path_buf();
-                    if let Some(root) = workspace_path.file_name() {
-                        sections.push(root.to_string_lossy().into_owned());
-                    }
+            let doc = editor.doc();
+            let path = doc.content.with(|content| match content {
+                crate::doc::DocContent::History(history) => {
+                    Some(history.path.clone())
                 }
-            }
-            let mut parts: Vec<String> = path
-                .ancestors()
-                .filter_map(|p| Some(p.file_name()?.to_string_lossy().into_owned()))
-                .collect();
-            parts.reverse();
-            sections.extend(parts);
-            sections.into_iter().enumerate()
+                content => content.path().cloned(),
+            });
+            path.map(|path| breadcrumb_paths(workspace.path.as_deref(), &path))
+                .unwrap_or_default()
+                .into_iter()
+                .enumerate()
         },
-        |(i, section)| (*i, section.clone()),
-        move |(i, section)| {
+        |(i, path)| (*i, path.clone()),
+        move |(i, path)| {
+            let is_file = editor.get_untracked().is_some_and(|editor| {
+                editor
+                    .doc()
+                    .content
+                    .with_untracked(|content| content.path() == Some(&path))
+            });
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let icon_path = path.clone();
+            let icon_color_path = path.clone();
+            let window = window.clone();
             stack((
                 svg(move || config.get().ui_svg(SparrowIcons::BREADCRUMB_SEPARATOR))
                     .style(move |s| {
-                        let config = config.get();
-                        let size = config.ui.icon_size() as f32;
-                        s.apply_if(i == 0, |s| s.hide())
-                            .size(size, size)
-                            .color(config.color(SparrowColor::SPARROW_ICON_INACTIVE))
+                        s.size(12.0, 12.0).apply_if(i == 0, |s| s.hide()).color(
+                            config.get().color(SparrowColor::SPARROW_ICON_INACTIVE),
+                        )
                     }),
-                label(move || section.clone())
+                svg(move || config.get().files_svg(&[&icon_path]).0).style(
+                    move |s| {
+                        s.size(14.0, 14.0)
+                            .margin_right(4.0)
+                            .apply_if(!is_file, |s| s.hide())
+                            .apply_opt(
+                                config.get().files_svg(&[&icon_color_path]).1,
+                                |s, color| s.color(color),
+                            )
+                    },
+                ),
+                label(move || name.clone())
                     .style(|s| s.selectable(false).margin_horiz(2.0)),
             ))
-            .style(|s| s.items_center())
+            .on_click_stop(move |_| {
+                window.file_explorer.reveal_in_file_tree(path.clone());
+                window.show_panel(PanelKind::FileExplorer);
+            })
+            .style(move |s| {
+                s.items_center().cursor(CursorStyle::Pointer).hover(|s| {
+                    s.background(
+                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
+            })
         },
     )
-    .style(|s| s.padding_left(10.0).items_center())
+    .style(|s| s.padding_left(10.0).items_center().min_width(0.0))
+}
+
+fn breadcrumb_paths(
+    root: Option<&std::path::Path>,
+    file: &std::path::Path,
+) -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<_> = file
+        .ancestors()
+        .take_while(|path| Some(*path) != root)
+        .filter(|path| path.file_name().is_some())
+        .map(std::path::Path::to_path_buf)
+        .collect();
+    if let Some(root) = root.filter(|root| file.starts_with(root)) {
+        paths.push(root.to_path_buf());
+    }
+    paths.reverse();
+    paths
 }
 
 fn progress_view(
@@ -484,7 +454,7 @@ fn status_text<S: std::fmt::Display + 'static>(
 
         s.display(display)
             .height_full()
-            .padding_horiz(10.0)
+            .padding_horiz(8.0)
             .items_center()
             .color(config.color(SparrowColor::STATUS_FOREGROUND))
             .hover(|s| {
@@ -495,108 +465,25 @@ fn status_text<S: std::fmt::Display + 'static>(
     })
 }
 
-/// Flutter run / reload / restart status button.
-///
-/// Hidden entirely if the workspace is not a Flutter project (no
-/// `pubspec.yaml` at the root). Otherwise shows the current state:
-/// Idle → "Run Flutter", Running → "Reload", Error → "Retry".
-fn flutter_run_button(
-    window_tab_data: Rc<WindowTabData>,
-    config: ReadSignal<Arc<SparrowConfig>>,
-) -> impl View {
-    use crate::{command::SparrowWorkbenchCommand, dart::FlutterRunState};
-    use floem::{
-        menu::{Menu, MenuItem},
-        views::{container, label, svg},
-    };
-
-    let hot_reload = window_tab_data.flutter_hot_reload.clone();
-    let workbench_command = window_tab_data.common.workbench_command;
-    let is_flutter = hot_reload.is_flutter_project();
-
-    let label_text = move || match hot_reload.state.get() {
-        FlutterRunState::Idle => "Run Flutter",
-        FlutterRunState::Running => "Reload",
-        FlutterRunState::Error => "Retry",
-    };
-    let icon_name = move || match hot_reload.state.get() {
-        FlutterRunState::Idle | FlutterRunState::Running => SparrowIcons::START,
-        FlutterRunState::Error => SparrowIcons::RUN_ERRORS,
-    };
-    let icon_color = move || {
-        let c = config.get();
-        match hot_reload.state.get() {
-            FlutterRunState::Idle | FlutterRunState::Running => {
-                c.color(SparrowColor::SPARROW_RUN_ICON)
-            }
-            FlutterRunState::Error => c.color(SparrowColor::SPARROW_ERROR),
-        }
-    };
-
-    container(
-        stack((
-            svg(move || config.get().ui_svg(icon_name())).style(move |s| {
-                let c = config.get();
-                let size = c.ui.icon_size() as f32;
-                s.size(size, size).margin_right(5.0).color(icon_color())
-            }),
-            label(label_text).style(move |s| {
-                s.color(config.get().color(SparrowColor::STATUS_FOREGROUND))
-                    .selectable(false)
-            }),
-        ))
-        .on_click_stop(move |_| match hot_reload.state.get_untracked() {
-            FlutterRunState::Idle => {
-                workbench_command.send(SparrowWorkbenchCommand::FlutterRun);
-            }
-            FlutterRunState::Running => {
-                workbench_command.send(SparrowWorkbenchCommand::FlutterHotReload);
-            }
-            FlutterRunState::Error => {
-                workbench_command.send(SparrowWorkbenchCommand::FlutterRun);
-            }
-        })
-        .popout_menu(move || {
-            let mut menu = Menu::new("");
-            match hot_reload.state.get_untracked() {
-                FlutterRunState::Idle | FlutterRunState::Error => {
-                    menu =
-                        menu.entry(MenuItem::new("Run Flutter").action(move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::FlutterRun);
-                        }));
-                }
-                FlutterRunState::Running => {
-                    menu = menu
-                        .entry(MenuItem::new("Hot Reload").action(move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::FlutterHotReload);
-                        }))
-                        .entry(MenuItem::new("Hot Restart").action(move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::FlutterHotRestart);
-                        }))
-                        .separator()
-                        .entry(MenuItem::new("Stop").action(move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::FlutterStop);
-                        }));
-                }
-            }
-            menu
-        })
-        .style(move |s| {
-            let c = config.get();
-            s.padding_horiz(10.0)
-                .height_pct(100.0)
-                .items_center()
-                .cursor(CursorStyle::Pointer)
-                .apply_if(!is_flutter, |s| s.hide())
-                .hover(|s| {
-                    s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
-        })
-        .debug_name("Flutter Run Button"),
-    )
-    .style(|s| s.height_pct(100.0))
+#[cfg(test)]
+mod breadcrumb_tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    #[test]
+    fn workspace_crumbs_have_real_navigation_paths() {
+        let paths = breadcrumb_paths(
+            Some(Path::new("/work/app")),
+            Path::new("/work/app/lib/my file.dart"),
+        );
+        assert_eq!(
+            paths,
+            ["/work/app", "/work/app/lib", "/work/app/lib/my file.dart"]
+                .map(PathBuf::from)
+        );
+        let outside = breadcrumb_paths(
+            Some(Path::new("/work/app")),
+            Path::new("/work/app_other/main.dart"),
+        );
+        assert!(!outside.contains(&PathBuf::from("/work/app")));
+    }
 }

@@ -271,14 +271,14 @@ impl FlutterHotReloadData {
         self.run_logs.set(im::Vector::new());
     }
 
-    /// True if the workspace root contains a `pubspec.yaml` (i.e. this is
-    /// a Flutter/Dart project worth showing the button for).
+    /// True when the manifest identifies a Flutter project. Plain Dart
+    /// packages do not start device discovery or show Flutter-only actions.
     pub fn is_flutter_project(&self) -> bool {
         self.common
             .workspace
             .path
             .as_ref()
-            .map(|p| p.join("pubspec.yaml").is_file())
+            .map(|p| super::is_flutter_project(p))
             .unwrap_or(false)
     }
 

@@ -125,3 +125,17 @@ mod panel_icon_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod sdk_icon_tests {
+    use super::*;
+    #[test]
+    fn sdk_toolbar_logos_resolve_to_colored_embedded_assets() {
+        let mut store = SvgStore::default();
+        for key in [crate::config::icon::SparrowIcons::DART, crate::config::icon::SparrowIcons::FLUTTER] {
+            let path = crate::config::DEFAULT_ICON_THEME_ICON_CONFIG.ui.get(key).unwrap();
+            let svg = store.get_default_svg(path);
+            assert!(svg.contains("<svg") && svg.contains("fill=\"#"));
+        }
+    }
+}

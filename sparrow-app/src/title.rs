@@ -21,7 +21,7 @@ use sparrow_rpc::proxy::ProxyStatus;
 use std::path::Path;
 use std::{rc::Rc, sync::Arc};
 
-use crate::command::{CommandKind, InternalCommand};
+use crate::command::CommandKind;
 use crate::dart::hot_reload::FlutterDevice;
 use crate::debug::RunDebugMode;
 use crate::text_input::TextInputBuilder;
@@ -191,8 +191,7 @@ fn middle(
         label(move || {
             initial_workspace
                 .display()
-                .and_then(|n| n.chars().next())
-                .map(|c| c.to_uppercase().to_string())
+                .map(|name| project_initials(&name))
                 .unwrap_or_else(|| "S".to_string())
         })
         .style(|s| s.font_size(10.0).font_bold().selectable(false)),
@@ -204,7 +203,7 @@ fn middle(
             .border_radius(5.0)
             .margin_right(7.0)
             .color(Color::WHITE)
-            .background(Color::from_rgba8(0x35, 0x74, 0xF0, 0xFF)) // AS Blue
+            .background(Color::from_rgba8(0x6E, 0x65, 0xF2, 0xFF)) // AS Blue
     });
 
     // THE PROJECT CHIP WITH NATIVE POPOUT MENU
@@ -230,83 +229,6 @@ fn middle(
         ))
         .style(|s| s.items_center()),
     )
-    // .popout_menu(move || {
-    //     let mut menu = Menu::new("");
-    //
-    //     let db: Arc<SparrowDb> = use_context().unwrap();
-    //
-    //     // Top Actions
-    //     menu = menu
-    //         .entry(MenuItem::new("New Project...").action(move || {
-    //             workbench_command.send(SparrowWorkbenchCommand::OpenFolder);
-    //         }))
-    //         .entry(MenuItem::new("Open...").action(move || {
-    //             workbench_command.send(SparrowWorkbenchCommand::OpenFile);
-    //         }))
-    //         .entry(MenuItem::new("Clone Repository...").enabled(false))
-    //         .entry(MenuItem::new("Import Sample...").enabled(false))
-    //         .separator()
-    //         .entry(MenuItem::new("Open Projects").enabled(false));
-    //
-    //     // Open Tabs
-    //     let tabs = window_tabs.get_untracked();
-    //     for (_, tab) in tabs {
-    //         let ws = tab.workspace.clone();
-    //         let name = ws.display().unwrap_or_else(|| "Untitled".into());
-    //         let is_current = tab.window_tab_id == current_tab_id;
-    //
-    //         // Add checkmark for active
-    //         let item_label = if is_current {
-    //             format!("✓ {}", name)
-    //         } else {
-    //             format!("   {}", name)
-    //         };
-    //
-    //         let cmd = window_command;
-    //         menu = menu.entry(MenuItem::new(item_label).action(move || {
-    //             if !is_current {
-    //                 cmd.send(WindowCommand::SetWorkspace {
-    //                     workspace: (*ws).clone(),
-    //                 });
-    //             }
-    //         }));
-    //     }
-    //
-    //     // Recent Projects
-    //     menu = menu
-    //         .separator()
-    //         .entry(MenuItem::new("Recent Projects").enabled(false));
-    //
-    //     if let Ok(recent) = db.recent_workspaces() {
-    //         let mut has_recent = false;
-    //         for ws in recent {
-    //             // Don't show if it's already open in a tab
-    //             let is_open = window_tabs.with_untracked(|tabs| {
-    //                 tabs.iter().any(|(_, t)| t.workspace.path == ws.path)
-    //             });
-    //
-    //             if !is_open {
-    //                 has_recent = true;
-    //                 let name = ws.display().unwrap_or_else(|| "Untitled".into());
-    //                 let ws_arc = Arc::new(ws.clone());
-    //                 let cmd = window_command;
-    //                 menu = menu.entry(MenuItem::new(format!("   {}", name)).action(
-    //                     move || {
-    //                         cmd.send(WindowCommand::SetWorkspace {
-    //                             workspace: (*ws_arc).clone(),
-    //                         });
-    //                     },
-    //                 ));
-    //             }
-    //         }
-    //         if !has_recent {
-    //             menu = menu
-    //                 .entry(MenuItem::new("   No recent projects").enabled(false));
-    //         }
-    //     }
-    //
-    //     menu
-    // })
     .on_move(move |point| {
         if project_chip_origin.get_untracked() != point {
             project_chip_origin.set(point);
@@ -354,6 +276,7 @@ fn middle(
     })
     .on_click_stop(move |_| {
         // Toggle the branch switcher overlay
+        project_menu_visible.set(false);
         branch_menu_visible.update(|v| *v = !*v);
     })
     .style(move |s| {
@@ -398,6 +321,7 @@ fn right(
     device_chip_origin: RwSignal<Point>,
     window_tab_data: Rc<WindowTabData>,
 ) -> impl View {
+    let is_flutter_project = hot_reload.is_flutter_project();
     let latest_version = create_memo(move |_| {
         let latest_release = latest_release.get();
         let latest_version =
@@ -415,23 +339,41 @@ fn right(
 
     // THE RUN CONFIG SELECTOR CHIP
     let run_config_chip = {
-        let workbench_command = workbench_command;
         container(
             stack((
-                svg(move || config.get().ui_svg(SparrowIcons::FLUTTER)).style(
-                    move |s| {
-                        let size = config.get().ui.icon_size() as f32;
-                        s.size(size, size).margin_right(6.0)
-                    },
-                ),
+                svg({
+                    let window = window_tab_data.clone();
+                    move || {
+                        let index = window.active_run_config_idx.get();
+                        let icon = window.run_configs.with(|configs| {
+                            configs
+                                .get(index)
+                                .map(|config| {
+                                    if Path::new(&config.program)
+                                        .file_stem()
+                                        .is_some_and(|stem| {
+                                            stem.eq_ignore_ascii_case("flutter")
+                                        })
+                                    {
+                                        SparrowIcons::FLUTTER
+                                    } else {
+                                        SparrowIcons::DART
+                                    }
+                                })
+                                .unwrap_or(SparrowIcons::SETTINGS)
+                        });
+                        config.get().ui_svg(icon)
+                    }
+                })
+                .style(move |s| s.size(16.0, 16.0).margin_right(6.0)),
                 label({
                     let wt_data = window_tab_data.clone();
                     move || {
                         let idx = wt_data.active_run_config_idx.get();
                         wt_data.run_configs.with(|c| {
-                            c.get(idx)
-                                .map(|c| c.name.clone())
-                                .unwrap_or_else(|| "Run Config".to_string())
+                            c.get(idx).map(|c| c.name.clone()).unwrap_or_else(|| {
+                                "Add Configuration...".to_string()
+                            })
                         })
                     }
                 })
@@ -461,14 +403,15 @@ fn right(
                     } else {
                         format!("   {}", c_name)
                     };
-                    let _cmd = workbench_command;
                     let wt_clone = wt_data.clone();
                     menu = menu.entry(MenuItem::new(label).action(move || {
                         wt_clone.active_run_config_idx.set(i);
                     }));
                 }
 
-                menu = menu.separator();
+                if !configs.is_empty() {
+                    menu = menu.separator();
+                }
                 let wt_clone = wt_data.clone();
                 menu = menu.entry(MenuItem::new("Edit Configurations...").action(
                     move || {
@@ -511,17 +454,7 @@ fn right(
                 },
             ))
             .on_click_stop(move |_| {
-                let idx = wt_data.active_run_config_idx.get_untracked();
-                if let Some(c) =
-                    wt_data.run_configs.with_untracked(|c| c.get(idx).cloned())
-                {
-                    wt_data.common.internal_command.send(
-                        InternalCommand::RunAndDebug {
-                            mode: RunDebugMode::Run,
-                            config: c,
-                        },
-                    );
-                }
+                wt_data.launch_selected_configuration(RunDebugMode::Run)
             })
             .style(move |s| {
                 s.padding(4.0)
@@ -542,29 +475,74 @@ fn right(
         )
     };
 
-    // Green bug button next to Run (opens the same Run and Debug palette).
+    let debug_window = window_tab_data.clone();
     let debug_button = tooltip_label(
         config,
         container(svg(move || config.get().ui_svg(SparrowIcons::DEBUG)).style(
             move |s| {
-                let config = config.get();
-                let size = config.ui.icon_size() as f32;
-                s.size(size, size)
-                    .color(config.color(SparrowColor::SPARROW_DEBUG_ICON))
+                s.size(16.0, 16.0)
+                    .color(config.get().color(SparrowColor::SPARROW_DEBUG_ICON))
             },
         ))
         .on_click_stop(move |_| {
-            workbench_command.send(SparrowWorkbenchCommand::PaletteRunAndDebug);
+            debug_window.launch_selected_configuration(RunDebugMode::Debug)
         })
         .style(move |s| {
-            let config = config.get();
-            s.padding(4.0).border_radius(6.0).hover(|s| {
-                s.cursor(CursorStyle::Pointer)
-                    .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-            })
+            s.padding(4.0)
+                .border_radius(4.0)
+                .cursor(CursorStyle::Pointer)
+                .hover(|s| {
+                    s.background(
+                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
         }),
         || "Debug (Shift+F9)",
     );
+
+    let terminal = window_tab_data.terminal.clone();
+    let has_running_process = create_memo(move |_| {
+        is_running()
+            || terminal
+                .run_debug_process(true)
+                .iter()
+                .any(|(_, process)| !process.stopped)
+    });
+    let execution_window = window_tab_data.clone();
+    let execution_menu = label(|| "⋮")
+        .style(move |s| {
+            s.size(24.0, 28.0)
+                .items_center()
+                .justify_center()
+                .cursor(CursorStyle::Pointer)
+                .hover(|s| {
+                    s.background(
+                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                    .border_radius(4.0)
+                })
+        })
+        .popout_menu(move || {
+            Menu::new("")
+                .entry(MenuItem::new("Run Selected Configuration").action(
+                    move || {
+                        workbench_command
+                            .send(SparrowWorkbenchCommand::RunSelectedConfiguration)
+                    },
+                ))
+                .entry(MenuItem::new("Debug Selected Configuration").action(
+                    move || {
+                        workbench_command.send(
+                            SparrowWorkbenchCommand::DebugSelectedConfiguration,
+                        )
+                    },
+                ))
+                .separator()
+                .entry(MenuItem::new("Run/Debug Configurations...").action({
+                    let window = execution_window.clone();
+                    move || window.run_config_modal_visible.set(true)
+                }))
+        });
 
     // Hot Reload button (amber flash bolt)
     let hot_reload_button = {
@@ -598,7 +576,7 @@ fn right(
                         )
                     })
             }),
-            || "Hot Reload (Ctrl+\\)",
+            || "Hot Reload (Ctrl+F5)",
         )
     };
 
@@ -634,7 +612,7 @@ fn right(
                         )
                     })
             }),
-            || "Hot Restart (Ctrl+Shift+\\)",
+            || "Hot Restart (Ctrl+Shift+F5)",
         )
     };
 
@@ -652,9 +630,14 @@ fn right(
                     },
                 ),
             )
-            .disabled(move || !is_running())
+            .disabled(move || !has_running_process.get())
             .on_click_stop(move |_| {
-                hr.stop();
+                if hr.state.get_untracked() == crate::dart::FlutterRunState::Running
+                {
+                    hr.stop();
+                } else {
+                    workbench_command.send(SparrowWorkbenchCommand::RunAndDebugStop);
+                }
             })
             .style(move |s| {
                 let config = config.get();
@@ -670,7 +653,7 @@ fn right(
             }),
             || "Stop (Ctrl+F2)",
         )
-        .style(move |s| s.apply_if(!is_running(), |s| s.hide()))
+        .style(move |s| s.apply_if(!has_running_process.get(), |s| s.hide()))
     };
 
     // Flutter Inspector toggle button
@@ -717,10 +700,15 @@ fn right(
         run_config_chip,
         run_button,
         debug_button,
+        execution_menu,
         stop_button,
-        inspector_button,
-        hot_reload_button,
-        hot_restart_button.style(move |s| s.apply_if(!is_running(), |s| s.hide())),
+        inspector_button
+            .style(move |s| s.apply_if(!is_flutter_project, |s| s.hide())),
+        hot_reload_button
+            .style(move |s| s.apply_if(!is_flutter_project, |s| s.hide())),
+        hot_restart_button.style(move |s| {
+            s.apply_if(!is_running() || !is_flutter_project, |s| s.hide())
+        }),
         clickable_icon(
             || SparrowIcons::SEARCH,
             move || {
@@ -728,7 +716,7 @@ fn right(
             },
             || false,
             || false,
-            || "Search Everywhere (Double Shift)",
+            || "Search Everywhere",
             config,
         ),
         stack((
@@ -990,11 +978,11 @@ fn device_selector(
                 let size = c.ui.icon_size() as f32 - 2.0;
                 s.size(size, size)
                     .margin_right(6.0)
-                    .color(c.color(SparrowColor::SPARROW_ICON_ACTIVE))
+                    .color(Color::from_rgb8(0x5B, 0xCF, 0xF4))
             }),
             label(move || {
                 if let Some(dev) = hot_reload.selected_device.get() {
-                    dev.name.clone()
+                    device_display_name(&dev)
                 } else {
                     "No Device".to_string()
                 }
@@ -2042,4 +2030,48 @@ pub fn device_selector_overlay(
             })
             .z_index(100)
     })
+}
+
+fn project_initials(name: &str) -> String {
+    let words: Vec<_> = name
+        .split(|c: char| c == '_' || c == '-' || c.is_whitespace())
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut initials = words
+        .first()
+        .and_then(|word| word.chars().next())
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_else(|| "S".into());
+    if words.len() > 1 {
+        if let Some(last) = words.last().and_then(|word| word.chars().next()) {
+            initials.extend(last.to_uppercase());
+        }
+    }
+    initials
+}
+fn device_display_name(device: &FlutterDevice) -> String {
+    match device.target_platform.as_deref() {
+        Some(platform)
+            if platform.starts_with("linux")
+                || platform.starts_with("darwin")
+                || platform.starts_with("windows") =>
+        {
+            format!("{} (desktop)", device.name)
+        }
+        Some(platform) if platform.starts_with("web") => {
+            format!("{} (web)", device.name)
+        }
+        _ => device.name.clone(),
+    }
+}
+
+#[cfg(test)]
+mod toolbar_tests {
+    use super::*;
+    #[test]
+    fn project_initials_match_name_segments() {
+        assert_eq!(project_initials("liquid_glass_kit"), "LK");
+        assert_eq!(project_initials("app"), "A");
+        assert_eq!(project_initials(""), "S");
+    }
 }

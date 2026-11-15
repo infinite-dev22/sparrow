@@ -619,32 +619,9 @@ impl WindowTabData {
         let active_run_config_idx = cx.create_rw_signal(0);
         let run_config_modal_visible = cx.create_rw_signal(false);
 
-        let mut loaded_configs = Vec::new();
-        if let Some(workspace_path) = &workspace.path {
-            if let Some(configs) = crate::dart::run_config::load(workspace_path) {
-                loaded_configs = configs;
-            }
-        }
-        if loaded_configs.is_empty() {
-            loaded_configs.push(sparrow_rpc::dap_types::RunDebugConfig {
-                ty: Some("flutter".to_string()),
-                name: "Run Debug".to_string(),
-                program: "flutter".to_string(),
-                args: Some(vec!["run".to_string()]),
-                cwd: workspace
-                    .path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().to_string()),
-                env: None,
-                prelaunch: None,
-                flutter_options: Default::default(),
-                debug_adapter: None,
-                debug_command: None,
-                dap_id: Default::default(),
-                tracing_output: true,
-                config_source: Default::default(),
-            });
-        }
+        let loaded_configs = workspace.path.as_deref().map(|root| {
+            crate::dart::run_config::load(root).unwrap_or_else(|| crate::dart::run_config::discover_defaults(root))
+        }).unwrap_or_default();
         run_configs.set(loaded_configs);
 
         let window_tab_data = Self {
@@ -1603,9 +1580,16 @@ impl WindowTabData {
                 }
             }
             RunAndDebugStop => {
-                let active_term = self.terminal.debug.active_term.get_untracked();
-                if let Some(term_id) = active_term {
+                let active = self.terminal.debug.active_term.get_untracked();
+                let processes = self.terminal.run_debug_process(false);
+                let selected = self.run_configs.with_untracked(|configs| configs.get(self.active_run_config_idx.get_untracked()).map(|config| config.name.clone()));
+                let term_id = active.filter(|id| processes.iter().any(|(term, process)| term == id && !process.stopped))
+                    .or_else(|| processes.iter().find(|(_, process)| !process.stopped && Some(&process.config.name) == selected.as_ref()).map(|(term, _)| *term))
+                    .or_else(|| processes.iter().find(|(_, process)| !process.stopped).map(|(term, _)| *term));
+                if let Some(term_id) = term_id {
                     self.terminal.stop_run_debug(term_id);
+                } else if self.flutter_hot_reload.state.get_untracked() == crate::dart::FlutterRunState::Running {
+                    self.flutter_hot_reload.stop();
                 }
             }
 
@@ -2037,8 +2021,16 @@ impl WindowTabData {
                     editor_data.jump_highlight(InlineFindDirection::Left);
                 }
             }
+            RunSelectedConfiguration | DebugSelectedConfiguration => {
+                let mode = if cmd == RunSelectedConfiguration { RunDebugMode::Run } else { RunDebugMode::Debug };
+                self.launch_selected_configuration(mode);
+            }
             FlutterRun => {
-                self.flutter_hot_reload.launch();
+                if self.flutter_hot_reload.is_flutter_project() {
+                    self.flutter_hot_reload.launch();
+                } else {
+                    self.launch_selected_configuration(RunDebugMode::Run);
+                }
             }
             FlutterHotReload => {
                 self.flutter_hot_reload.hot_reload();
@@ -3342,6 +3334,20 @@ impl WindowTabData {
         self.common.focus.set(Focus::Panel(kind));
     }
 
+    pub fn launch_selected_configuration(&self, mode: RunDebugMode) {
+        let selected = self.active_run_config_idx.get_untracked();
+        if let Some(config) = self.run_configs.with_untracked(|configs| configs.get(selected).cloned()) {
+            if let Some((term_id, _)) = self.terminal.run_debug_process(false).into_iter().find(|(_, process)| !process.stopped && process.mode == mode && process.config.name == config.name) {
+                self.show_panel(PanelKind::Terminal);
+                self.terminal.focus_terminal(term_id);
+                return;
+            }
+            self.common.internal_command.send(InternalCommand::RunAndDebug { mode, config });
+        } else {
+            self.run_config_modal_visible.set(true);
+        }
+    }
+
     fn run_and_debug(
         &self,
         cx: Scope,
@@ -3355,6 +3361,19 @@ impl WindowTabData {
             self.show_alert("Unsupported run configuration".into(),"Sparrow runs and debugs Dart and Flutter SDK targets only. Use the Terminal for auxiliary build commands.".into(),Vec::new());
             return;
         }
+        let device = self.flutter_hot_reload.selected_device.get_untracked();
+        let mut prepared = crate::dart::run_config::with_selected_device(config.clone(), device.as_ref().map(|device| device.id.as_str()));
+        if let Some(workspace) = self.workspace.path.as_deref() {
+            prepared.cwd = Some(crate::dart::run_config::launch_directory(workspace, prepared.cwd.as_deref()).to_string_lossy().into_owned());
+        }
+        let root = prepared.cwd.as_deref().map(std::path::Path::new).or(self.workspace.path.as_deref());
+        let binary = match prepared.program.as_str() {
+            "dart" => crate::dart::sdk::find_dart_binary(root),
+            "flutter" => crate::dart::sdk::find_flutter_binary(root),
+            _ => None,
+        };
+        if let Some(binary) = binary { prepared.program = binary.to_string_lossy().into_owned(); }
+        let config = &prepared;
         debug!("Starting Dart/Flutter target: {}", config.name);
         match mode {
             RunDebugMode::Run => {

@@ -221,6 +221,11 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             }
         }
     });
+    let is_flutter = cx.create_memo({
+        let drafts = d.drafts;
+        let selected = d.selected;
+        move |_| drafts.with(|drafts| drafts.get(selected.get()).is_some_and(Draft::flutter))
+    });
     let add = d.clone();
     let remove = d.clone();
     let duplicate = d.clone();
@@ -230,9 +235,11 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 || SparrowIcons::ADD,
                 move || {
                     add.capture();
-                    if let Some(mut draft) = add.drafts.with_untracked(|v| {
-                        v.get(add.selected.get_untracked()).cloned()
-                    }) {
+                    {
+                        let empty = add.drafts.with_untracked(Vec::is_empty);
+                        let mut draft = add.drafts.with_untracked(|v| {
+                            v.get(add.selected.get_untracked()).cloned()
+                        }).unwrap_or_else(|| Draft::from_config(run_config::new_configuration(add.window.workspace.path.as_deref())));
                         if !draft.original.is_dart_flutter() {
                             draft.original.ty = Some("flutter".into());
                             draft.original.program =
@@ -249,7 +256,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         if draft.flutter() {
                             draft.entry = "lib/main.dart".into();
                         }
-                        draft.args.clear();
+                        if !empty { draft.args.clear(); }
                         draft.attach.clear();
                         draft.flavor.clear();
                         draft.env.clear();
@@ -312,11 +319,12 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         label({
             let drafts = d.drafts;
             move || {
-                if drafts.with(|v| v.iter().all(Draft::flutter)) {
-                    "⌄  Flutter"
-                } else {
-                    "⌄  Run configurations"
-                }
+                drafts.with(|drafts| {
+                    if drafts.is_empty() { "⌄  Run configurations" }
+                    else if drafts.iter().all(Draft::flutter) { "⌄  Flutter" }
+                    else if drafts.iter().all(|draft| !draft.flutter()) { "⌄  Dart" }
+                    else { "⌄  Run configurations" }
+                })
             }
         })
         .style(|s| s.padding_left(10.0).height(24.0).font_bold()),
@@ -336,13 +344,10 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         let active = d.selected;
                         let name = d.fields[0];
                         stack((
-                            svg(|| {
-                                include_str!(
-                                    "../../../icons/dart-flutter/flutter_logo.svg"
-                                )
-                                .to_string()
-                            })
-                            .style(|s| s.size(16.0, 16.0)),
+                            svg({
+                                let flutter = draft.flutter();
+                                move || config.get().ui_svg(if flutter { SparrowIcons::FLUTTER } else { SparrowIcons::DART })
+                            }).style(|s| s.size(16.0, 16.0)),
                             label(move || {
                                 if active.get() == i {
                                     name.get()
@@ -386,7 +391,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         move |title: &'static str, field: RwSignal<String>, help: &'static str| {
             stack((
                 stack((
-                    label(move || title).style(move |s| {
+                    label(move || if title == "Dart entrypoint:" && !is_flutter.get() { "Dart SDK executable:" } else { title }).style(move |s| {
                         s.width(if title == "Name:" { 64.0 } else { 154.0 })
                             .flex_shrink(0.0_f32)
                     }),
@@ -406,7 +411,11 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     }),
                 ))
                 .style(|s| s.items_center().width_full()),
-                label(move || help).style(move |s| {
+                label(move || {
+                    if !is_flutter.get() && title == "Dart entrypoint:" { "Dart SDK executable or its full path." }
+                    else if !is_flutter.get() && title == "Additional run args:" { "Arguments for Dart, for example: run bin/main.dart." }
+                    else { help }
+                }).style(move |s| {
                     s.margin_left(154.0)
                         .margin_top(6.0)
                         .font_size(12.0)
@@ -489,10 +498,10 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .style(move |s|s.height(36.0).width_full().items_center().flex_shrink(0.0_f32).background(floem::peniko::Color::from_rgb8(40,40,40))),
         stack((sidebar,scroll(stack((
             stack((form_row("Name:",d.fields[0],"").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),checkbox(project,"Store as project file"))).style(|s|s.items_center().gap(16.0).margin_bottom(16.0)),
-            stack((form_row("Dart entrypoint:",entry,"The entry-point for the application (e.g. lib/main.dart).").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),clickable_icon(||SparrowIcons::DIRECTORY_CLOSED,move ||open_file(FileDialogOptions::new().title("Choose Dart entrypoint"),move |file|{if let Some(file)=file{if let Some(path)=file.path.first(){entry.set(path.display().to_string());}}}),||false,||false,||"Browse",config))).style(|s|s.items_start()),
+            stack((form_row("Dart entrypoint:",entry,"The entry-point for the application (e.g. lib/main.dart).").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),clickable_icon(||SparrowIcons::DIRECTORY_CLOSED,move ||open_file(FileDialogOptions::new().title(if is_flutter.get_untracked() { "Choose Dart entrypoint" } else { "Choose Dart SDK executable" }),move |file|{if let Some(file)=file{if let Some(path)=file.path.first(){entry.set(path.display().to_string());}}}),||false,||false,||"Browse",config))).style(|s|s.items_start()),
             form_row("Additional run args:",d.fields[2],"Additional arguments to 'flutter run'."),
-            form_row("Additional attach args:",d.fields[3],"Additional arguments to 'flutter attach'."),
-            form_row("Build flavor:",d.fields[4],"Optional Gradle product flavor or Xcode custom scheme."),
+            form_row("Additional attach args:",d.fields[3],"Additional arguments to 'flutter attach'.").style(move |s|s.apply_if(!is_flutter.get(),|s|s.hide())),
+            form_row("Build flavor:",d.fields[4],"Optional Gradle product flavor or Xcode custom scheme.").style(move |s|s.apply_if(!is_flutter.get(),|s|s.hide())),
             form_row("Environment variables:",d.fields[5],"Additional environment variables. Format: KEY=value; KEY2=value."),
             label(||"⌄  Before launch").style(|s|s.margin_top(6.0).margin_bottom(10.0)),
             stack((
@@ -507,7 +516,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             label(move ||error.get()).style(move |s|s.color(config.get().color(SparrowColor::SPARROW_ERROR)).selectable(true)),
         )).style(|s|s.flex_col().padding(16.0).width_full())).style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full())))
             .style(|s|s.width_full().flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0)),
-        stack((empty().style(|s|s.flex_grow(1.0_f32)),stack((button("▷ Run").on_click_stop(move |_|run.launch(false)),button("▾").style(|s|s.min_width(24.0).padding_horiz(4.0)).popout_menu(move ||{let attach=attach.clone();floem::menu::Menu::new("").entry(floem::menu::MenuItem::new("Attach to Flutter App").action(move ||attach.launch(true)))}))).style(|s|s.gap(0.0)),button("OK").on_click_stop(move |_|{if ok.apply(){visible.set(false);}}).style(move |s|s.background(config.get().color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))),button("Cancel").on_click_stop(move |_|visible.set(false)),button("Apply").on_click_stop(move |_|{apply.apply();}).disabled(move ||!dirty.dirty())))
+        stack((empty().style(|s|s.flex_grow(1.0_f32)),stack((button("▷ Run").on_click_stop(move |_|run.launch(false)),button("▾").style(|s|s.min_width(24.0).padding_horiz(4.0)).disabled(move ||!is_flutter.get()).popout_menu(move ||{let attach=attach.clone();floem::menu::Menu::new("").entry(floem::menu::MenuItem::new("Attach to Flutter App").action(move ||attach.launch(true)))}))).style(|s|s.gap(0.0)),button("OK").on_click_stop(move |_|{if ok.apply(){visible.set(false);}}).style(move |s|s.background(config.get().color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))),button("Cancel").on_click_stop(move |_|visible.set(false)),button("Apply").on_click_stop(move |_|{apply.apply();}).disabled(move ||!dirty.dirty())))
             .style(move |s|s.height(46.0).width_full().padding_horiz(16.0).gap(12.0).items_center().flex_shrink(0.0_f32).border_top(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
     )).style(|s|s.flex_col().size_full())).style(move |s|s.font_family(config.get().ui.font_family.clone()).font_size(13.0).width(916.0).height(684.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().color(config.get().color(SparrowColor::EDITOR_FOREGROUND)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_radius(8.0)))
     .on_event_stop(EventListener::PointerDown,|_|{})

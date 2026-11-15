@@ -6,6 +6,98 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Discover actual entrypoints without assigning Flutter commands to Dart packages.
+/// A package with no entrypoint starts with an empty configuration selector.
+pub fn discover_defaults(root: &Path) -> Vec<RunDebugConfig> {
+    let flutter = super::is_flutter_project(root);
+    let candidates: Vec<PathBuf> = if flutter {
+        vec![
+            root.join("lib/main.dart"),
+            root.join("example/lib/main.dart"),
+        ]
+    } else {
+        let package = super::classify_project(root);
+        let mut candidates = vec![
+            root.join("bin/main.dart"),
+            root.join("main.dart"),
+            root.join("lib/main.dart"),
+        ];
+        if let Some(name) = package.name() {
+            candidates.insert(0, root.join("bin").join(format!("{name}.dart")));
+        }
+        candidates
+    };
+    candidates.into_iter().find(|path| path.is_file()).map(|entry| {
+        let cwd = if flutter {
+            entry.parent().and_then(Path::parent).unwrap_or(root)
+        } else { root };
+        let target = entry.strip_prefix(cwd).unwrap_or(&entry).to_string_lossy().replace('\\', "/");
+        serde_json::from_value(serde_json::json!({
+            "name": entry.file_name().unwrap_or_default().to_string_lossy(), "type": if flutter { "flutter" } else { "dart" },
+            "program": if flutter { "flutter" } else { "dart" },
+            "args": if flutter { vec!["run", "--target", &target] } else { vec!["run", &target] },
+            "cwd": cwd.to_string_lossy()
+        })).expect("valid built-in SDK configuration")
+    }).into_iter().collect()
+}
+
+pub fn launch_directory(root: &Path, configured: Option<&str>) -> PathBuf {
+    let Some(configured) = configured else {
+        return root.to_path_buf();
+    };
+    let expanded = configured.replace("${workspace}", &root.to_string_lossy());
+    let path = PathBuf::from(expanded);
+    if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    }
+}
+
+pub fn new_configuration(root: Option<&Path>) -> RunDebugConfig {
+    let flutter = root.is_some_and(super::is_flutter_project);
+    serde_json::from_value(serde_json::json!({
+        "name": "New configuration", "type": if flutter { "flutter" } else { "dart" },
+        "program": if flutter { "flutter" } else { "dart" },
+        "args": if flutter { vec!["run", "--target", "lib/main.dart"] } else { vec!["run", "bin/main.dart"] },
+        "cwd": root.map(|root| root.to_string_lossy())
+    })).expect("valid SDK configuration template")
+}
+
+/// Bind a live device only to Flutter run/attach and preserve explicit choices.
+pub fn with_selected_device(
+    mut config: RunDebugConfig,
+    device: Option<&str>,
+) -> RunDebugConfig {
+    let flutter = Path::new(&config.program)
+        .file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("flutter"));
+    if flutter {
+        let args = config.args.get_or_insert_with(Vec::new);
+        if let Some(device) = device.filter(|_| {
+            args.first()
+                .is_some_and(|arg| matches!(arg.as_str(), "run" | "attach"))
+        }) {
+            let end = args
+                .iter()
+                .position(|arg| arg == "--")
+                .unwrap_or(args.len());
+            let explicit = args[..end].iter().any(|arg| {
+                arg == "-d"
+                    || arg == "--device-id"
+                    || arg.starts_with("--device-id=")
+                    || (arg.starts_with("-d")
+                        && arg.len() > 2
+                        && !arg.starts_with("--"))
+            });
+            if !explicit {
+                args.splice(end..end, ["-d".into(), device.into()]);
+            }
+        }
+    }
+    config
+}
+
 pub fn split_args(text: &str) -> Result<Vec<String>, String> {
     let mut args = Vec::new();
     let mut word = String::new();
@@ -388,5 +480,97 @@ mod tests {
         assert_eq!(c.prelaunch.unwrap().program, "dart");
         d.env = "1INVALID=x".into();
         assert!(d.build().is_err());
+    }
+}
+
+#[cfg(test)]
+mod toolbar_tests {
+    use super::*;
+    #[test]
+    fn defaults_follow_real_dart_and_flutter_entrypoints() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("pubspec.yaml"),
+            "name: console_app\nenvironment:\n  sdk: ^3.0.0\n",
+        )
+        .unwrap();
+        assert!(discover_defaults(root.path()).is_empty());
+        std::fs::create_dir(root.path().join("bin")).unwrap();
+        std::fs::write(root.path().join("bin/console_app.dart"), "void main() {}\n")
+            .unwrap();
+        let dart = discover_defaults(root.path()).remove(0);
+        assert_eq!(dart.ty.as_deref(), Some("dart"));
+        assert_eq!(dart.name, "console_app.dart");
+        assert_eq!(dart.args.unwrap(), ["run", "bin/console_app.dart"]);
+        std::fs::write(
+            root.path().join("pubspec.yaml"),
+            "name: widgets\ndependencies:\n  flutter:\n    sdk: flutter\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.path().join("example/lib")).unwrap();
+        std::fs::write(
+            root.path().join("example/lib/main.dart"),
+            "void main() {}\n",
+        )
+        .unwrap();
+        let flutter = discover_defaults(root.path()).remove(0);
+        assert_eq!(flutter.ty.as_deref(), Some("flutter"));
+        assert_eq!(flutter.args.unwrap(), ["run", "--target", "lib/main.dart"]);
+        assert_eq!(
+            Path::new(flutter.cwd.as_ref().unwrap()),
+            root.path().join("example")
+        );
+    }
+    #[test]
+    fn launch_cwd_resolves_workspace_and_relative_paths() {
+        let root = Path::new("/work/my app");
+        assert_eq!(
+            launch_directory(root, Some("${workspace}/example")),
+            root.join("example")
+        );
+        assert_eq!(
+            launch_directory(root, Some("example")),
+            root.join("example")
+        );
+        assert_eq!(launch_directory(root, None), root);
+        assert_eq!(
+            launch_directory(root, Some("/elsewhere")),
+            Path::new("/elsewhere")
+        );
+    }
+    #[test]
+    fn selected_device_is_bound_before_app_arguments_without_overriding_config() {
+        let flutter = new_configuration(None);
+        assert_eq!(
+            with_selected_device(flutter.clone(), Some("linux")),
+            flutter
+        );
+        let mut flutter: RunDebugConfig = serde_json::from_value(serde_json::json!({"name":"dev","type":"flutter","program":"/sdk/flutter","args":["run","--target","lib/main.dart","--","--device-id=app-data"]})).unwrap();
+        assert_eq!(
+            with_selected_device(flutter.clone(), Some("linux"))
+                .args
+                .unwrap(),
+            [
+                "run",
+                "--target",
+                "lib/main.dart",
+                "-d",
+                "linux",
+                "--",
+                "--device-id=app-data"
+            ]
+        );
+        for args in [
+            vec!["run", "-d", "chrome"],
+            vec!["attach", "--device-id=chrome"],
+            vec!["run", "-dchrome"],
+            vec!["test", "test/a_test.dart"],
+        ] {
+            flutter.args = Some(args.into_iter().map(str::to_string).collect());
+            assert_eq!(
+                with_selected_device(flutter.clone(), Some("linux")),
+                flutter
+            );
+        }
     }
 }

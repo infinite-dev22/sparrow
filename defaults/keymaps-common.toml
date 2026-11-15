@@ -121,6 +121,18 @@ mode = "i"
 key = "Ctrl+`"
 command = "toggle_terminal_focus"
 
+[[keymaps]]
+key = "shift+F10"
+command = "run_selected_configuration"
+
+[[keymaps]]
+key = "shift+F9"
+command = "debug_selected_configuration"
+
+[[keymaps]]
+key = "ctrl+F2"
+command = "palette.run_and_debug_stop"
+
 # --------------------------------- Flutter -------------------------------------------
 
 [[keymaps]]

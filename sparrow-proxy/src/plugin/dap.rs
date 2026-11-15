@@ -236,6 +236,9 @@ impl DapClient {
                 });
             }
             DapEvent::Stopped(stopped) => {
+                // The SDK emits a transient entry pause while wiring the VM,
+                // then resumes automatically. No stop-on-entry option is exposed.
+                if stopped.reason == "entry" { return Ok(()); }
                 let all_threads_stopped =
                     stopped.all_threads_stopped.unwrap_or_default();
                 let mut stack_frames = HashMap::new();
@@ -245,6 +248,16 @@ impl DapClient {
                             if let Ok(frames) = self.dap_rpc.stack_trace(thread.id) {
                                 stack_frames.insert(thread.id, frames.stack_frames);
                             }
+                        }
+                    }
+                }
+
+                // Dart commonly pauses one isolate, with allThreadsStopped=false.
+                // Its thread still needs a stack/scopes request.
+                if let Some(thread) = stopped.thread_id {
+                    if !stack_frames.contains_key(&thread) {
+                        if let Ok(frames) = self.dap_rpc.stack_trace(thread) {
+                            stack_frames.insert(thread, frames.stack_frames);
                         }
                     }
                 }
@@ -734,9 +747,14 @@ impl DapRpcHandler {
     }
 
     pub fn pause_thread(&self, thread_id: ThreadId) -> Result<()> {
-        let params = PauseArguments { thread_id };
-        self.request::<Pause>(params)
-            .map_err(|e| anyhow!(e.message))?;
+        let thread_ids = if thread_id == ThreadId::default() {
+            self.threads()?.threads.into_iter().map(|thread| thread.id).collect::<Vec<_>>()
+        } else { vec![thread_id] };
+        if thread_ids.is_empty() { return Err(anyhow!("No running Dart isolates to pause")); }
+        for thread_id in thread_ids {
+            self.request::<Pause>(PauseArguments { thread_id })
+                .map_err(|error| anyhow!(error.message))?;
+        }
         Ok(())
     }
 
@@ -879,7 +897,7 @@ fn dart_launch_arguments(config: &RunDebugConfig) -> Result<Value> {
         }
     }
     Ok(
-        serde_json::json!({"console":if config.ty.as_deref()==Some("flutter-test"){"debugConsole"}else{"terminal"},"program":program,"args":args,"toolArgs":tool_args,"cwd":config.cwd,"runInTerminal":config.ty.as_deref()!=Some("flutter-test"),"env":config.env}),
+        serde_json::json!({"console":if config.ty.as_deref()==Some("flutter-test"){"debugConsole"}else{"terminal"},"program":program,"args":args,"toolArgs":tool_args,"cwd":config.cwd,"runInTerminal":config.ty.as_deref()!=Some("flutter-test"),"env":config.env.clone().unwrap_or_default()}),
     )
 }
 #[cfg(test)]
@@ -891,6 +909,13 @@ mod scope_tests {
         let p = dart_launch_arguments(&c).unwrap();
         assert_eq!(p["program"], "example/lib/main.dart");
         assert_eq!(p["toolArgs"], serde_json::json!(["--flavor", "dev"]));
+    }
+    #[test]
+    fn native_sdk_launch_receives_an_environment_map() {
+        let mut config: RunDebugConfig = serde_json::from_value(serde_json::json!({"name":"main","program":"dart","args":["run","main.dart"]})).unwrap();
+        assert_eq!(dart_launch_arguments(&config).unwrap()["env"], serde_json::json!({}));
+        config.env = Some(std::collections::HashMap::from([("APP_MODE".into(), "preview".into())]));
+        assert_eq!(dart_launch_arguments(&config).unwrap()["env"], serde_json::json!({"APP_MODE":"preview"}));
     }
     #[test]
     fn native_dart_launch_keeps_script_arguments() {

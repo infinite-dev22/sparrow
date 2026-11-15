@@ -378,6 +378,14 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "Go to File")]
     Palette,
 
+    #[strum(message = "Run Selected Configuration")]
+    #[strum(serialize = "run_selected_configuration")]
+    RunSelectedConfiguration,
+
+    #[strum(message = "Debug Selected Configuration")]
+    #[strum(serialize = "debug_selected_configuration")]
+    DebugSelectedConfiguration,
+
     #[strum(message = "Go To Symbol In File")]
     #[strum(serialize = "palette.symbol")]
     PaletteSymbol,
