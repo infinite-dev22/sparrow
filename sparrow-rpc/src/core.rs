@@ -47,6 +47,9 @@ pub enum CoreNotification {
     ProxyStatus {
         status: ProxyStatus,
     },
+    BufferSyncRequired {
+        path: PathBuf,
+    },
     OpenFileChanged {
         path: PathBuf,
         content: FileChanged,

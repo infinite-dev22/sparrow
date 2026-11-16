@@ -246,6 +246,11 @@ pub enum ProxyNotification {
         window_id: usize,
         tab_id: usize,
     },
+    SyncBuffer {
+        path: PathBuf,
+        rev: u64,
+        content: String,
+    },
     OpenFileChanged {
         path: PathBuf,
     },

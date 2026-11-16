@@ -166,9 +166,37 @@ impl ProxyHandler for Dispatcher {
                 self.proxy_rpc.shutdown();
             }
             Update { path, delta, rev } => {
-                let buffer = self.buffers.get_mut(&path).unwrap();
+                let Some(buffer) = self.buffers.get_mut(&path) else {
+                    return;
+                };
+                // A queued edit may have been built against an older snapshot.
+                // Recover from the authoritative editor without applying an
+                // incompatible delta or losing the proxy thread.
+                if rev <= buffer.rev {
+                    return;
+                }
                 let old_text = buffer.rope.clone();
-                buffer.update(&delta, rev);
+                if buffer.update(&delta, rev).is_none() {
+                    self.core_rpc
+                        .notification(CoreNotification::BufferSyncRequired { path });
+                    return;
+                }
+                self.catalog_rpc.did_change_text_document(
+                    &path,
+                    rev,
+                    delta,
+                    old_text,
+                    buffer.rope.clone(),
+                );
+            }
+            SyncBuffer { path, rev, content } => {
+                let Some(buffer) = self.buffers.get_mut(&path) else {
+                    return;
+                };
+                let old_text = buffer.rope.clone();
+                let Some(delta) = buffer.synchronize(rev, content) else {
+                    return;
+                };
                 self.catalog_rpc.did_change_text_document(
                     &path,
                     rev,

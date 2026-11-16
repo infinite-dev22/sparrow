@@ -2224,16 +2224,7 @@ impl WindowTabData {
                 self.launch_selected_configuration(mode);
             }
             FlutterRun => self.launch_selected_configuration(RunDebugMode::Run),
-            DartPubGet => {
-                if let Some(root)=self.workspace.path.as_deref() {
-                    let notifications=self.notifications;
-                    let send=create_ext_action(self.scope,move |(id,result):(u64,Result<(),String>)|{
-                        crate::panel::workflow_tools::record_pub_get_result(notifications,id,result);
-                    });
-                    let request=crate::dart::bootstrap::run_pub_get_observed(root,Some(Box::new(move |id,result|send((id,result)))));
-                    crate::panel::workflow_tools::record(notifications,"Pub Get",if request.joined {"Package resolution is already running; waiting for its result."}else{"Resolving package dependencies…"});
-                }
-            }
+            DartPubGet => self.resolve_workspace_dependencies(),
             FlutterHotReload => {
                 self.reload_flutter_after_saving(false);
             }
@@ -3253,6 +3244,23 @@ impl WindowTabData {
                         }
                     }
                 });
+            }
+            CoreNotification::BufferSyncRequired { path } => {
+                if let Some(doc) = self
+                    .main_split
+                    .docs
+                    .with_untracked(|docs| docs.get(path).cloned())
+                {
+                    if doc.loaded() {
+                        self.common.proxy.notification(
+                            sparrow_rpc::proxy::ProxyNotification::SyncBuffer {
+                                path: path.clone(),
+                                rev: doc.rev(),
+                                content: doc.buffer.with_untracked(|buffer| buffer.to_string()),
+                            },
+                        );
+                    }
+                }
             }
             CoreNotification::OpenFileChanged { path, content } => {
                 self.main_split.open_file_changed(path, content);
@@ -4303,6 +4311,76 @@ impl WindowTabData {
         );
     }
 
+    fn resolve_workspace_dependencies(&self) {
+        let Some(root) = self.workspace.path.clone() else {
+            return;
+        };
+        let notifications = self.notifications;
+        if self.workspace.kind != SparrowWorkspaceType::Local {
+            crate::panel::workflow_tools::record(
+                notifications,
+                "Pub Get",
+                "Package resolution currently requires a local workspace.",
+            );
+            return;
+        }
+        // Read the current manifests only after every dirty manifest has been
+        // saved. Other editor buffers do not need saving for dependency resolution.
+        let manifests = self.main_split.docs.with_untracked(|docs| {
+            docs.values()
+                .filter(|doc| {
+                    doc.content.with_untracked(|content| {
+                        content.path().is_some_and(|path| {
+                            path.parent() == Some(root.as_path())
+                                && matches!(
+                                    path.file_name().and_then(|name| name.to_str()),
+                                    Some("pubspec.yaml" | "pubspec_overrides.yaml")
+                                )
+                        })
+                    }) && !doc.is_pristine()
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let scope = self.scope;
+        save_dependency_manifests(
+            manifests,
+            Box::new(move |result| {
+                if let Err(error) = result {
+                    crate::panel::workflow_tools::record(
+                        notifications,
+                        "Pub Get",
+                        &format!(
+                            "Could not save dependency manifests. Package resolution was not started.\n{error}"
+                        ),
+                    );
+                    return;
+                }
+                let send =
+                    create_ext_action(scope, move |(id, result): (u64, Result<(), String>)| {
+                        crate::panel::workflow_tools::record_pub_get_result(
+                            notifications,
+                            id,
+                            result,
+                        );
+                    });
+                let request = crate::dart::bootstrap::run_pub_get_observed(
+                    &root,
+                    Some(Box::new(move |id, result| send((id, result)))),
+                );
+                crate::panel::workflow_tools::record(
+                    notifications,
+                    "Pub Get",
+                    if request.joined {
+                        "Package resolution is already running; waiting for its result."
+                    } else {
+                        "Resolving package dependencies…"
+                    },
+                );
+            }),
+        );
+    }
+
     fn prepare_flutter_tests(
         &self,
         targets: Vec<(PathBuf, String)>,
@@ -4441,4 +4519,18 @@ fn open_uri(path: &Path) {
             error!("failed to open active file: {path:?}, error: {e}");
         }
     }
+}
+
+fn save_dependency_manifests(
+    mut docs: Vec<Rc<crate::doc::Doc>>,
+    complete: Box<dyn FnOnce(Result<(), String>)>,
+) {
+    let Some(doc) = docs.pop() else {
+        complete(Ok(()));
+        return;
+    };
+    doc.save_with_result(move |result| match result {
+        Ok(()) => save_dependency_manifests(docs, complete),
+        Err(error) => complete(Err(error)),
+    });
 }

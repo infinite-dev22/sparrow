@@ -118,10 +118,13 @@ impl Buffer {
         delta: &RopeDelta,
         rev: u64,
     ) -> Option<TextDocumentContentChangeEvent> {
-        if self.rev + 1 != rev {
+        if self.rev + 1 != rev || delta.base_len != self.rope.len() {
+            tracing::warn!(path = %self.path.display(), current = self.rev,
+                incoming = rev, expected_len = self.rope.len(), delta_len = delta.base_len,
+                "Buffer update requires synchronization");
             return None;
         }
-        self.rev += 1;
+        self.rev = rev;
         let content_change = get_document_content_changes(delta, self);
         self.rope = delta.apply(&self.rope);
         Some(
@@ -131,6 +134,22 @@ impl Buffer {
                 text: self.get_document(),
             }),
         )
+    }
+
+    /// Replace an out-of-sync mirror with the editor's current snapshot.
+    /// Older snapshots must never overwrite newer edits already received.
+    pub fn synchronize(&mut self, rev: u64, content: String) -> Option<RopeDelta> {
+        if rev < self.rev {
+            return None;
+        }
+        let delta = lapce_xi_rope::Delta::simple_edit(
+            0..self.rope.len(),
+            Rope::from(content),
+            self.rope.len(),
+        );
+        self.rope = delta.apply(&self.rope);
+        self.rev = rev;
+        Some(delta)
     }
 
     pub fn get_document(&self) -> String {
@@ -290,5 +309,49 @@ mod dart_scope_tests {
         ] {
             assert_eq!(language_id_from_path(Path::new(p)), None);
         }
+    }
+}
+
+#[cfg(test)]
+mod synchronization_tests {
+    use super::*;
+    use lapce_xi_rope::Delta;
+
+    #[test]
+    fn incompatible_delta_preserves_mirror_and_snapshot_restores_editing_and_saving()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pubspec_overrides.yaml");
+        fs::write(&path, "old\n").unwrap();
+        let mut buffer = Buffer::new(BufferId::next(), path.clone());
+        let revision = buffer.rev;
+        let invalid = Delta::simple_edit(0..0, Rope::from("x"), 99);
+        assert!(buffer.update(&invalid, revision + 1).is_none());
+        assert_eq!(buffer.rev, revision);
+        assert_eq!(buffer.get_document(), "old\n");
+        // A skipped revision must also request a snapshot, even for a valid length.
+        let skipped = Delta::simple_edit(0..0, Rope::from("x"), 4);
+        assert!(buffer.update(&skipped, revision + 2).is_none());
+        let snapshot =
+            "dependency_overrides:\n  local_probe:\n    path: local_probe\n";
+        assert!(buffer.synchronize(revision + 3, snapshot.into()).is_some());
+        let valid = Delta::simple_edit(
+            snapshot.len()..snapshot.len(),
+            Rope::from("\n"),
+            snapshot.len(),
+        );
+        assert!(buffer.update(&valid, revision + 4).is_some());
+        buffer.save(revision + 4, false).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), format!("{snapshot}\n"));
+    }
+
+    #[test]
+    fn delayed_snapshot_cannot_replace_newer_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut buffer = Buffer::new(BufferId::next(), dir.path().join("main.dart"));
+        buffer.synchronize(8, "newer".into()).unwrap();
+        assert!(buffer.synchronize(7, "older".into()).is_none());
+        assert_eq!(buffer.rev, 8);
+        assert_eq!(buffer.get_document(), "newer");
     }
 }

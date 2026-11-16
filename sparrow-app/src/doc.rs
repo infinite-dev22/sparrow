@@ -1470,27 +1470,39 @@ impl Doc {
     }
 
     pub fn save(&self, after_action: impl FnOnce() + 'static) {
-        let content = self.content.get_untracked();
-        if content.read_only() { return; }
-        if let DocContent::File { path, .. } = content {
-            let rev = self.rev();
-            let buffer = self.buffer;
-            let send = create_ext_action(self.scope, move |result| {
-                if let Ok(ProxyResponse::SaveResponse {}) = result {
-                    let current_rev = buffer.with_untracked(|buffer| buffer.rev());
-                    if current_rev == rev {
-                        buffer.update(|buffer| {
-                            buffer.set_pristine();
-                        });
-                        after_action();
-                    }
-                }
-            });
+        self.save_with_result(move |result| {
+            if result.is_ok() {
+                after_action();
+            }
+        });
+    }
 
-            self.common.proxy.save(rev, path, true, move |result| {
-                send(result);
-            })
+    /// Save the current revision and report failures to workflows that must wait
+    /// for disk contents, such as package resolution.
+    pub fn save_with_result(&self, after_action: impl FnOnce(Result<(), String>) + 'static) {
+        let content = self.content.get_untracked();
+        if content.read_only() {
+            after_action(Err("The document is read-only.".into()));
+            return;
         }
+        let DocContent::File { path, .. } = content else {
+            after_action(Err("The document has no file path.".into()));
+            return;
+        };
+        let rev = self.rev();
+        let buffer = self.buffer;
+        let display_path = path.display().to_string();
+        let send = create_ext_action(self.scope, move |result| {
+            let current_rev = buffer.with_untracked(|buffer| buffer.rev());
+            let result = saved_revision_result(rev, current_rev, result);
+            if result.is_ok() {
+                buffer.update(|buffer| buffer.set_pristine());
+            }
+            after_action(result.map_err(|error| format!("{display_path}: {error}")));
+        });
+        self.common
+            .proxy
+            .save(rev, path, true, move |result| send(result));
     }
 
     pub fn set_inline_completion(
@@ -2482,4 +2494,46 @@ pub(crate) fn extra_styles_for_range(
                 wave_line,
             })
         })
+}
+
+/// A successful disk write must still match the editor revision before a caller
+/// starts a process that reads the file.
+fn saved_revision_result(
+    saved: u64,
+    current: u64,
+    response: Result<ProxyResponse, sparrow_rpc::RpcError>,
+) -> Result<(), String> {
+    match response {
+        Ok(ProxyResponse::SaveResponse {}) if saved == current => Ok(()),
+        Ok(ProxyResponse::SaveResponse {}) => Err(
+            "The document changed while saving. Run the command again to use the latest changes."
+                .into(),
+        ),
+        Err(error) => Err(error.message),
+        Ok(_) => Err("Unexpected response while saving the document.".into()),
+    }
+}
+
+#[cfg(test)]
+mod save_result_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_save_requires_matching_revision_and_propagates_disk_errors() {
+        assert!(saved_revision_result(4, 4, Ok(ProxyResponse::SaveResponse {})).is_ok());
+        assert!(
+            saved_revision_result(4, 5, Ok(ProxyResponse::SaveResponse {}))
+                .unwrap_err()
+                .contains("changed while saving")
+        );
+        let result = saved_revision_result(
+            4,
+            4,
+            Err(sparrow_rpc::RpcError {
+                code: 0,
+                message: "Permission denied".into(),
+            }),
+        );
+        assert_eq!(result.unwrap_err(), "Permission denied");
+    }
 }
