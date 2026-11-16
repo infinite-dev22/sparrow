@@ -2304,36 +2304,59 @@ impl MainSplitData {
 
         if let Some(edits) = workspace_edits(edit) {
             // Check every target before applying any part of a multi-file edit.
-            if edits.keys().any(|uri| uri.to_file_path().map_or(true, |path| {
-                crate::dart::library_access::read_only(&path, self.common.workspace.path.as_deref())
-                    || self.docs.with_untracked(|docs| docs.get(&path).is_some_and(|doc|doc.content.with_untracked(|c|c.read_only())))
-            })) {
+            if edits.keys().any(|uri| {
+                uri.to_file_path().map_or(true, |path| {
+                    crate::dart::library_access::read_only(
+                        &path,
+                        self.common.workspace.path.as_deref(),
+                    ) || self.docs.with_untracked(|docs| {
+                        docs.get(&path).is_some_and(|doc| {
+                            doc.content.with_untracked(|c| c.read_only())
+                        })
+                    })
+                })
+            }) {
                 self.common.internal_command.send(InternalCommand::ShowAlert {title:"Read-only source".into(),msg:"This edit targets read-only library source. No changes were applied.".into(),buttons:Vec::new()});
                 return;
             }
             for (url, edits) in edits {
                 if let Ok(path) = url.to_file_path() {
-                    let active_path = self
-                        .active_editor
-                        .get_untracked()
-                        .map(|editor| editor.doc())
-                        .map(|doc| doc.content.get_untracked())
-                        .and_then(|content| content.path().cloned());
-                    let position = if active_path.as_ref() == Some(&path) {
-                        None
+                    let (doc, _) = self.get_doc(path, None);
+                    let editors = self.editors;
+                    let target = doc.clone();
+                    let apply = move || {
+                        let editor = editors.with_editors_untracked(|editors| {
+                            editors
+                                .values()
+                                .find(|editor| {
+                                    editor
+                                        .doc_signal()
+                                        .try_get_untracked()
+                                        .is_some_and(|current| {
+                                            Rc::ptr_eq(&current, &doc)
+                                        })
+                                })
+                                .cloned()
+                        });
+                        if let Some(editor) = editor {
+                            editor.do_text_edit(&edits);
+                        } else {
+                            doc.do_text_edit(&edits);
+                        }
+                    };
+                    // Previewed edits are already loaded. Other LSP edits may need
+                    // a buffer first, without opening a tab or moving the caret.
+                    if target.loaded() {
+                        apply();
                     } else {
-                        edits
-                            .first()
-                            .map(|edit| EditorPosition::Position(edit.range.start))
-                    };
-                    let location = EditorLocation {
-                        path,
-                        position,
-                        scroll_offset: None,
-                        ignore_unconfirmed: true,
-                        same_editor_tab: false,
-                    };
-                    self.jump_to_location(location, Some(edits));
+                        let scope = self.scope.create_child();
+                        scope.create_effect(move |_| {
+                            if target.loaded.get() {
+                                apply();
+                                scope.dispose();
+                            }
+                        });
+                    }
                 }
             }
         }

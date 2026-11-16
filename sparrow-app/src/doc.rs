@@ -254,7 +254,7 @@ pub struct Doc {
     /// The diagnostics for the document
     pub diagnostics: DiagnosticData,
 
-    editors: Editors,
+    pub(crate) editors: Editors,
     pub common: Rc<CommonData>,
 
     get_highlights_status: RwSignal<DocumentHighlightsStatus>,
@@ -583,7 +583,7 @@ impl Doc {
             buffer.set_cursor_before(old_cursor);
             buffer.set_cursor_after(cursor.mode.clone());
         });
-        self.apply_deltas(&deltas);
+        self.apply_deltas_with_kind(&deltas,crate::workspace_undo::ChangeKind::Insert);
         deltas
     }
 
@@ -596,11 +596,13 @@ impl Doc {
             return None;
         }
 
+        let unchanged=self.buffer.with_untracked(|buffer|edits.iter().all(|(selection,text)|selection.as_ref().regions().iter().all(|region|buffer.slice_to_cow(region.min()..region.max()).as_ref()==*text)));
+        if unchanged {return None;}
         let (text, delta, inval_lines) = self
             .buffer
             .try_update(|buffer| buffer.edit(edits, edit_type))
             .unwrap();
-        self.apply_deltas(&[(text.clone(), delta.clone(), inval_lines.clone())]);
+        self.apply_deltas_with_kind(&[(text.clone(), delta.clone(), inval_lines.clone())],crate::workspace_undo::ChangeKind::from_edit_type(edit_type));
         Some((text, delta, inval_lines))
     }
 
@@ -619,6 +621,7 @@ impl Doc {
         }
 
         let mut clipboard = SystemClipboard::new();
+        let kind=crate::workspace_undo::ChangeKind::command(cmd,cursor);
         let old_cursor = cursor.mode.clone();
         let deltas = self.syntax.with_untracked(|syntax| {
             self.buffer
@@ -646,13 +649,20 @@ impl Doc {
                 buffer.set_cursor_before(old_cursor);
                 buffer.set_cursor_after(cursor.mode.clone());
             });
-            self.apply_deltas(&deltas);
+            self.apply_deltas_with_kind(&deltas,kind);
         }
 
         deltas
     }
 
     pub fn apply_deltas(&self, deltas: &[(Rope, RopeDelta, InvalLines)]) {
+        self.apply_deltas_with_kind(deltas,crate::workspace_undo::ChangeKind::Other);
+    }
+
+    pub(crate) fn apply_deltas_with_kind(&self,deltas:&[(Rope,RopeDelta,InvalLines)],kind:crate::workspace_undo::ChangeKind) {
+        if self.content.with_untracked(|c|c.is_file()) {
+            self.common.workspace_undo.borrow_mut().observe(self.buffer_id,kind,deltas.len(),self.rev());
+        }
         let rev = self.rev() - deltas.len() as u64;
         batch(|| {
             for (i, (_, delta, inval)) in deltas.iter().enumerate() {
@@ -1764,7 +1774,7 @@ impl Document for Doc {
             .buffer
             .try_update(|buffer| buffer.edit(iter, edit_type))
             .unwrap();
-        self.apply_deltas(&[delta]);
+        self.apply_deltas_with_kind(&[delta],crate::workspace_undo::ChangeKind::from_edit_type(edit_type));
     }
 }
 

@@ -460,6 +460,23 @@ impl DartLspService {
     where
         F: FnOnce(Option<lsp_types::PrepareRenameResponse>) + Send + 'static,
     {
+        self.prepare_rename_result(path, line, character, move |result| {
+            cb(result.ok().flatten())
+        })
+    }
+
+    pub fn prepare_rename_result<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Result<Option<lsp_types::PrepareRenameResponse>, String>)
+            + Send
+            + 'static,
+    {
         let uri = path_to_uri(path);
         self.request_async(
             "textDocument/prepareRename",
@@ -468,14 +485,7 @@ impl DartLspService {
                 "position": { "line": line, "character": character }
             }),
             move |resp| {
-                let parsed =
-                    resp.get("result").filter(|v| !v.is_null()).and_then(|v| {
-                        serde_json::from_value::<lsp_types::PrepareRenameResponse>(
-                            v.clone(),
-                        )
-                        .ok()
-                    });
-                cb(parsed);
+                cb(parse_rename_result(&resp));
             },
         )
     }
@@ -493,6 +503,22 @@ impl DartLspService {
     where
         F: FnOnce(Option<lsp_types::WorkspaceEdit>) + Send + 'static,
     {
+        self.rename_result(path, line, character, new_name, move |result| {
+            cb(result.ok().flatten())
+        })
+    }
+
+    pub fn rename_result<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        new_name: &str,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Result<Option<lsp_types::WorkspaceEdit>, String>) + Send + 'static,
+    {
         let uri = path_to_uri(path);
         let new_name = new_name.to_string();
         self.request_async(
@@ -503,12 +529,7 @@ impl DartLspService {
                 "newName": new_name
             }),
             move |resp| {
-                let edit =
-                    resp.get("result").filter(|v| !v.is_null()).and_then(|v| {
-                        serde_json::from_value::<lsp_types::WorkspaceEdit>(v.clone())
-                            .ok()
-                    });
-                cb(edit);
+                cb(parse_rename_result(&resp));
             },
         )
     }
@@ -1762,6 +1783,51 @@ mod action_result_tests {
             .unwrap()
             .len(),
             1
+        );
+    }
+}
+
+fn parse_rename_result<T: serde::de::DeserializeOwned>(
+    response: &Value,
+) -> Result<Option<T>, String> {
+    if let Some(error) = response.get("error") {
+        return Err(error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("The analyzer could not rename this symbol.")
+            .into());
+    }
+    match response.get("result") {
+        Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|_| "The analyzer returned an invalid rename response.".into()),
+        None => Err("The analyzer did not return a rename result.".into()),
+    }
+}
+#[cfg(test)]
+mod rename_result_tests {
+    use super::*;
+    #[test]
+    fn rename_failures_are_not_empty_results() {
+        assert!(
+            parse_rename_result::<lsp_types::WorkspaceEdit>(&json!({"result":null}))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            parse_rename_result::<lsp_types::WorkspaceEdit>(
+                &json!({"error":{"message":"Name already exists"}})
+            )
+            .unwrap_err(),
+            "Name already exists"
+        );
+        assert!(
+            parse_rename_result::<lsp_types::WorkspaceEdit>(&json!({"result":2}))
+                .is_err()
+        );
+        assert!(
+            parse_rename_result::<lsp_types::WorkspaceEdit>(&json!({})).is_err()
         );
     }
 }

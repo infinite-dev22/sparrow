@@ -82,6 +82,11 @@ command = "previous_editor_tab"
 # --------------------------------- Rich Language Editing ----------------------------
 
 [[keymaps]]
+key = "shift+F6"
+command = "rename_symbol"
+when = "!file_explorer_focus"
+
+[[keymaps]]
 key = "F2"
 command = "rename_symbol"
 when = "!file_explorer_focus"

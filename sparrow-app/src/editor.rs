@@ -429,6 +429,7 @@ impl EditorData {
     }
 
     fn run_edit_command(&self, cmd: &EditCommand) -> CommandExecuted {
+        if matches!(cmd,EditCommand::Undo|EditCommand::Redo) && crate::workspace_undo::replay(self,*cmd==EditCommand::Redo) {return CommandExecuted::Yes;}
         let doc = self.doc();
         let text = self.editor.rope_text();
         let is_local = doc.content.with_untracked(|content| content.is_local());
@@ -3059,145 +3060,57 @@ impl EditorData {
 
     fn rename(&self) {
         let doc = self.doc();
-        let path = match if doc.loaded() {
-            doc.content.with_untracked(|c| c.path().cloned())
-        } else {
-            None
-        } {
-            Some(path) => path,
-            None => return,
+        let Some(path) = doc
+            .content
+            .with_untracked(|c| c.path().cloned())
+            .filter(|_| doc.loaded())
+        else {
+            return;
         };
-
-        let offset = self.cursor().with_untracked(|c| c.offset());
-        let (position, rev) = doc
-            .buffer
-            .with_untracked(|buffer| (buffer.offset_to_position(offset), doc.rev()));
-
-        // ── Dart fast path ─────────────────────────────────────────────
-        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
-            let cursor = self.cursor();
-            let buffer = doc.buffer;
-            let internal_command = self.common.internal_command;
-            let local_path = path.clone();
-            let trigger = create_ext_action(
-                self.scope,
-                move |resp: Option<lsp_types::PrepareRenameResponse>| {
-                    if buffer.with_untracked(|b| b.rev()) != rev {
-                        return;
-                    }
-                    if cursor.with_untracked(|c| c.offset()) != offset {
-                        return;
-                    }
-                    let Some(resp) = resp else { return };
-                    let (start, _end, position, placeholder) =
-                        buffer.with_untracked(|buffer| match resp {
-                            lsp_types::PrepareRenameResponse::Range(range) => (
-                                buffer.offset_of_position(&range.start),
-                                buffer.offset_of_position(&range.end),
-                                range.start,
-                                None,
-                            ),
-                            lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-                                range,
-                                placeholder,
-                            } => (
-                                buffer.offset_of_position(&range.start),
-                                buffer.offset_of_position(&range.end),
-                                range.start,
-                                Some(placeholder),
-                            ),
-                            lsp_types::PrepareRenameResponse::DefaultBehavior { .. } => {
-                                let start = buffer.prev_code_boundary(offset);
-                                let pos = buffer.offset_to_position(start);
-                                (start, buffer.next_code_boundary(offset), pos, None)
-                            }
-                        });
-                    let placeholder = placeholder.unwrap_or_else(|| {
-                        buffer.with_untracked(|buffer| {
-                            let (start, end) = buffer.select_word(offset);
-                            buffer.slice_to_cow(start..end).to_string()
-                        })
-                    });
-                    internal_command.send(InternalCommand::StartRename {
-                        path: local_path.clone(),
-                        placeholder,
-                        start,
-                        position,
-                    });
-                },
-            );
-            self.common.dart_lsp.prepare_rename(
-                &path,
-                position.line,
-                position.character,
-                move |resp| trigger(resp),
-            );
+        if doc.content.with_untracked(|c| c.read_only()) {
+            self.common
+                .internal_command
+                .send(InternalCommand::ShowAlert {
+                    title: "Rename".into(),
+                    msg: "SDK and dependency source is read-only.".into(),
+                    buttons: Vec::new(),
+                });
             return;
         }
-
-        let cursor = self.cursor();
-        let buffer = doc.buffer;
-        let internal_command = self.common.internal_command;
-        let local_path = path.clone();
-        let send = create_ext_action(self.scope, move |result| {
-            if let Ok(ProxyResponse::PrepareRename { resp }) = result {
-                if buffer.with_untracked(|buffer| buffer.rev()) != rev {
-                    return;
-                }
-
-                if cursor.with_untracked(|c| c.offset()) != offset {
-                    return;
-                }
-
-                let (start, _end, position, placeholder) =
-                    buffer.with_untracked(|buffer| match resp {
-                        lsp_types::PrepareRenameResponse::Range(range) => (
-                            buffer.offset_of_position(&range.start),
-                            buffer.offset_of_position(&range.end),
-                            range.start,
-                            None,
-                        ),
-                        lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-                            range,
-                            placeholder,
-                        } => (
-                            buffer.offset_of_position(&range.start),
-                            buffer.offset_of_position(&range.end),
-                            range.start,
-                            Some(placeholder),
-                        ),
-                        lsp_types::PrepareRenameResponse::DefaultBehavior {
-                            ..
-                        } => {
-                            let start = buffer.prev_code_boundary(offset);
-                            let position = buffer.offset_to_position(start);
-                            (
-                                start,
-                                buffer.next_code_boundary(offset),
-                                position,
-                                None,
-                            )
-                        }
-                    });
-                let placeholder = placeholder.unwrap_or_else(|| {
-                    buffer.with_untracked(|buffer| {
-                        let (start, end) = buffer.select_word(offset);
-                        buffer.slice_to_cow(start..end).to_string()
+        let offset = self.cursor().with_untracked(|c| c.offset());
+        let position = doc.buffer.with_untracked(|b| b.offset_to_position(offset));
+        let revision = doc.rev();
+        let commands = self.common.internal_command;
+        let target = path.clone();
+        let send = create_ext_action(self.scope, move |response| {
+            commands.send(InternalCommand::PreparedRename {
+                path: target,
+                offset,
+                revision,
+                response,
+            })
+        });
+        if crate::dart::is_dart_path(&path) {
+            if self.common.dart_lsp.is_available() {
+                self.common.dart_lsp.prepare_rename_result(
+                    &path,
+                    position.line,
+                    position.character,
+                    move |result| send(result),
+                );
+            } else {
+                send(Err("The Dart analyzer is starting. Try again when analysis is ready.".into()));
+            }
+        } else {
+            self.common
+                .proxy
+                .prepare_rename(path, position, move |result| {
+                    send(match result {
+                        Ok(ProxyResponse::PrepareRename { resp }) => Ok(Some(resp)),
+                        _ => Err("This symbol cannot be renamed.".into()),
                     })
                 });
-                internal_command.send(InternalCommand::StartRename {
-                    path: local_path.clone(),
-                    placeholder,
-                    start,
-                    position,
-                });
-            }
-        });
-        self.common
-            .proxy
-            .prepare_rename(path, position, move |result| {
-                send(result);
-            });
+        }
     }
 
     #[instrument]
@@ -4170,6 +4083,11 @@ impl DocSignal {
         (doc as Rc<dyn ::std::any::Any>)
             .downcast()
             .expect("doc is not Rc<Doc>")
+    }
+
+    pub fn try_get_untracked(&self) -> Option<Rc<Doc>> {
+        let doc=self.inner.try_get_untracked()?;
+        (doc as Rc<dyn ::std::any::Any>).downcast().ok()
     }
 
     pub fn get_untracked(&self) -> Rc<Doc> {

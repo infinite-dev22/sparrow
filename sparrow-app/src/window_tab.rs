@@ -1,3 +1,4 @@
+use sparrow_core::rope_text_pos::RopeTextPosition;
 use std::{
     collections::{BTreeMap, HashSet},
     env,
@@ -141,6 +142,7 @@ pub struct WorkProgress {
 
 #[derive(Clone)]
 pub struct CommonData {
+    pub workspace_undo: crate::workspace_undo::SharedHistory,
     pub workspace: Arc<SparrowWorkspace>,
     pub scope: Scope,
     pub focus: RwSignal<Focus>,
@@ -417,6 +419,7 @@ impl WindowTabData {
             cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
 
         let common = Rc::new(CommonData {
+            workspace_undo: Default::default(),
             workspace: workspace.clone(),
             scope: cx,
             keypress,
@@ -1281,8 +1284,8 @@ impl WindowTabData {
             }
 
             SaveAll => {
+                let mut paths = HashSet::new();
                 self.main_split.editors.with_editors_untracked(|editors| {
-                    let mut paths = HashSet::new();
                     for (editor_id, editor_data) in editors.iter() {
                         // Defensive safeguard: `floem`'s `Editor::doc()` panics if the reactive scope was
                         // already destroyed. This catches "ghost" editors (like closed Settings or Plugin tabs)
@@ -1320,6 +1323,13 @@ impl WindowTabData {
                         }
                     }
                 });
+                // Refactorings can update documents that have no editor tab.
+                let docs=self.main_split.docs.with_untracked(|docs|docs.values().cloned().collect::<Vec<_>>());
+                for doc in docs {
+                    if doc.loaded() && !doc.is_pristine() && doc.content.with_untracked(|c|c.path().is_some_and(|p|!paths.contains(p))) {
+                        doc.save(||{});
+                    }
+                }
             }
 
             // ==== Configuration / Info Files and Folders ====
@@ -2775,14 +2785,56 @@ impl WindowTabData {
                 config.dap_id = Default::default();
                 self.run_and_debug(cx, &mode, &config);
             }
-            InternalCommand::StartRename {
-                path,
-                placeholder,
-                position,
-                start,
-            } => {
-                self.rename.start(path, placeholder, start, position);
+            InternalCommand::RequestSymbolRename { token, preview } => {
+                crate::rename::request(Rc::new(self.clone()), token, preview);
             }
+            InternalCommand::PreparedRename {
+                path,
+                revision,
+                offset,
+                response,
+            } => {
+                let Some(editor) = self.main_split.active_editor.get_untracked()
+                else {
+                    return;
+                };
+                let doc = editor.doc();
+                if self.common.focus.get_untracked() != Focus::Workbench
+                    || doc.rev() != revision
+                    || doc
+                        .content
+                        .with_untracked(|c| c.path() != Some(&path) || c.read_only())
+                    || editor.cursor().with_untracked(|c| c.offset()) != offset
+                {
+                    return;
+                }
+                let response = match response {
+                    Ok(Some(response)) => response,
+                    other => {
+                        self.show_alert(
+                            "Rename".into(),
+                            other.err().unwrap_or_else(|| {
+                                "This symbol cannot be renamed.".into()
+                            }),
+                            Vec::new(),
+                        );
+                        return;
+                    }
+                };
+                let (start,position,placeholder)=doc.buffer.with_untracked(|buffer|{
+                    let (range,placeholder)=match response {
+                        lsp_types::PrepareRenameResponse::Range(range)=>(Some(range),None),
+                        lsp_types::PrepareRenameResponse::RangeWithPlaceholder{range,placeholder}=>(Some(range),Some(placeholder)),
+                        lsp_types::PrepareRenameResponse::DefaultBehavior{..}=>(None,None),
+                    };
+                    let (start,end)=range.map(|r|(buffer.offset_of_position(&r.start),buffer.offset_of_position(&r.end))).unwrap_or_else(||buffer.select_word(offset));
+                    (start,buffer.offset_to_position(start),placeholder.unwrap_or_else(||buffer.slice_to_cow(start..end).to_string()))
+                });
+                self.common.hover.active.set(false);
+                self.rename
+                    .start(path, placeholder, start, position, editor);
+            }
+
             InternalCommand::Search { pattern } => {
                 self.main_split.set_find_pattern(pattern);
             }
@@ -3269,6 +3321,13 @@ impl WindowTabData {
             return false;
         }
         if self.alert_data.active.get_untracked() {
+            if let EventRef::Keyboard(key)=event.into() {
+                if key.modifiers.is_empty() && key.key.logical_key==floem::keyboard::Key::Named(floem::keyboard::NamedKey::Escape) {
+                    self.alert_data.active.set(false);
+                    self.common.window_common.app_view_id.get_untracked().request_focus();
+                    return true;
+                }
+            }
             return false;
         }
         let focus = self.common.focus.get_untracked();

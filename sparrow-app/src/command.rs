@@ -6,7 +6,7 @@ use floem::{
     views::editor::command::Command,
 };
 use indexmap::IndexMap;
-use lsp_types::{CodeActionOrCommand, Position, WorkspaceEdit};
+use lsp_types::{CodeActionOrCommand, WorkspaceEdit};
 use serde_json::Value;
 use sparrow_core::command::{
     EditCommand, FocusCommand, MotionModeCommand, MoveCommand,
@@ -858,11 +858,10 @@ pub enum InternalCommand {
         args: Vec<String>,
         name: String,
     },
-    StartRename {
-        path: PathBuf,
-        placeholder: String,
-        start: usize,
-        position: Position,
+    RequestSymbolRename { token:u64, preview:bool },
+    PreparedRename {
+        path:PathBuf, revision:u64, offset:usize,
+        response:Result<Option<lsp_types::PrepareRenameResponse>,String>,
     },
     Search {
         pattern: Option<String>,

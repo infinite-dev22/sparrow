@@ -49,12 +49,12 @@ pub enum Preview {
     Ready(Prepared),
 }
 #[derive(Clone)]
-struct EditFile {
-    path: PathBuf,
+pub(crate) struct EditFile {
+    pub(crate) path: PathBuf,
     edits: Vec<TextEdit>,
     version: Option<i32>,
 }
-fn edit_files(edit: &WorkspaceEdit) -> Result<Vec<EditFile>, String> {
+pub(crate) fn edit_files(edit: &WorkspaceEdit) -> Result<Vec<EditFile>, String> {
     let mut files = BTreeMap::<PathBuf, EditFile>::new();
     let path = |uri: &lsp_types::Url| {
         uri.to_file_path()
@@ -169,7 +169,7 @@ fn edited(source: &str, edits: &[TextEdit]) -> Result<String, String> {
     }
     Ok(result)
 }
-fn prepare(
+pub(crate) fn prepare(
     window: Rc<WindowTabData>,
     scope: Scope,
     preview: RwSignal<Preview>,
@@ -368,9 +368,11 @@ pub fn apply(window: &WindowTabData, prepared: Prepared) -> Result<(), String> {
             return Err("A previewed document changed or became read-only. No changes were applied.".into());
         }
     }
-    window
-        .main_split
-        .run_code_action(prepared.plugin_id, prepared.action);
+    let linked=matches!(&prepared.action,CodeActionOrCommand::CodeAction(action) if action.edit.is_some() && action.command.is_none());
+    let snapshots=if linked {prepared.files.iter().filter_map(|file|window.main_split.docs.with_untracked(|docs|docs.get(&file.path).cloned())).map(crate::workspace_undo::snapshot).collect()}else{Vec::new()};
+    let label=match &prepared.action {CodeActionOrCommand::CodeAction(action)=>action.title.clone(),CodeActionOrCommand::Command(action)=>action.title.clone()};
+    window.main_split.run_code_action(prepared.plugin_id, prepared.action);
+    if linked {crate::workspace_undo::record(&window.common.workspace_undo,label,snapshots);}
     Ok(())
 }
 #[derive(Clone)]
