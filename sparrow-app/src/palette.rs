@@ -1663,6 +1663,11 @@ impl PaletteData {
         self.status.set(PaletteStatus::Inactive);
         if self.common.focus.get_untracked() == Focus::Palette {
             self.common.focus.set(Focus::Workbench);
+            self.common
+                .window_common
+                .app_view_id
+                .get_untracked()
+                .request_focus();
         }
         self.has_preview.set(false);
         self.items.update(|items| items.clear());
