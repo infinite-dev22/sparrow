@@ -37,7 +37,23 @@ pub fn decode(
         let Some(token_type) = legend.token_types.get(token_type_idx) else {
             continue;
         };
-        let Some(theme_key) = map_token_type(token_type.as_str()) else {
+        let modifier = |name: &str| {
+            legend
+                .token_modifiers
+                .iter()
+                .position(|m| m.as_str() == name)
+                .is_some_and(|bit| {
+                    bit < 32 && tok.token_modifiers_bitset & (1 << bit) != 0
+                })
+        };
+        let theme_key = if modifier("annotation") {
+            Some("attribute")
+        } else if modifier("escape") {
+            Some("string.escape")
+        } else {
+            map_token_type(token_type.as_str())
+        };
+        let Some(theme_key) = theme_key else {
             continue;
         };
 
@@ -116,7 +132,10 @@ fn map_token_type(token_type: &str) -> Option<&'static str> {
         "number" => "number",
         "regexp" => "string",
         "operator" => "keyword",
-        "decorator" => "attribute",
+        "decorator" | "annotation" => "attribute",
+        "boolean" => "keyword",
+        "label" => "variable",
+        "source" => "string",
         _ => return None,
     })
 }
@@ -151,6 +170,32 @@ mod tests {
             token_type,
             token_modifiers_bitset: 0,
         }
+    }
+
+    #[test]
+    fn dart_annotation_modifier_and_custom_categories_use_their_theme_styles() {
+        let mut legend = legend(&["annotation", "property", "string"]);
+        legend.token_modifiers = vec![
+            lsp_types::SemanticTokenModifier::from("annotation".to_string()),
+            lsp_types::SemanticTokenModifier::from("escape".to_string()),
+        ];
+        let mut annotation = tok(0, 1, 8, 1);
+        annotation.token_modifiers_bitset = 1;
+        let styles = decode(
+            &SemanticTokens {
+                result_id: None,
+                data: vec![tok(0, 0, 1, 0), annotation],
+            },
+            &Rope::from("@override"),
+            &legend,
+        );
+        assert_eq!(styles.len(), 2);
+        assert!(
+            styles
+                .iter()
+                .all(|s| s.style.fg_color.as_deref() == Some("attribute"))
+        );
+        assert_eq!(map_token_type("boolean"), Some("keyword"));
     }
 
     #[test]

@@ -1411,7 +1411,24 @@ impl WindowTabData {
             ExportCurrentThemeSettings => {
                 self.main_split.export_theme();
             }
-            ToggleInlayHints => {}
+            ToggleInlayHints => {
+                let enabled = !self.common.config.get_untracked().editor.enable_inlay_hints;
+                // Keep an existing project override in its original scope.
+                let project = self.workspace.path.as_ref().map(|root| root.join(".sparrow/settings.toml"));
+                let target = project.filter(|path| {
+                    std::fs::read_to_string(path).ok()
+                        .and_then(|text| text.parse::<toml::Value>().ok())
+                        .is_some_and(|value| value.get("editor").and_then(|e|e.get("enable-inlay-hints")).is_some())
+                }).or_else(SparrowConfig::settings_file);
+                if let Some(target) = target {
+                    match SparrowConfig::update_scoped_settings(vec![(target, vec![(
+                        "editor".into(), "enable-inlay-hints".into(), Some(enabled.into()),
+                    )])]) {
+                        Ok(()) => self.reload_config(),
+                        Err(error) => self.show_alert("Inlay Hints".into(), error, Vec::new()),
+                    }
+                }
+            }
 
             // ==== Window ====
             ReloadWindow => {
@@ -2246,6 +2263,15 @@ impl WindowTabData {
                     None,
                 );
             }
+            InternalCommand::OpenLibraryFile { path, read_only } => {
+                if read_only {
+                    let (doc, _) = self.main_split.get_doc(path.clone(), None);
+                    doc.content.update(|content| {
+                        if let DocContent::File {read_only, ..} = content { *read_only = true; }
+                    });
+                }
+                self.run_internal_command(InternalCommand::OpenAndConfirmedFile { path });
+            }
             InternalCommand::OpenAndConfirmedFile { path } => {
                 self.main_split.jump_to_location(
                     EditorLocation {
@@ -2566,9 +2592,28 @@ impl WindowTabData {
                 plugin_id,
                 code_actions,
             } => {
+                self.common.hover.active.set(false);
                 let mut code_action = self.code_action.get_untracked();
                 code_action.show(plugin_id, code_actions, offset, mouse_click);
+                code_action.origin = self.main_split.active_editor.get_untracked().and_then(|editor| {
+                    let doc=editor.doc();doc.content.with_untracked(|c|c.path().cloned()).map(|path|(path,doc.rev()))
+                });
                 self.code_action.set(code_action);
+            }
+            InternalCommand::QuickFixAt { location } => {
+                self.main_split.jump_to_location(location, None);
+                if let Some(editor) = self.main_split.active_editor.get_untracked() {
+                    let scope = self.scope.create_child();
+                    let doc = editor.doc();
+                    scope.create_effect(move |_| {
+                        if doc.loaded.get() { editor.show_code_actions(false); scope.dispose(); }
+                    });
+                }
+            }
+            InternalCommand::ApplyCodeActionPreview { prepared } => {
+                if let Err(error) = crate::code_action_preview::apply(self, prepared) {
+                    self.show_alert("Quick Fix".into(), error, Vec::new());
+                }
             }
             InternalCommand::RunCodeAction { plugin_id, action } => {
                 self.main_split.run_code_action(plugin_id, action);

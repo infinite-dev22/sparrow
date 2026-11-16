@@ -2768,11 +2768,12 @@ impl EditorData {
             );
 
             if self.common.dart_lsp.is_available() {
-                let editor = self.clone();
+                let action_doc = doc.clone();
                 let trigger = create_ext_action(
                     self.scope,
                     move |actions: Vec<lsp_types::CodeActionOrCommand>| {
-                        let doc = editor.doc();
+                        if action_doc.rev() != rev { return; }
+                        let doc = &action_doc;
                         let mut combined = local_actions;
                         for act in actions {
                             let title = match &act {
@@ -2846,21 +2847,38 @@ impl EditorData {
     pub fn show_code_actions(&self, mouse_click: bool) {
         let offset = self.cursor().with_untracked(|c| c.offset());
         let doc = self.doc();
-        let code_actions = doc
-            .code_actions()
-            .with_untracked(|c| c.get(&offset).cloned());
-        if let Some((plugin_id, code_actions)) = code_actions {
-            if !code_actions.is_empty() {
-                self.common.internal_command.send(
-                    InternalCommand::ShowCodeActions {
-                        offset,
-                        mouse_click,
-                        plugin_id,
-                        code_actions,
-                    },
-                );
-            }
+        if !doc.loaded() { return; }
+        // An empty placeholder may be from a request sent while the analyzer
+        // was starting. An explicit invocation must be able to retry it.
+        if doc.code_actions().with_untracked(|cache|cache.get(&offset).is_some_and(|(_,actions)|actions.is_empty())) {
+            doc.code_actions().update(|cache| {cache.remove(&offset);});
         }
+        self.get_code_actions();
+        let scope = self.scope.create_child();
+        let editor = self.clone();
+        let revision = doc.rev();
+        let waiting = scope.create_rw_signal(true);
+        scope.create_effect(move |_| {
+            if !waiting.get() { return; }
+            if editor.common.focus.get() != Focus::Workbench || !Rc::ptr_eq(&editor.doc_signal().get(), &doc) || editor.cursor().with(|c|c.offset()) != offset || doc.buffer.with(|b|b.rev()) != revision {
+                scope.dispose(); return;
+            }
+            let cached = doc.code_actions().with(|c|c.get(&offset).cloned());
+            if let Some((plugin_id, actions)) = cached.filter(|(_,actions)|!actions.is_empty()) {
+                waiting.set(false);
+                editor.common.internal_command.send(InternalCommand::ShowCodeActions {
+                    offset, mouse_click, plugin_id, code_actions:actions,
+                });
+                scope.dispose();
+            }
+        });
+        let commands = self.common.internal_command;
+        floem::action::exec_after(std::time::Duration::from_secs(2), move |_| {
+            if waiting.try_get_untracked() == Some(true) {
+                commands.send(InternalCommand::ShowCodeActions {offset,mouse_click,plugin_id:PluginId(0),code_actions:im::Vector::new()});
+                scope.dispose();
+            }
+        });
     }
 
     fn do_save(&self, after_action: impl FnOnce() + 'static) {
@@ -2875,6 +2893,7 @@ impl EditorData {
         let doc = self.doc();
         let is_pristine = doc.is_pristine();
         let content = doc.content.get_untracked();
+        if content.read_only() { return; }
 
         if let DocContent::Scratch { .. } = &content {
             self.common
@@ -3680,6 +3699,8 @@ impl EditorData {
         let config = self.common.config;
         let hover_data = self.common.hover.clone();
         let editor_id = self.id();
+        let revision = doc.rev();
+        let hover_focus = self.common.focus;
 
         // ── Dart fast path ─────────────────────────────────────────
         // Skip the proxy round-trip; talk directly to the warm LSP.
@@ -3692,6 +3713,7 @@ impl EditorData {
             let trigger = create_ext_action(
                 self.scope,
                 move |hover: Option<lsp_types::Hover>| {
+                    if doc.rev() != revision || hover_focus.get_untracked() == Focus::CodeAction { return; }
                     let Some(hover) = hover else { return };
                     let content = parse_hover_resp(hover, &config.get_untracked());
                     hover_data_cb.content.set(content);
@@ -3710,6 +3732,7 @@ impl EditorData {
         }
 
         let send = create_ext_action(self.scope, move |resp| {
+            if doc.rev() != revision || hover_focus.get_untracked() == Focus::CodeAction { return; }
             if let Ok(ProxyResponse::HoverResponse { hover, .. }) = resp {
                 let content = parse_hover_resp(hover, &config.get_untracked());
                 hover_data.content.set(content);

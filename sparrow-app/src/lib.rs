@@ -56,3 +56,5 @@ pub mod outline;
 extern crate windows_sys as windows;
 
 mod persistence;
+
+pub mod code_action_preview;

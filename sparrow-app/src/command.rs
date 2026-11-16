@@ -735,11 +735,17 @@ pub enum SparrowWorkbenchCommand {
 #[derive(Clone, Debug)]
 pub enum InternalCommand {
     ReloadConfig,
+    ApplyCodeActionPreview { prepared: crate::code_action_preview::Prepared },
+    QuickFixAt { location: EditorLocation },
     OpenFile {
         path: PathBuf,
     },
     OpenAndConfirmedFile {
         path: PathBuf,
+    },
+    OpenLibraryFile {
+        path: PathBuf,
+        read_only: bool,
     },
     OpenFileInNewTab {
         path: PathBuf,

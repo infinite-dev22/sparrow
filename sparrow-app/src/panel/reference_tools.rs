@@ -2,9 +2,7 @@
 use super::kind::PanelKind;
 use crate::{
     app::clickable_icon,
-    command::InternalCommand,
     config::{color::SparrowColor, icon::SparrowIcons},
-    editor::location::{EditorLocation, EditorPosition},
     window_tab::WindowTabData,
 };
 use floem::{
@@ -98,128 +96,7 @@ pub(super) fn adb() -> PathBuf {
 }
 
 pub fn problems(window: Rc<WindowTabData>) -> impl View {
-    let config = window.common.config;
-    let tab = create_rw_signal(0usize);
-    let diagnostics = window.main_split.diagnostics;
-    let editor = window.main_split.active_editor;
-    let internal = window.common.internal_command;
-    let path = create_memo(move |_| {
-        editor
-            .get()
-            .and_then(|e| e.doc().content.with(|c| c.path().cloned()))
-    });
-    let rows = create_memo(move |_| {
-        let mut rows = Vec::new();
-        for (p, data) in diagnostics.get() {
-            for d in data.diagnostics.get() {
-                if (tab.get() == 0 && path.get().as_ref() == Some(&p))
-                    || (tab.get() == 1
-                        && d.severity == Some(lsp_types::DiagnosticSeverity::ERROR))
-                {
-                    rows.push((p.clone(), d));
-                }
-            }
-        }
-        rows.sort_by_key(|(p, d)| (p.clone(), d.range.start));
-        rows
-    });
-    let tabs =
-        dyn_stack(
-            || vec![(0, "File"), (1, "Project Errors"), (2, "Designer")],
-            |(i, _)| *i,
-            move |(i, title)| {
-                label(move || title)
-                    .on_click_stop(move |_| tab.set(i))
-                    .style(move |s| {
-                        s.height(24.0)
-                            .padding_horiz(12.0)
-                            .items_center()
-                            .border_radius(3.0)
-                            .apply_if(tab.get() == i, |s| {
-                                s.border(1.0)
-                                    .border_color(config.get().color(
-                                        SparrowColor::SPARROW_TAB_ACTIVE_BORDER,
-                                    ))
-                                    .background(config.get().color(
-                                        SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND,
-                                    ))
-                            })
-                    })
-            },
-        );
-    stack((
-        super::chrome::header(window, PanelKind::Problems, "Problems", tabs),
-        label(move || {
-            if tab.get() == 2 {
-                "Designer diagnostics are not available in Sparrow".to_string()
-            } else if tab.get() == 1 {
-                "No project errors".into()
-            } else {
-                format!(
-                    "No problems in {}",
-                    path.get()
-                        .and_then(|p| p
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned()))
-                        .unwrap_or_else(|| "the current file".into())
-                )
-            }
-        })
-        .style(move |s| {
-            s.absolute()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
-                .pointer_events_none()
-                .apply_if(tab.get() != 2 && !rows.with(|r| r.is_empty()), |s| {
-                    s.hide()
-                })
-        }),
-        scroll(
-            dyn_stack(
-                move || if tab.get() == 2 { vec![] } else { rows.get() },
-                |(p, d)| (p.clone(), d.range.start, d.message.clone()),
-                move |(p, d)| {
-                    let text = format!(
-                        "{}:{}  {}",
-                        p.file_name().unwrap_or_default().to_string_lossy(),
-                        d.range.start.line + 1,
-                        d.message.replace('\n', " ")
-                    );
-                    label(move || text.clone())
-                        .on_click_stop(move |_| {
-                            internal.send(InternalCommand::JumpToLocation {
-                                location: EditorLocation {
-                                    path: p.clone(),
-                                    position: Some(EditorPosition::Position(
-                                        d.range.start,
-                                    )),
-                                    scroll_offset: None,
-                                    ignore_unconfirmed: false,
-                                    same_editor_tab: false,
-                                },
-                            })
-                        })
-                        .style(move |s| {
-                            s.height(24.0)
-                                .width_full()
-                                .padding_left(40.0)
-                                .text_ellipsis()
-                                .items_center()
-                                .hover(|s| {
-                                    s.background(config.get().color(
-                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                    ))
-                                })
-                        })
-                },
-            )
-            .style(|s| s.flex_col().width_full()),
-        )
-        .style(|s| s.width_full().flex_grow(1.0_f32).min_height(0.0)),
-    ))
-    .style(|s| s.absolute().size_full().flex_col().font_size(13.0))
+    super::problems_view::panel(window)
 }
 
 #[derive(Clone, Debug, PartialEq)]

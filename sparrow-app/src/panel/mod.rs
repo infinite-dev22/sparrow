@@ -26,3 +26,5 @@ pub mod dart_analysis_view;
 pub mod reference_tools;
 
 pub mod workflow_tools;
+
+pub mod problems_view;

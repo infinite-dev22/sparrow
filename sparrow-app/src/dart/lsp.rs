@@ -751,24 +751,19 @@ impl DartLspService {
     /// `codeAction/resolve`. Some actions only provide their `edit` after
     /// explicit resolution.
     pub fn resolve_code_action<F>(&self, action: lsp_types::CodeAction, cb: F) -> i64
-    where
-        F: FnOnce(Option<lsp_types::WorkspaceEdit>) + Send + 'static,
-    {
-        self.request_async(
-            "codeAction/resolve",
-            serde_json::to_value(&action).unwrap_or(Value::Null),
-            move |resp| {
-                let edit = resp
-                    .get("result")
-                    .filter(|v| !v.is_null())
-                    .and_then(|v| {
-                        serde_json::from_value::<lsp_types::CodeAction>(v.clone())
-                            .ok()
-                    })
-                    .and_then(|a| a.edit);
-                cb(edit);
-            },
-        )
+    where F: FnOnce(Option<lsp_types::WorkspaceEdit>) + Send + 'static {
+        self.resolve_code_action_full(action, move |result| cb(result.ok().and_then(|a|a.edit)))
+    }
+
+    /// Resolve for a preview without executing the action or losing its command.
+    pub fn resolve_code_action_full<F>(&self, action: lsp_types::CodeAction, cb: F) -> i64
+    where F: FnOnce(Result<lsp_types::CodeAction,String>) + Send + 'static {
+        self.request_async("codeAction/resolve", serde_json::to_value(&action).unwrap_or(Value::Null), move |response| {
+            let result = response.get("result").filter(|v|!v.is_null())
+                .ok_or_else(|| response.get("error").and_then(|v|v.get("message")).and_then(|v|v.as_str()).unwrap_or("Could not resolve this quick fix.").to_string())
+                .and_then(|value|serde_json::from_value(value.clone()).map_err(|e|e.to_string()));
+            cb(result);
+        })
     }
 
     /// `textDocument/semanticTokens/full`. Returns the raw token array;

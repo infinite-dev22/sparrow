@@ -16,7 +16,6 @@ use crate::debug::{debug_floating_toolbar, run_config_modal};
 use crate::title::{branch_switcher, device_selector_overlay, project_switcher};
 use crate::{
     about, alert,
-    code_action::CodeActionStatus,
     command::{
         CommandKind, InternalCommand, SparrowCommand, SparrowWorkbenchCommand,
         WindowCommand,
@@ -3211,7 +3210,7 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
     .on_event_stop(EventListener::PointerDown, |_| {})
     .style(move |s| {
         let active = window_tab_data.common.hover.active.get();
-        if !active {
+        if !active || window_tab_data.common.focus.get() == Focus::CodeAction {
             s.hide()
         } else {
             let config = config.get();
@@ -3478,91 +3477,7 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
 }
 
 fn code_action(window_tab_data: Rc<WindowTabData>) -> impl View {
-    let config = window_tab_data.common.config;
-    let code_action = window_tab_data.code_action;
-    let (status, active) = code_action
-        .with_untracked(|code_action| (code_action.status, code_action.active));
-    let request_id =
-        move || code_action.with_untracked(|code_action| code_action.request_id);
-    scroll(
-        container(
-            dyn_stack(
-                move || {
-                    code_action.with(|code_action| {
-                        code_action.filtered_items.clone().into_iter().enumerate()
-                    })
-                },
-                move |(i, _item)| (request_id(), *i),
-                move |(i, item)| {
-                    container(
-                        text(item.title().replace('\n', " "))
-                            .style(|s| s.text_ellipsis().min_width(0.0)),
-                    )
-                    .on_click_stop(move |_| {
-                        let code_action = code_action.get_untracked();
-                        code_action.active.set(i);
-                        code_action.select();
-                    })
-                    .on_event_stop(EventListener::PointerDown, |_| {})
-                    .style(move |s| {
-                        let config = config.get();
-                        s.padding_horiz(10.0)
-                            .align_items(Some(AlignItems::Center))
-                            .min_width(0.0)
-                            .width_full()
-                            .line_height(1.8)
-                            .border_radius(6.0)
-                            .cursor(CursorStyle::Pointer)
-                            .apply_if(active.get() == i, |s| {
-                                s.background(
-                                    config.color(SparrowColor::COMPLETION_CURRENT),
-                                )
-                            })
-                            .hover(move |s| {
-                                s.background(
-                                    config.color(
-                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                    ),
-                                )
-                            })
-                    })
-                },
-            )
-            .style(|s| s.width_full().flex_col()),
-        )
-        .style(|s| s.width_full().padding_vert(4.0)),
-    )
-    .ensure_visible(move || {
-        let config = config.get();
-        let active = active.get();
-        Size::new(1.0, config.editor.line_height() as f64)
-            .to_rect()
-            .with_origin(Point::new(
-                0.0,
-                active as f64 * config.editor.line_height() as f64,
-            ))
-    })
-    .on_resize(move |rect| {
-        code_action.update(|c| {
-            c.layout_rect = rect;
-        });
-    })
-    .on_event_stop(EventListener::PointerMove, |_| {})
-    .style(move |s| {
-        let origin = window_tab_data.code_action_origin();
-        s.display(match status.get() {
-            CodeActionStatus::Inactive => Display::None,
-            CodeActionStatus::Active => Display::Flex,
-        })
-        .position(Position::Absolute)
-        .width(400.0)
-        .max_height(400.0)
-        .margin_left(origin.x as f32)
-        .margin_top(origin.y as f32)
-        .background(config.get().color(SparrowColor::COMPLETION_BACKGROUND))
-        .border_radius(6.0)
-    })
-    .debug_name("Code Action Layer")
+    crate::code_action_preview::view(window_tab_data)
 }
 
 fn rename(window_tab_data: Rc<WindowTabData>) -> impl View {

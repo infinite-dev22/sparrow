@@ -271,6 +271,8 @@ impl Doc {
     ) -> Self {
         let syntax = Syntax::init(&path);
         let config = common.config.get_untracked();
+        let read_only = matches!(common.workspace.kind, crate::workspace::SparrowWorkspaceType::Local)
+            && crate::dart::library_access::read_only(&path, common.workspace.path.as_deref());
         Doc {
             scope: cx,
             buffer_id: BufferId::next(),
@@ -293,7 +295,7 @@ impl Doc {
             cache_rev: cx.create_rw_signal(0),
             content: cx.create_rw_signal(DocContent::File {
                 path,
-                read_only: false,
+                read_only,
             }),
             loaded: cx.create_rw_signal(false),
             histories: cx.create_rw_signal(im::HashMap::new()),
@@ -1459,6 +1461,7 @@ impl Doc {
 
     pub fn save(&self, after_action: impl FnOnce() + 'static) {
         let content = self.content.get_untracked();
+        if content.read_only() { return; }
         if let DocContent::File { path, .. } = content {
             let rev = self.rev();
             let buffer = self.buffer;
@@ -1932,14 +1935,25 @@ impl DocumentPhantom for Doc {
         text.append(&mut diag_text);
 
         // ── Flutter / Dart Closing Labels ─────────────────────────────
-        if let Some(labels) = self.closing_labels.get_untracked() {
+        if let Some(labels) = self.closing_labels.get_untracked().filter(|_| config.editor.enable_inlay_hints) {
             for label in labels {
                 if label.range.end.line as usize == line {
-                    let col = label.range.end.character as usize;
+                    let source_line = self.buffer.with_untracked(|buffer| {
+                        buffer.text().slice_to_cow(start_offset..end_offset).into_owned()
+                    });
+                    let col = crate::dart::closing_labels::inlay_column(
+                        &source_line, label.range.end.character as usize,
+                    );
+                    // Existing source comments already identify the widget.
+                    if source_line.get(col..).is_some_and(|tail| {
+                        tail.contains(&format!("// {}", label.label))
+                    }) {
+                        continue;
+                    }
                     text.push(PhantomText {
                         kind: PhantomTextKind::InlayHint,
                         col,
-                        text: format!(" // {}", label.label),
+                        text: format!(" {} ", label.label),
                         affinity: Some(CursorAffinity::Forward),
                         fg: Some(config.color(SparrowColor::INLAY_HINT_FOREGROUND)),
                         font_size: Some(config.editor.inlay_hint_font_size()),
@@ -2178,6 +2192,38 @@ impl Styling for DocStyling {
                 }
             }
         }
+        let (line_start, line_end) = self.doc.buffer.with_untracked(|b| {
+            (b.offset_of_line(line), b.offset_of_line(line + 1))
+        });
+        self.doc
+            .diagnostics
+            .diagnostics_span
+            .with_untracked(|diagnostics| {
+                for (range, diagnostic) in
+                    diagnostics.iter_chunks(line_start..line_end)
+                {
+                    if diagnostic.tags.as_ref().is_some_and(|tags| {
+                        tags.contains(&lsp_types::DiagnosticTag::UNNECESSARY)
+                    }) {
+                        let start = phantom_text.col_after(
+                            range.start().max(line_start) - line_start,
+                            true,
+                        );
+                        let end = phantom_text.col_after(
+                            range.end().min(line_end) - line_start,
+                            false,
+                        );
+                        if start < end {
+                            attrs_list.add_span(
+                                start..end,
+                                default
+                                    .clone()
+                                    .color(config.color(SparrowColor::EDITOR_DIM)),
+                            );
+                        }
+                    }
+                }
+            });
     }
 
     fn apply_layout_styles(
@@ -2225,14 +2271,35 @@ impl Styling for DocStyling {
                     let start = iv.start();
                     let end = iv.end();
 
-                    if start <= end_offset
-                        && end >= start_offset
-                        && diag.severity < Some(DiagnosticSeverity::HINT)
-                    {
-                        let start = start.saturating_sub(start_offset);
-                        let end = end - start_offset;
+                    if start <= end_offset && end >= start_offset {
+                        let start = start.max(start_offset) - start_offset;
+                        let end = end.min(end_offset) - start_offset;
                         let start = phantom_text.col_after(start, true);
                         let end = phantom_text.col_after(end, false);
+
+                        if diag.tags.as_ref().is_some_and(|tags| {
+                            tags.contains(&lsp_types::DiagnosticTag::DEPRECATED)
+                        }) {
+                            let styles = extra_styles_for_range(
+                                layout,
+                                start,
+                                end,
+                                None,
+                                Some(config.color(SparrowColor::EDITOR_FOREGROUND)),
+                                None,
+                            )
+                            .map(|mut style| {
+                                style.height *= 0.55;
+                                style
+                            });
+                            layout_line.extra_style.extend(styles);
+                            return;
+                        }
+                        if diag.severity.is_some_and(|severity| {
+                            severity >= DiagnosticSeverity::HINT
+                        }) {
+                            return;
+                        }
 
                         match (diag.severity, max_severity) {
                             (Some(severity), Some(max)) => {
@@ -2267,7 +2334,9 @@ impl Styling for DocStyling {
         });
 
         // Add the styling for the diagnostic severity, if applicable
-        if let Some(max_severity) = max_severity {
+        if let Some(max_severity) =
+            max_severity.filter(|_| config.editor.enable_error_lens)
+        {
             let theme_prop = if max_severity == DiagnosticSeverity::ERROR {
                 SparrowColor::ERROR_LENS_ERROR_BACKGROUND
             } else if max_severity == DiagnosticSeverity::WARNING {
@@ -2355,7 +2424,7 @@ fn should_blink(
     }
 }
 
-fn extra_styles_for_range(
+pub(crate) fn extra_styles_for_range(
     text_layout: &TextLayout,
     start: usize,
     end: usize,

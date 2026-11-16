@@ -49,6 +49,9 @@ pub struct CodeActionData {
     pub filtered_items: im::Vector<ScoredCodeActionItem>,
     pub layout_rect: Rect,
     pub mouse_click: bool,
+    pub origin: Option<(std::path::PathBuf, u64)>,
+    pub preview: RwSignal<crate::code_action_preview::Preview>,
+    pub show_preview: RwSignal<bool>,
     pub common: Rc<CommonData>,
 }
 
@@ -68,20 +71,40 @@ impl KeyPressFocus for CodeActionData {
         _mods: Modifiers,
     ) -> crate::command::CommandExecuted {
         match &command.kind {
-            CommandKind::Workbench(_) => {}
-            CommandKind::Edit(_) => {}
-            CommandKind::Move(_) => {}
-            CommandKind::Scroll(_) => {}
-            CommandKind::Focus(cmd) => {
-                self.run_focus_command(cmd);
-            }
-            CommandKind::MotionMode(_) => {}
-            CommandKind::MultiSelection(_) => {}
+            CommandKind::Focus(cmd) => self.run_focus_command(cmd),
+            _ => CommandExecuted::No,
         }
-        CommandExecuted::Yes
     }
 
     fn receive_char(&self, _c: &str) {}
+}
+
+fn action_priority(action: &CodeActionOrCommand) -> u8 {
+    match action {
+        CodeActionOrCommand::CodeAction(action) if action.disabled.is_some() => 4,
+        CodeActionOrCommand::CodeAction(action)
+            if action.is_preferred == Some(true) =>
+        {
+            0
+        }
+        CodeActionOrCommand::CodeAction(action)
+            if action
+                .kind
+                .as_ref()
+                .is_some_and(|kind| kind.as_str().starts_with("quickfix")) =>
+        {
+            1
+        }
+        CodeActionOrCommand::CodeAction(action)
+            if action
+                .kind
+                .as_ref()
+                .is_some_and(|kind| kind.as_str().starts_with("refactor")) =>
+        {
+            2
+        }
+        _ => 3,
+    }
 }
 
 impl CodeActionData {
@@ -99,6 +122,9 @@ impl CodeActionData {
             filtered_items: im::Vector::new(),
             layout_rect: Rect::ZERO,
             mouse_click: false,
+            origin: None,
+            preview: cx.create_rw_signal(Default::default()),
+            show_preview: cx.create_rw_signal(true),
             common,
         };
 
@@ -176,6 +202,9 @@ impl CodeActionData {
         self.offset = offset;
         self.mouse_click = mouse_click;
         self.request_id += 1;
+        let mut code_actions: Vec<_> = code_actions.into_iter().collect();
+        // Keep server ordering within groups, with fixes ahead of file-wide tools.
+        code_actions.sort_by_key(action_priority);
         self.items = code_actions
             .into_iter()
             .map(|code_action| ScoredCodeActionItem {
@@ -189,21 +218,25 @@ impl CodeActionData {
         self.common.focus.set(Focus::CodeAction);
     }
 
-    fn cancel(&self) {
+    pub fn cancel(&self) {
         self.status.set(CodeActionStatus::Inactive);
         self.common.focus.set(Focus::Workbench);
+        self.common
+            .window_common
+            .app_view_id
+            .get_untracked()
+            .request_focus();
     }
 
     pub fn select(&self) {
-        if let Some(item) = self.filtered_items.get(self.active.get_untracked()) {
+        if let crate::code_action_preview::Preview::Ready(prepared) =
+            self.preview.get_untracked()
+        {
             self.common
                 .internal_command
-                .send(InternalCommand::RunCodeAction {
-                    plugin_id: item.plugin_id,
-                    action: item.item.clone(),
-                });
+                .send(InternalCommand::ApplyCodeActionPreview { prepared });
+            self.cancel();
         }
-        self.cancel();
     }
 
     fn run_focus_command(&self, cmd: &FocusCommand) -> CommandExecuted {
@@ -229,5 +262,36 @@ impl CodeActionData {
             _ => return CommandExecuted::No,
         }
         CommandExecuted::Yes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn fixes_precede_source_tools_and_disabled_actions() {
+        let action = |kind, preferred: bool, disabled: bool| {
+            CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
+                title: String::new(),
+                kind: Some(lsp_types::CodeActionKind::new(kind)),
+                is_preferred: Some(preferred),
+                disabled: disabled.then(|| lsp_types::CodeActionDisabled {
+                    reason: "Unavailable".into(),
+                }),
+                ..Default::default()
+            })
+        };
+        assert!(
+            action_priority(&action("quickfix", false, false))
+                < action_priority(&action("source.organizeImports", false, false))
+        );
+        assert!(
+            action_priority(&action("quickfix", true, false))
+                < action_priority(&action("quickfix", false, false))
+        );
+        assert!(
+            action_priority(&action("quickfix", true, true))
+                > action_priority(&action("source", false, false))
+        );
     }
 }

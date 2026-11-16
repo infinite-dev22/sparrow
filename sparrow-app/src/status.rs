@@ -249,7 +249,7 @@ pub fn status(
                 config,
                 svg(move || {
                     let read_only = editor.get().is_some_and(|editor| {
-                        editor.doc().content.with(|content| content.read_only())
+                        editor.doc_signal().get().content.with(|content| content.read_only())
                     });
                     config.get().ui_svg(if read_only {
                         "status.read-only"
@@ -265,7 +265,7 @@ pub fn status(
                 }),
                 move || {
                     if editor.get().is_some_and(|editor| {
-                        editor.doc().content.with(|content| content.read_only())
+                        editor.doc_signal().get().content.with(|content| content.read_only())
                     }) {
                         "Read-only"
                     } else {

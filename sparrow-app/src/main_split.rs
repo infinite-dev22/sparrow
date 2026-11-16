@@ -621,6 +621,10 @@ impl MainSplitData {
         let cx = self.scope;
         let doc = self.docs.with_untracked(|docs| docs.get(&path).cloned());
         if let Some(doc) = doc {
+            if matches!(self.common.workspace.kind, crate::workspace::SparrowWorkspaceType::Local)
+                && crate::dart::library_access::read_only(&path, self.common.workspace.path.as_deref()) {
+                doc.content.update(|content| { if let DocContent::File {read_only,..}=content { *read_only=true; } });
+            }
             (doc, false)
         } else {
             let diagnostic_data = self.get_diagnostic_data(&path);
@@ -2245,7 +2249,7 @@ impl MainSplitData {
     /// Acknowledge only edits that can be applied synchronously to loaded documents.
     pub fn apply_dart_server_edit(&self, edit: &WorkspaceEdit) -> bool {
         if !dart_server_edit_is_valid(edit, |path| {
-            self.docs.with_untracked(|docs| docs.get(path).filter(|doc| doc.loaded()).map(|doc| doc.rev()))
+            self.docs.with_untracked(|docs| docs.get(path).filter(|doc| doc.loaded() && !doc.content.with_untracked(|c| c.read_only())).map(|doc| doc.rev()))
         }) { return false; }
         self.apply_workspace_edit(edit);
         true
@@ -2299,6 +2303,14 @@ impl MainSplitData {
         }
 
         if let Some(edits) = workspace_edits(edit) {
+            // Check every target before applying any part of a multi-file edit.
+            if edits.keys().any(|uri| uri.to_file_path().map_or(true, |path| {
+                crate::dart::library_access::read_only(&path, self.common.workspace.path.as_deref())
+                    || self.docs.with_untracked(|docs| docs.get(&path).is_some_and(|doc|doc.content.with_untracked(|c|c.read_only())))
+            })) {
+                self.common.internal_command.send(InternalCommand::ShowAlert {title:"Read-only source".into(),msg:"This edit targets read-only library source. No changes were applied.".into(),buttons:Vec::new()});
+                return;
+            }
             for (url, edits) in edits {
                 if let Ok(path) = url.to_file_path() {
                     let active_path = self

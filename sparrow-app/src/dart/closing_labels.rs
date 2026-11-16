@@ -1,6 +1,6 @@
 //! Closing labels for Dart & Flutter widget trees.
 //!
-//! Provides inline closing labels (e.g. `// Scaffold`, `// Column`, `// Padding`)
+//! Provides inline closing labels (e.g. `Scaffold`, `Column`, `Padding`)
 //! at the closing parentheses of multi-line widget instantiations, matching the
 //! behavior of Android Studio and the Dart Analysis Server.
 
@@ -52,7 +52,7 @@ pub fn extract_closing_labels_from_source(source: &str) -> Vec<ClosingLabel> {
             Err(idx) => idx.saturating_sub(1),
         };
         let line_start = line_offsets.get(line).copied().unwrap_or(0);
-        let col = offset.saturating_sub(line_start);
+        let col = source[line_start..offset].encode_utf16().count();
         Position {
             line: line as u32,
             character: col as u32,
@@ -81,6 +81,26 @@ pub fn extract_closing_labels_from_source(source: &str) -> Vec<ClosingLabel> {
 
     labels.sort_by_key(|l| (l.range.end.line, l.range.end.character));
     labels
+}
+
+/// Convert an LSP UTF-16 column to a byte column, after trailing punctuation.
+/// Labels belong after `),` / `);`, outside the source expression.
+pub fn inlay_column(line: &str, utf16_column: usize) -> usize {
+    let mut units = 0;
+    let mut column = line.len();
+    for (byte, ch) in line.char_indices() {
+        if units >= utf16_column {
+            column = byte;
+            break;
+        }
+        units += ch.len_utf16();
+    }
+    column
+        + line[column..]
+            .chars()
+            .take_while(|c| matches!(c, ')' | ']' | ',' | ';'))
+            .map(char::len_utf8)
+            .sum::<usize>()
 }
 
 #[cfg(test)]
@@ -124,6 +144,17 @@ Widget build(BuildContext context) {
 "#;
         let labels = extract_closing_labels_from_source(code);
         assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn inlay_follows_punctuation_and_respects_utf16_columns() {
+        assert_eq!(inlay_column("    );", 5), 6);
+        assert_eq!(inlay_column("    ),", 5), 6);
+        let line = "  Text('🙂é'));";
+        let close = line.find(')').unwrap();
+        let utf16 = line[..close].encode_utf16().count();
+        assert_eq!(inlay_column(line, utf16), line.len());
+        assert_eq!(inlay_column("    ), // existing", 5), 6);
     }
 
     #[test]
