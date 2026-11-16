@@ -68,6 +68,7 @@ use super::closing_labels::ClosingLabel;
 /// Events emitted from the server to the UI.
 #[derive(Debug, Clone)]
 pub enum Notification {
+    PackageResolution {id:u64,result:Result<(),String>},
     /// Fired exactly once, shortly after the server's `initialize`
     /// handshake completes. Consumers use it to kick off requests that
     /// would fail if sent before the server is initialized (e.g.
@@ -160,7 +161,10 @@ impl DartLspService {
 
         *state.client_tx.lock()=Some(cmd_tx.clone());
         // Bootstrap workspace in background (detect SDK, run pub get if needed)
-        crate::dart::bootstrap::bootstrap_workspace(&workspace_root);
+        let resolution_notifications=notif_tx.clone();
+        crate::dart::bootstrap::bootstrap_workspace_observed(&workspace_root,Some(Box::new(move |id,result|{
+            let _=resolution_notifications.send(Notification::PackageResolution{id,result});
+        })));
 
         let mut child = match analysis_server_command(&dart_bin)
             .current_dir(&workspace_root)

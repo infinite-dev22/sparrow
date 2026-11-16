@@ -951,6 +951,9 @@ impl WindowTabData {
                         DartNotification::Log(msg) => {
                             debug!("dart lsp: {msg}");
                         }
+                        DartNotification::PackageResolution{id,result} => {
+                            crate::panel::workflow_tools::record_pub_get_result(notices,*id,result.clone());
+                        }
                         DartNotification::Error(e) => {
                             tracing::warn!("dart lsp: {e}");
                             crate::panel::workflow_tools::record(
@@ -2224,12 +2227,11 @@ impl WindowTabData {
             DartPubGet => {
                 if let Some(root)=self.workspace.path.as_deref() {
                     let notifications=self.notifications;
-                    crate::panel::workflow_tools::record(notifications,"Pub Get","Resolving package dependencies…");
-                    let send=create_ext_action(self.scope,move |result:Result<(),String>|{
-                        let message=match result {Ok(())=>"Package dependencies resolved.".into(),Err(error)=>error};
-                        crate::panel::workflow_tools::record(notifications,"Pub Get",&message);
+                    let send=create_ext_action(self.scope,move |(id,result):(u64,Result<(),String>)|{
+                        crate::panel::workflow_tools::record_pub_get_result(notifications,id,result);
                     });
-                    crate::dart::run_pub_get(root,Some(Box::new(move |result|send(result))));
+                    let request=crate::dart::bootstrap::run_pub_get_observed(root,Some(Box::new(move |id,result|send((id,result)))));
+                    crate::panel::workflow_tools::record(notifications,"Pub Get",if request.joined {"Package resolution is already running; waiting for its result."}else{"Resolving package dependencies…"});
                 }
             }
             FlutterHotReload => {
