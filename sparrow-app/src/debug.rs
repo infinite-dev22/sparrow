@@ -65,6 +65,8 @@ pub struct RunDebugConfigs {
 #[derive(Clone)]
 pub struct RunDebugData {
     pub active_term: RwSignal<Option<TermId>>,
+    /// Stable UI session IDs for adapters that launch without a PTY.
+    pub adapter_sessions: RwSignal<HashMap<DapId, (TermId, RunDebugProcess)>>,
     /// Adapter-owned sessions (Flutter tests) do not allocate a terminal.
     pub active_dap: RwSignal<Option<DapId>>,
     pub daps: RwSignal<im::HashMap<DapId, DapData>>,
@@ -82,6 +84,7 @@ impl RunDebugData {
 
         Self {
             active_term,
+            adapter_sessions: cx.create_rw_signal(HashMap::new()),
             active_dap: cx.create_rw_signal(None),
             daps,
             breakpoints,

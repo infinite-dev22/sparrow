@@ -562,6 +562,19 @@ pub struct Memory {
     pub count: usize,
 }
 
+pub enum FlutterHotReload {}
+impl Request for FlutterHotReload {
+    type Arguments = Value;
+    type Result = Value;
+    const COMMAND: &'static str = "hotReload";
+}
+pub enum FlutterHotRestart {}
+impl Request for FlutterHotRestart {
+    type Arguments = Value;
+    type Result = Value;
+    const COMMAND: &'static str = "hotRestart";
+}
+
 pub enum Launch {}
 
 impl Request for Launch {

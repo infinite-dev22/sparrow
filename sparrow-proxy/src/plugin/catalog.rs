@@ -328,6 +328,11 @@ impl PluginCatalog {
                     dap.step_out(thread_id);
                 }
             }
+            DapHotReload { dap_id, restart } => {
+                if let Some(dap) = self.daps.get(&dap_id).cloned() {
+                    thread::spawn(move || dap.hot_reload(restart));
+                }
+            }
             DapStop { dap_id } => {
                 if let Some(dap) = self.daps.get(&dap_id) {
                     dap.stop();

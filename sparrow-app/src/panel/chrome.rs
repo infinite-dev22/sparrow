@@ -24,7 +24,7 @@ pub fn header(
     let maximize = window.panel.clone();
     stack((
         label(move || title).style(|s| {
-            s.margin_left(12.0)
+            s.height_full().items_center().margin_left(12.0)
                 .margin_right(14.0)
                 .font_weight(floem::text::Weight(600))
                 .selectable(false)

@@ -36,6 +36,7 @@ pub fn flutter_run_panel(
     let device = hot_reload.selected_device;
     let console_window = window_tab_data.clone();
     let tracked = hot_reload.active_term;
+    let logs = hot_reload.run_logs;
     let console = dyn_container(move || tracked.get(), move |id| {
         let window = console_window.clone();
         if let Some(terminal) = id.and_then(|id| window.terminal.get_terminal(&id)) {
@@ -49,12 +50,23 @@ pub fn flutter_run_panel(
                     panel.focus_terminal_in_panel(id, super::kind::PanelKind::FlutterRun);
                     focus.set(crate::window_tab::Focus::Panel(super::kind::PanelKind::FlutterRun));
                 }).style(|s| s.size_full()).into_any()
+        } else if id.is_some() {
+            floem::views::scroll(floem::views::dyn_stack(
+                move || logs.get().into_iter().enumerate().collect::<Vec<_>>(),
+                |(index, line)| (*index, line.clone()),
+                move |(_, line)| label(move || line.clone()).style(move |s| {
+                    let c = config.get();
+                    s.font_family(c.terminal_font_family().to_owned())
+                        .font_size(c.terminal_font_size() as f32).min_width_full()
+                }),
+            ).style(|s| s.flex_col().width_full()))
+                .style(|s| s.size_full()).into_any()
         } else { label(|| "Run a Flutter configuration to start a session.")
             .style(|s| s.padding(12.0)).into_any() }
     }).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
     stack((
         stack((
-            label(|| "Run").style(|s| s.margin_horiz(12.0).font_bold()),
+            label(|| "Run").style(|s| s.height_full().items_center().margin_horiz(12.0).font_bold()),
             label(move || {
                 let name = run_name.get().get(run_index.get()).map(|c| c.name.clone()).unwrap_or_else(|| "Flutter".into());
                 device.get().map(|d| format!("{name} ({})", d.name)).unwrap_or(name)

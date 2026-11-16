@@ -407,13 +407,26 @@ impl FlutterHotReloadData {
 
     /// Reload/restart never launches another process and only addresses the
     /// currently owned CLI session. Device discovery remains daemon-owned.
+    fn reload_debug_session(&self, restart: bool) -> bool {
+        let session = self.terminal.run_debug_process(false).into_iter().rev().find(|(_, p)| {
+            !p.stopped && p.mode == crate::debug::RunDebugMode::Debug
+                && super::run_config::is_flutter_target(&p.config)
+        });
+        if let Some((_, process)) = session {
+            self.common.proxy.dap_hot_reload(process.config.dap_id, restart);
+            true
+        } else { false }
+    }
+
     pub fn hot_reload(&self) {
+        if self.reload_debug_session(false) { return; }
         if self.state.get_untracked() != FlutterRunState::Running { return; }
         if let Some(id) = self.active_term.get_untracked() {
             self.common.proxy.terminal_write(id, "r".into());
         }
     }
     pub fn hot_restart(&self) {
+        if self.reload_debug_session(true) { return; }
         if self.state.get_untracked() != FlutterRunState::Running { return; }
         if let Some(id) = self.active_term.get_untracked() {
             self.common.proxy.terminal_write(id, "R".into());

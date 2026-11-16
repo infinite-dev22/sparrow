@@ -1489,35 +1489,12 @@ pub fn editor_container_view(
     .debug_name("Editor Container")
 }
 
-fn editor_gutter_breakpoint_view(
-    i: usize,
-    doc: DocSignal,
+fn toggle_gutter_breakpoint(
+    line: usize, doc: DocSignal,
     daps: RwSignal<im::HashMap<DapId, DapData>>,
     breakpoints: RwSignal<BTreeMap<PathBuf, BTreeMap<usize, SparrowBreakpoint>>>,
-    screen_lines: RwSignal<ScreenLines>,
     common: Rc<CommonData>,
-    icon_padding: f32,
-) -> impl View {
-    let hovered = create_rw_signal(false);
-    let config = common.config;
-    container(
-        svg(move || config.get().ui_svg(SparrowIcons::DEBUG_BREAKPOINT)).style(
-            move |s| {
-                let config = config.get();
-                let size = config.ui.icon_size() as f32 + 2.0;
-                s.size(size, size)
-                    .color(config.color(SparrowColor::DEBUG_BREAKPOINT_HOVER))
-                    .apply_if(!hovered.get(), |s| s.hide())
-            },
-        ),
-    )
-    .on_click_stop(move |_| {
-        let screen_lines = screen_lines.get_untracked();
-        let line = screen_lines.lines.get(i).map(|r| r.line).unwrap_or(0);
-        // let line = (viewport.get_untracked().y0
-        //     / config.get_untracked().editor.line_height() as f64)
-        //     .floor() as usize
-        //     + i;
+) {
         let doc = doc.get_untracked();
         let offset = doc.buffer.with_untracked(|b| b.offset_of_line(line));
         if let Some(path) = doc.content.get_untracked().path() {
@@ -1577,7 +1554,25 @@ fn editor_gutter_breakpoint_view(
                 );
             }
         }
-    })
+}
+
+fn editor_gutter_breakpoint_view(
+    common: Rc<CommonData>,
+    icon_padding: f32,
+) -> impl View {
+    let hovered = create_rw_signal(false);
+    let config = common.config;
+    container(
+        svg(move || config.get().ui_svg(SparrowIcons::DEBUG_BREAKPOINT)).style(
+            move |s| {
+                let config = config.get();
+                let size = config.ui.icon_size() as f32 + 2.0;
+                s.size(size, size)
+                    .color(config.color(SparrowColor::DEBUG_BREAKPOINT_HOVER))
+                    .apply_if(!hovered.get(), |s| s.hide())
+            },
+        ),
+    )
     .on_event_stop(EventListener::PointerEnter, move |_| {
         hovered.set(true);
     })
@@ -1600,11 +1595,10 @@ fn editor_gutter_breakpoints(
     icon_padding: f32,
 ) -> impl View {
     let breakpoints = window_tab_data.terminal.debug.breakpoints;
-    let daps = window_tab_data.terminal.debug.daps;
     let common = window_tab_data.common.clone();
 
-    let (ed, doc, config) = e_data
-        .with_untracked(|e| (e.editor.clone(), e.doc_signal(), e.common.config));
+    let (ed, config) = e_data
+        .with_untracked(|e| (e.editor.clone(), e.common.config));
     let viewport = ed.viewport;
     let screen_lines = ed.screen_lines;
 
@@ -1624,20 +1618,10 @@ fn editor_gutter_breakpoints(
                     0..num
                 },
                 move |i| *i,
-                move |i| {
-                    editor_gutter_breakpoint_view(
-                        i,
-                        doc,
-                        daps,
-                        breakpoints,
-                        screen_lines,
-                        common.clone(),
-                        icon_padding,
-                    )
-                },
+                move |_| editor_gutter_breakpoint_view(common.clone(), icon_padding),
             )
             .style(move |s| {
-                s.absolute().flex_col().margin_top(
+                s.absolute().inset_left(0.0).inset_top(0.0).flex_col().margin_top(
                     -(viewport.get().y0 % config.get().editor.line_height() as f64)
                         as f32,
                 )
@@ -1696,9 +1680,10 @@ fn editor_gutter_breakpoints(
         .style(|s| s.size_pct(100.0, 100.0)),
     )
     .style(move |s| {
-        s.absolute()
-            .size_pct(100.0, 100.0)
-            .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
+        s.absolute().inset_left(0.0).inset_top(0.0)
+            .width(config.get().ui.icon_size() as f32 + icon_padding * 2.0)
+            .height_full()
+            .z_index(2)
     })
 }
 
@@ -2105,6 +2090,10 @@ fn editor_gutter(
         });
         gutter_width.get() - if is_test { 48.0 } else { 0.0 }
     });
+    let click_doc = doc;
+    let click_common = window_tab_data.common.clone();
+    let click_daps = window_tab_data.terminal.debug.daps;
+    let click_breakpoints = window_tab_data.terminal.debug.breakpoints;
     stack((
         stack((
             empty().style(|s| s.width(0.0)),
@@ -2115,8 +2104,7 @@ fn editor_gutter(
             empty().style(move |s| s.width(gutter_padding_right.get())),
         ))
         .debug_name("Centered Last Line Count")
-        .style(|s| s.height_pct(100.0)),
-        editor_gutter_breakpoints(window_tab_data.clone(), e_data, icon_padding),
+        .style(|s| s.height_pct(100.0).color(floem::peniko::Color::TRANSPARENT)),
         clip(
             stack((
                 editor_gutter_code_lens(
@@ -2142,8 +2130,22 @@ fn editor_gutter(
             .style(|s| s.size_pct(100.0, 100.0)),
         )
         .style(move |s| s.absolute().size_pct(100.0, 100.0)),
+        editor_gutter_breakpoints(window_tab_data.clone(), e_data, icon_padding),
     ))
     .style(|s| s.height_pct(100.0))
+    .on_event(EventListener::PointerDown, move |event| {
+        if let Event::PointerDown(pointer) = event {
+            if pointer.pos.x < 28.0 {
+                let height = config.get_untracked().editor.line_height() as f64;
+                let index = ((pointer.pos.y + viewport.get_untracked().y0 % height) / height).floor().max(0.0) as usize;
+                if let Some(line) = screen_lines.with_untracked(|lines| lines.lines.get(index).map(|r| r.line)) {
+                    toggle_gutter_breakpoint(line, click_doc, click_daps, click_breakpoints, click_common.clone());
+                }
+                return EventPropagation::Stop;
+            }
+        }
+        EventPropagation::Continue
+    })
     .debug_name("Editor Gutter")
 }
 

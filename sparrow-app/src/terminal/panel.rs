@@ -587,6 +587,11 @@ impl TerminalPanelData {
     }
 
     pub fn stop_run_debug(&self, term_id: TermId) -> Option<()> {
+        if let Some(id) = self.debug.adapter_sessions.with_untracked(|sessions| sessions.iter()
+            .find(|(_, (id, _))| *id == term_id).map(|(dap, _)| *dap)) {
+            self.common.proxy.dap_stop(id);
+            return Some(());
+        }
         let terminal = self.get_terminal(&term_id)?;
         let run_debug = terminal.run_debug.get_untracked()?;
 
@@ -636,6 +641,8 @@ impl TerminalPanelData {
                 }
             });
         }
+        let adapters = if tracked { self.debug.adapter_sessions.get() } else { self.debug.adapter_sessions.get_untracked() };
+        processes.extend(adapters.into_values());
         processes.sort_by_key(|(_, process)| process.created);
         processes
     }
@@ -684,10 +691,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_continue(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -698,10 +702,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_pause(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -712,10 +713,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_step_over(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -726,10 +724,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_step_into(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -740,10 +735,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_step_out(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -777,6 +769,11 @@ impl TerminalPanelData {
     }
 
     pub fn get_dap(&self, term_id: TermId, tracked: bool) -> Option<DapData> {
+        let adapters = if tracked { self.debug.adapter_sessions.get() } else { self.debug.adapter_sessions.get_untracked() };
+        if let Some((id, _)) = adapters.iter().find(|(_, (id, _))| *id == term_id) {
+            return self.debug.daps.with(|daps| daps.get(id).cloned());
+        }
+
         let terminal = self.get_terminal(&term_id)?;
         let dap_id = if tracked {
             terminal

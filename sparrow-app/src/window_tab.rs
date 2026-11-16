@@ -720,9 +720,9 @@ impl WindowTabData {
             cx.create_effect(move |_| {
                 let processes = terminal.run_debug_process(true);
                 let session = processes.iter().rev().find(|(_, process)| {
-                    process.mode == RunDebugMode::Run && !process.stopped
+                    !process.stopped
                         && (!process.is_prelaunch || process.config.prelaunch.is_none())
-                        && crate::dart::run_config::is_flutter_run(&process.config)
+                        && crate::dart::run_config::is_flutter_target(&process.config)
                 });
                 if let Some((id, _)) = session {
                     flutter.active_term.set(Some(*id));
@@ -1025,6 +1025,12 @@ impl WindowTabData {
                 let Some(term_id) = hr.active_term.get() else {
                     return;
                 };
+
+                // Adapter-owned Flutter processes deliberately have no PTY.
+                // The adapter session model owns their lifetime and console.
+                if hr.terminal.debug.adapter_sessions.with(|sessions| {
+                    sessions.values().any(|(id, _)| *id == term_id)
+                }) { return; }
 
                 match hr.terminal.get_terminal(&term_id) {
                     None => {
@@ -2659,6 +2665,24 @@ impl WindowTabData {
     fn handle_core_notification(&self, rpc: &CoreNotification) {
         let cx = self.scope;
         match rpc {
+            CoreNotification::DapSessionEvent { dap_id, event } => {
+                if self.terminal.debug.adapter_sessions.with_untracked(|sessions| sessions.contains_key(&dap_id)) {
+                    if let Some(output) = event.get("output").and_then(|v| v.as_str()) {
+                        self.flutter_hot_reload.run_logs.update(|logs| {
+                            for line in output.lines() { logs.push_back(line.to_owned()); }
+                            while logs.len() > 5000 { logs.pop_front(); }
+                        });
+                    }
+                    if event.get("type").and_then(|v| v.as_str()) == Some("terminated") {
+                        self.terminal.debug.adapter_sessions.update(|sessions| {
+                            if let Some((_, process)) = sessions.get_mut(&dap_id) { process.stopped = true; }
+                        });
+                        if self.terminal.debug.active_dap.get_untracked() == Some(*dap_id) {
+                            self.terminal.debug.active_dap.set(None);
+                        }
+                    }
+                }
+            }
             CoreNotification::FlutterTestEvent { dap_id, event } => {
                 self.flutter_test.debug_event(*dap_id, event);
                 if self.terminal.debug.active_dap.get_untracked() == Some(*dap_id)
@@ -3480,9 +3504,20 @@ impl WindowTabData {
                 if config.prelaunch.is_some() {
                     self.run_in_terminal(cx, mode, config, false);
                 } else {
+                    let id = sparrow_rpc::terminal::TermId::next();
+                    self.terminal.debug.adapter_sessions.update(|sessions| {
+                        sessions.insert(config.dap_id, (id, RunDebugProcess {
+                            mode: RunDebugMode::Debug, config: config.clone(), stopped: false,
+                            created: Instant::now(), is_prelaunch: false,
+                        }));
+                    });
+                    self.terminal.debug.active_dap.set(Some(config.dap_id));
+                    self.terminal.debug.active_term.set(Some(id));
+                    self.terminal.debug.daps.update(|daps| {
+                        daps.insert(config.dap_id, DapData::new(cx, config.dap_id, id, self.common.clone()));
+                    });
                     self.common.proxy.dap_start(
-                        config.clone(),
-                        self.terminal.debug.source_breakpoints(),
+                        config.clone(), self.terminal.debug.source_breakpoints(),
                     )
                 };
                 if !self.panel.is_panel_visible(&PanelKind::Debug) {

@@ -172,6 +172,7 @@ pub enum PluginCatalogNotification {
         dap_id: DapId,
         thread_id: ThreadId,
     },
+    DapHotReload { dap_id: DapId, restart: bool },
     DapStop {
         dap_id: DapId,
     },
@@ -1421,6 +1422,10 @@ impl PluginCatalogRpcHandler {
             dap_id,
             thread_id,
         })
+    }
+
+    pub fn dap_hot_reload(&self, dap_id: DapId, restart: bool) -> Result<()> {
+        self.catalog_notification(PluginCatalogNotification::DapHotReload { dap_id, restart })
     }
 
     pub fn dap_stop(&self, dap_id: DapId) -> Result<()> {

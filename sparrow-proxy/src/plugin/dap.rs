@@ -314,6 +314,7 @@ impl DapClient {
                 }
             }
             DapEvent::Terminated(_) => {
+                self.plugin_rpc.core_rpc.dap_session_event(self.config.dap_id, serde_json::json!({"type":"terminated"}));
                 self.terminated = true;
                 if self.config.ty.as_deref() == Some("flutter-test") {
                     self.plugin_rpc.core_rpc.flutter_test_event(
@@ -336,6 +337,7 @@ impl DapClient {
                     .flutter_test_event(self.config.dap_id, event.clone());
             }
             DapEvent::Output(output) => {
+                self.plugin_rpc.core_rpc.dap_session_event(self.config.dap_id, serde_json::json!({"type":"output", "output":output.output}));
                 if self.config.ty.as_deref() == Some("flutter-test") {
                     self.plugin_rpc.core_rpc.flutter_test_event(self.config.dap_id,
                         serde_json::json!({"type": "sparrow.output", "output": output.output}));
@@ -658,6 +660,16 @@ impl DapRpcHandler {
             .request::<Launch>(params)
             .map_err(|e| anyhow!(e.message))?;
         Ok(())
+    }
+
+    pub fn hot_reload(&self, restart: bool) {
+        let args = serde_json::json!({"reason":"manual"});
+        let result = if restart {
+            self.request::<dap_types::FlutterHotRestart>(args)
+        } else {
+            self.request::<dap_types::FlutterHotReload>(args)
+        };
+        if let Err(err) = result { tracing::error!("Flutter reload failed: {}", err.message); }
     }
 
     pub fn stop(&self) {

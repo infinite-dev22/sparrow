@@ -2144,6 +2144,8 @@ pub fn clickable_icon_base(
     .style(move |s| {
         let config = config.get();
         s.padding(4.0)
+            .items_center()
+            .justify_center()
             .border_radius(6.0)
             .border(1.0)
             .border_color(Color::TRANSPARENT)

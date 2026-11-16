@@ -59,7 +59,7 @@ fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
     let hide_panel = window_tab_data.panel.clone();
     stack((
         label(|| "Terminal")
-            .style(|s| s.margin_left(12.0).margin_right(12.0).font_bold()),
+            .style(|s| s.height_full().items_center().margin_left(12.0).margin_right(12.0).font_bold()),
         scroll(dyn_stack(
             move || {
                 let tabs = terminal.tab_info.with(|info| info.tabs.clone());

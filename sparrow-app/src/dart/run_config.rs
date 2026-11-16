@@ -42,7 +42,11 @@ pub fn discover_defaults(root: &Path) -> Vec<RunDebugConfig> {
 }
 
 pub fn is_flutter_run(config: &RunDebugConfig) -> bool {
-    config.debug_command.is_none() && Path::new(&config.program).file_stem()
+    config.debug_command.is_none() && is_flutter_target(config)
+}
+
+pub fn is_flutter_target(config: &RunDebugConfig) -> bool {
+    Path::new(&config.program).file_stem()
         .is_some_and(|stem| stem.eq_ignore_ascii_case("flutter"))
         && config.args.as_ref().and_then(|args| args.first())
             .is_some_and(|arg| matches!(arg.as_str(), "run" | "attach"))
