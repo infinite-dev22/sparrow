@@ -2740,8 +2740,7 @@ impl EditorData {
         if crate::dart::is_dart_path(&path) {
             if !self.common.dart_lsp.is_available() {
                 callback(Err(
-                    "The Dart analyzer is starting. Retry when analysis is ready."
-                        .into(),
+                    self.common.dart_lsp.unavailable_reason(),
                 ));
                 return;
             }
@@ -3099,7 +3098,7 @@ impl EditorData {
                     move |result| send(result),
                 );
             } else {
-                send(Err("The Dart analyzer is starting. Try again when analysis is ready.".into()));
+                send(Err(self.common.dart_lsp.unavailable_reason()));
             }
         } else {
             self.common

@@ -381,8 +381,7 @@ pub fn request(
             );
         } else {
             send(Err(
-                "The Dart analyzer is starting. Try again when analysis is ready."
-                    .into(),
+                window.common.dart_lsp.unavailable_reason(),
             ));
         }
     } else {

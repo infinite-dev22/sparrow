@@ -134,11 +134,14 @@ impl DartLspService {
             semantic_tokens_legend: Mutex::new(None),
             completion_trigger_characters: Mutex::new(Vec::new()),
             is_running: AtomicBool::new(false),
+            startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
         });
 
         let dart_bin = match crate::dart::sdk::find_dart_binary(Some(&workspace_root)) {
             Some(bin) => bin,
             None => {
+                *state.startup_error.lock()=Some("No Dart SDK was found. Configure the Dart or Flutter SDK in Settings.".into());
                 tracing::warn!(
                     "`dart` not found in SDK or PATH — Dart LSP disabled. \
                      Install the Dart/Flutter SDK to enable."
@@ -155,12 +158,11 @@ impl DartLspService {
             }
         };
 
+        *state.client_tx.lock()=Some(cmd_tx.clone());
         // Bootstrap workspace in background (detect SDK, run pub get if needed)
         crate::dart::bootstrap::bootstrap_workspace(&workspace_root);
 
-        let mut child = match Command::new(&dart_bin)
-            .arg("language-server")
-            .arg("--protocol=lsp")
+        let mut child = match analysis_server_command(&dart_bin)
             .current_dir(&workspace_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -169,6 +171,7 @@ impl DartLspService {
         {
             Ok(c) => c,
             Err(e) => {
+                *state.startup_error.lock()=Some(format!("Could not launch Dart analysis: {e}"));
                 tracing::error!("failed to spawn `dart language-server` ({:?}): {e}", dart_bin);
                 return (
                     Self {
@@ -186,6 +189,8 @@ impl DartLspService {
         let stdout = child.stdout.take().expect("child stdout");
         let stderr = child.stderr.take().expect("child stderr");
 
+        // Publish liveness before workers can report an early exit.
+        state.is_running.store(true, Ordering::Relaxed);
         // Writer
         {
             let state = state.clone();
@@ -195,12 +200,14 @@ impl DartLspService {
                 .name("DartLspWriter".into())
                 .spawn(move || {
                     if let Err(e) = run_writer(
-                        state,
+                        state.clone(),
                         BufWriter::new(stdin),
                         cmd_rx,
                         &root,
                         notif_tx.clone(),
                     ) {
+                        *state.startup_error.lock()=Some(e.clone());
+                        fail_pending_requests(&state,&e);
                         let _ = notif_tx.send(Notification::Error(e));
                     }
                 })
@@ -224,7 +231,7 @@ impl DartLspService {
             .spawn(move || {
                 let mut reader = BufReader::new(stderr);
                 let mut line = String::new();
-                while reader.read_line(&mut line).is_ok() {
+                while matches!(reader.read_line(&mut line),Ok(n) if n>0) {
                     if !line.trim().is_empty() {
                         tracing::debug!("dart language-server: {}", line.trim_end());
                     }
@@ -242,7 +249,6 @@ impl DartLspService {
             })
             .expect("spawn DartLspReaper");
 
-        state.is_running.store(true, Ordering::Relaxed);
         (
             Self {
                 tx: cmd_tx,
@@ -271,6 +277,8 @@ impl DartLspService {
                     semantic_tokens_legend: Mutex::new(None),
                     completion_trigger_characters: Mutex::new(Vec::new()),
                     is_running: AtomicBool::new(false),
+            startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
                 }),
                 last_sent: Arc::new(Mutex::new(HashMap::new())),
                 alive: Arc::new(()),
@@ -312,6 +320,10 @@ impl DartLspService {
         }
     }
 
+    pub fn unavailable_reason(&self) -> String {
+        self.state.startup_error.lock().clone().unwrap_or_else(||"Dart analysis is not running. Check the SDK selection and restart the project.".into())
+    }
+
     pub fn is_available(&self) -> bool {
         self.state.is_running.load(Ordering::Relaxed)
     }
@@ -337,12 +349,14 @@ impl DartLspService {
         F: FnOnce(Value) + Send + 'static,
     {
         let id = self.state.next_id.fetch_add(1, Ordering::Relaxed);
-        self.state.pending_requests.lock().insert(id, Box::new(cb));
-        let _ = self.tx.send(LspCommand::Request {
+        let mut pending=self.state.pending_requests.lock();
+        if !self.is_available() { drop(pending); cb(json!({"error":{"code":-32002,"message":self.unavailable_reason()}}));return id; }
+        pending.insert(id, Box::new(cb));drop(pending);
+        if self.tx.send(LspCommand::Request {
             id,
             method: method.into(),
             params,
-        });
+        }).is_err() {fail_pending_requests(&self.state,"Dart analysis connection is closed.");}
         id
     }
 
@@ -941,6 +955,8 @@ struct SharedState {
     /// True while the server process is alive. Set true after successful
     /// spawn; cleared by the writer and reader threads on exit.
     is_running: AtomicBool,
+    startup_error: Mutex<Option<String>>,
+    client_tx: Mutex<Option<Sender<LspCommand>>>,
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -1350,9 +1366,11 @@ fn run_reader(
             Ok(m) => m,
             Err(_) => {
                 if !state.shutting_down.load(Ordering::Relaxed) {
-                    let _ = notif_tx.send(Notification::Error(
-                        "dart language-server exited unexpectedly".into(),
-                    ));
+                    let error="Dart analysis server exited unexpectedly. Check Notifications and the configured SDK.";
+                    state.is_running.store(false,Ordering::Relaxed);
+                    state.startup_error.lock().get_or_insert_with(||error.into());
+                    fail_pending_requests(&state,error);
+                    let _ = notif_tx.send(Notification::Error(error.into()));
                 }
                 return;
             }
@@ -1384,6 +1402,11 @@ fn dispatch(state: &SharedState, notif_tx: &NotifSender, msg: Value) {
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
 
     match method {
+        "window/workDoneProgress/create" => {
+            if let Some(id)=msg.get("id") {
+                if let Some(tx)=state.client_tx.lock().as_ref(){let _=tx.send(LspCommand::Response{id:id.clone(),result:Value::Null});}
+            }
+        }
         "workspace/applyEdit" => {
             if let Some(id) = msg.get("id") {
                 let edit = serde_json::from_value::<lsp_types::WorkspaceEdit>(params["edit"].clone()).ok();
@@ -1546,6 +1569,8 @@ mod tests {
                 semantic_tokens_legend: Mutex::new(None),
                 completion_trigger_characters: Mutex::new(Vec::new()),
                 is_running: AtomicBool::new(false),
+            startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
             }),
             last_sent: Arc::new(Mutex::new(HashMap::new())),
             alive: Arc::new(()),
@@ -1568,6 +1593,8 @@ mod tests {
                 semantic_tokens_legend: Mutex::new(None),
                 completion_trigger_characters: Mutex::new(Vec::new()),
                 is_running: AtomicBool::new(true),
+                startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
             }),
             last_sent: Arc::new(Mutex::new(HashMap::new())),
             alive: Arc::new(()),
@@ -1604,6 +1631,8 @@ mod tests {
             semantic_tokens_legend: Mutex::new(None),
             completion_trigger_characters: Mutex::new(Vec::new()),
             is_running: AtomicBool::new(true),
+                startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
         });
         let svc = DartLspService {
             tx,
@@ -1830,4 +1859,71 @@ mod rename_result_tests {
             parse_rename_result::<lsp_types::WorkspaceEdit>(&json!({})).is_err()
         );
     }
+}
+
+#[cfg(test)]
+mod live_startup_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires SPARROW_TEST_DART_SDK"]
+    fn real_analyzer_initializes_and_prepares_rename() {
+        let _=tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).try_init();
+        let sdk=std::env::var("SPARROW_TEST_DART_SDK").expect("set SPARROW_TEST_DART_SDK");
+        let root=tempfile::Builder::new().prefix("sparrow-analyzer-").tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".sparrow")).unwrap();
+        std::fs::write(root.path().join(".sparrow/settings.toml"),format!("[core]\ndart-sdk-path = {:?}\n",sdk)).unwrap();
+        std::fs::write(root.path().join("pubspec.yaml"),"name: startup_probe\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n").unwrap();
+        std::fs::create_dir(root.path().join(".dart_tool")).unwrap();
+        std::fs::write(root.path().join(".dart_tool/package_config.json"),r#"{"configVersion":2,"packages":[{"name":"startup_probe","rootUri":"../","packageUri":"lib/","languageVersion":"3.0"}]}"#).unwrap();
+        let path=root.path().join("main.dart");
+        let source="int sampleValue(int value) => value + 1;\n";
+        std::fs::write(&path,source).unwrap();
+        let (service,notifications)=DartLspService::spawn(root.path().to_path_buf());
+        loop {match notifications.recv_timeout(Duration::from_secs(35)).unwrap(){Notification::Ready=>break,Notification::Error(error)=>panic!("{error}"),_=>{}}}
+        service.send_change(path.clone(),source.into(),1);
+        loop {match notifications.recv_timeout(Duration::from_secs(20)).unwrap(){Notification::Diagnostics{path:ready,..} | Notification::Outline{path:ready,..} if ready==path=>break,Notification::Error(error)=>panic!("{error}"),_=>{}}}
+        let (tx,rx)=std::sync::mpsc::channel();
+        service.prepare_rename_result(&path,0,7,move |result|{let _=tx.send(result);});
+        assert!(rx.recv_timeout(Duration::from_secs(20)).unwrap().unwrap().is_some());
+    }
+}
+
+/// Prefer the SDK server entry point: dartdev's telemetry/session setup is not
+/// required for LSP and can prevent startup in a read-only home directory.
+fn analysis_server_command(dart:&Path)->Command {
+    let resolved=dart.canonicalize().unwrap_or_else(|_|dart.to_path_buf());
+    let bin=resolved.parent().unwrap_or(Path::new("."));
+    let runtime=bin.join(if cfg!(windows){"dartaotruntime.exe"}else{"dartaotruntime"});
+    let aot=bin.join("snapshots/analysis_server_aot.dart.snapshot");
+    if runtime.is_file() && aot.is_file(){let mut command=Command::new(runtime);command.arg(aot).arg("--lsp");return command;}
+    let snapshot=bin.join("snapshots/analysis_server.dart.snapshot");
+    let mut command=Command::new(dart);
+    if snapshot.is_file(){command.arg(snapshot).arg("--lsp");}else{command.arg("language-server").arg("--protocol=lsp");}
+    command
+}
+fn fail_pending_requests(state:&SharedState,message:&str){
+    let pending=std::mem::take(&mut *state.pending_requests.lock());
+    for (_,callback) in pending{callback(json!({"error":{"code":-32002,"message":message}}));}
+}
+#[cfg(test)] mod startup_regression_tests {
+ use super::*;
+ #[test] fn progress_creation_gets_a_response_with_the_original_id() {
+  let (svc,_)=DartLspService::spawn_unavailable();let (tx,rx)=unbounded();*svc.state.client_tx.lock()=Some(tx);
+  let (notifications,_)=std::sync::mpsc::channel();
+  dispatch(&svc.state,&notifications,json!({"jsonrpc":"2.0","id":"progress-1","method":"window/workDoneProgress/create","params":{"token":"analysis"}}));
+  assert!(matches!(rx.try_recv().unwrap(),LspCommand::Response{id,result} if id==json!("progress-1") && result.is_null()));
+ }
+ #[test] fn failure_completes_callbacks_without_holding_the_request_lock() {
+  let (svc,_)=DartLspService::spawn_unavailable();let state=svc.state.clone();let (tx,rx)=std::sync::mpsc::channel();
+  svc.state.pending_requests.lock().insert(1,Box::new(move |response|{assert!(state.pending_requests.lock().is_empty());tx.send(response).unwrap();}));
+  fail_pending_requests(&svc.state,"server exited");assert_eq!(rx.recv().unwrap()["error"]["message"],"server exited");
+ }
+ #[test] fn selects_bundled_server_and_preserves_cli_fallback() {
+  let root=tempfile::tempdir().unwrap();let bin=root.path();let dart=bin.join("dart");std::fs::write(&dart,"").unwrap();
+  assert_eq!(analysis_server_command(&dart).get_args().next().unwrap(),"language-server");
+  std::fs::create_dir(bin.join("snapshots")).unwrap();std::fs::write(bin.join("snapshots/analysis_server.dart.snapshot"),"").unwrap();
+  assert!(analysis_server_command(&dart).get_args().next().unwrap().to_string_lossy().ends_with("analysis_server.dart.snapshot"));
+  let runtime=bin.join(if cfg!(windows){"dartaotruntime.exe"}else{"dartaotruntime"});std::fs::write(&runtime,"").unwrap();std::fs::write(bin.join("snapshots/analysis_server_aot.dart.snapshot"),"").unwrap();
+  assert_eq!(analysis_server_command(&dart).get_program(),runtime.as_os_str());
+ }
 }
