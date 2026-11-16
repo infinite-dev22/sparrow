@@ -680,6 +680,10 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "Jump to previous document highlight")]
     JumpHighlightPrev,
 
+    #[strum(serialize = "dart.pub.get")]
+    #[strum(message = "Pub Get")]
+    DartPubGet,
+
     #[strum(serialize = "flutter_run")]
     #[strum(message = "Flutter: Run")]
     FlutterRun,

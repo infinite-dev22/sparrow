@@ -154,6 +154,7 @@ pub fn external_libraries(
     let selected = create_rw_signal(None::<PathBuf>);
     let id = create_rw_signal(None::<floem::ViewId>);
     let errors = create_rw_signal(None::<String>);
+    let pub_get=common.workbench_command;
     floem::reactive::create_effect(move |_| {
         library_watch.set_directories(expanded.get().into_iter().collect());
     });
@@ -400,6 +401,11 @@ pub fn external_libraries(
                 .get()
                 .or_else(|| info.get().error)
                 .unwrap_or_default()
+        })
+        .on_click_stop(move |_| {
+            if errors.get_untracked().is_none() && info.with_untracked(|v|v.error.is_some()) {
+                pub_get.send(crate::command::SparrowWorkbenchCommand::DartPubGet);
+            }
         })
         .style(move |s| {
             s.padding_left(30.0)

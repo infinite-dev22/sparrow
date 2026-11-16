@@ -2221,6 +2221,17 @@ impl WindowTabData {
                 self.launch_selected_configuration(mode);
             }
             FlutterRun => self.launch_selected_configuration(RunDebugMode::Run),
+            DartPubGet => {
+                if let Some(root)=self.workspace.path.as_deref() {
+                    let notifications=self.notifications;
+                    crate::panel::workflow_tools::record(notifications,"Pub Get","Resolving package dependencies…");
+                    let send=create_ext_action(self.scope,move |result:Result<(),String>|{
+                        let message=match result {Ok(())=>"Package dependencies resolved.".into(),Err(error)=>error};
+                        crate::panel::workflow_tools::record(notifications,"Pub Get",&message);
+                    });
+                    crate::dart::run_pub_get(root,Some(Box::new(move |result|send(result))));
+                }
+            }
             FlutterHotReload => {
                 self.reload_flutter_after_saving(false);
             }

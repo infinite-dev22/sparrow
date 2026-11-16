@@ -207,7 +207,9 @@ fn execute_pub_get(workspace_root: &Path, is_flutter: bool) -> Result<(), String
     };
 
     let output = Command::new(&program)
+        .arg("--suppress-analytics")
         .args(&args)
+        .stdin(Stdio::null())
         .current_dir(workspace_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -217,9 +219,13 @@ fn execute_pub_get(workspace_root: &Path, is_flutter: bool) -> Result<(), String
     if output.status.success() {
         Ok(())
     } else {
-        let err = String::from_utf8_lossy(&output.stderr);
-        Err(format!("`{program} pub get` failed: {}", err.trim()))
+        Err(pub_get_failure(&program, &output))
     }
+}
+
+fn pub_get_failure(program:&str,output:&std::process::Output)->String {
+    let messages=[String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr)].into_iter().filter(|text|!text.trim().is_empty()).map(|text|text.trim().to_string()).collect::<Vec<_>>().join("\n");
+    format!("`{program} pub get` failed ({}): {}",output.status,if messages.is_empty(){"The resolver returned no output."}else{&messages})
 }
 
 fn get_mtime(path: &Path) -> Option<SystemTime> {
@@ -411,4 +417,32 @@ dev_dependencies:
 
         assert!(!is_package_resolution_needed(dir.path()));
     }
+}
+
+#[cfg(test)] mod live_pub_tests {
+ use super::*;
+ #[test]
+ #[ignore="requires SPARROW_TEST_DART_SDK; resolves a real local path package"]
+ fn resolves_real_local_dependency_without_home_writes(){
+  let sdk=std::env::var("SPARROW_TEST_DART_SDK").expect("set SPARROW_TEST_DART_SDK");
+  let root=tempfile::Builder::new().prefix("sparrow-pub-").tempdir().unwrap();
+  fs::create_dir(root.path().join(".sparrow")).unwrap();fs::create_dir(root.path().join("local")).unwrap();
+  fs::write(root.path().join(".sparrow/settings.toml"),format!("[core]\ndart-sdk-path = {:?}\n",sdk)).unwrap();
+  fs::write(root.path().join("local/pubspec.yaml"),"name: local_probe\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n").unwrap();
+  fs::write(root.path().join("pubspec.yaml"),"name: pub_probe\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\ndependencies:\n  local_probe:\n    path: local\n").unwrap();
+  execute_pub_get(root.path(),false).unwrap();
+  let config:serde_json::Value=serde_json::from_str(&fs::read_to_string(root.path().join(".dart_tool/package_config.json")).unwrap()).unwrap();
+  assert!(config["packages"].as_array().unwrap().iter().any(|package|package["name"]=="local_probe"));
+  assert!(root.path().join("pubspec.lock").is_file());
+ }
+}
+
+#[cfg(all(test,unix))] mod failure_output_tests {
+ use super::*;
+ use std::os::unix::process::ExitStatusExt;
+ #[test] fn retains_solver_stdout_stderr_and_failure_status(){
+  let output=std::process::Output{status:std::process::ExitStatus::from_raw(65<<8),stdout:b"Version solving failed.\n".to_vec(),stderr:b"Dependency local_probe does not exist.\n".to_vec()};
+  let message=pub_get_failure("dart",&output);
+  assert!(message.contains("65"));assert!(message.contains("Version solving failed."));assert!(message.contains("local_probe does not exist."));
+ }
 }
