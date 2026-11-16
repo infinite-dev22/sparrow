@@ -2586,6 +2586,97 @@ impl WindowTabData {
                     kind,
                 );
             }
+            InternalCommand::RequestCodeActions {
+                offset,
+                mouse_click,
+            } => {
+                let Some(editor) = self.main_split.active_editor.get_untracked()
+                else {
+                    return;
+                };
+                let doc = editor.doc();
+                let Some(path) = doc.content.with_untracked(|c| c.path().cloned())
+                else {
+                    return;
+                };
+                if !doc.loaded()
+                    || editor.cursor().with_untracked(|c| c.offset()) != offset
+                {
+                    return;
+                }
+                let revision = doc.rev();
+                self.common.hover.active.set(false);
+                let mut data = self.code_action.get_untracked();
+                data.show(PluginId(0), im::Vector::new(), offset, mouse_click);
+                data.origin = Some((path.clone(), revision));
+                data.request_state = crate::code_action::ActionRequestState::Loading;
+                let request_id = data.request_id;
+                self.code_action.set(data);
+                let actions = self.code_action;
+                let scope = self.scope.create_child();
+                let active_editor = self.main_split.active_editor;
+                let current_editor = editor.clone();
+                let source = doc.clone();
+                scope.create_effect(move |_| {
+                    let data = actions.get();
+                    if data.request_id != request_id
+                        || data.status.get()
+                            == crate::code_action::CodeActionStatus::Inactive
+                    {
+                        scope.dispose();
+                        return;
+                    }
+                    let current = active_editor.get();
+                    if current.is_none_or(|e| e.id() != current_editor.id())
+                        || !Rc::ptr_eq(&current_editor.doc_signal().get(), &source)
+                        || current_editor.cursor().with(|c| c.offset()) != offset
+                        || source.buffer.with(|b| b.rev()) != revision
+                    {
+                        data.cancel();
+                        scope.dispose();
+                    }
+                });
+                let send =
+                    create_ext_action(
+                        scope,
+                        move |result: Result<
+                            (PluginId, Vec<lsp_types::CodeActionOrCommand>),
+                            String,
+                        >| {
+                            let mut data = actions.get_untracked();
+                            if data.request_id != request_id
+                                || data.status.get_untracked()
+                                    != crate::code_action::CodeActionStatus::Active
+                            {
+                                return;
+                            }
+                            match result {
+                                Ok((plugin_id, items)) => {
+                                    doc.code_actions().update(|cache| {
+                                        cache.insert(
+                                            offset,
+                                            (
+                                                plugin_id,
+                                                items.clone().into_iter().collect(),
+                                            ),
+                                        );
+                                    });
+                                    data.replace_items(
+                                        plugin_id,
+                                        items.into_iter().collect(),
+                                    );
+                                }
+                                Err(error) => data.request_state =
+                                    crate::code_action::ActionRequestState::Failed(
+                                        error,
+                                    ),
+                            }
+                            actions.set(data);
+                        },
+                    );
+                editor.request_code_actions(move |result| send(result));
+            }
+
             InternalCommand::ShowCodeActions {
                 offset,
                 mouse_click,

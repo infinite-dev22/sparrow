@@ -701,6 +701,24 @@ impl DartLspService {
     where
         F: FnOnce(Vec<lsp_types::CodeActionOrCommand>) + Send + 'static,
     {
+        self.code_actions_result(path, line, character, diagnostics, kind, move |result| cb(result.unwrap_or_default()))
+    }
+
+    /// Preserve server failures so the actions popup can distinguish them from an empty result.
+    pub fn code_actions_result<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        diagnostics: &[lsp_types::Diagnostic],
+        kind: Option<&str>,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Result<Vec<lsp_types::CodeActionOrCommand>, String>)
+            + Send
+            + 'static,
+    {
         let uri = path_to_uri(path);
         let mut context = json!({ "diagnostics": diagnostics, "triggerKind": 1 });
         if let Some(kind) = kind {
@@ -717,17 +735,7 @@ impl DartLspService {
                 "context": context
             }),
             move |resp| {
-                let actions =
-                    resp.get("result")
-                        .filter(|v| !v.is_null())
-                        .and_then(|v| {
-                            serde_json::from_value::<
-                                Vec<lsp_types::CodeActionOrCommand>,
-                            >(v.clone())
-                            .ok()
-                        })
-                        .unwrap_or_default();
-                cb(actions);
+                cb(parse_code_action_result(&resp));
             },
         )
     }
@@ -1702,5 +1710,58 @@ mod tests {
         }))
         .unwrap();
         assert!(edit.changes.is_some());
+    }
+}
+
+fn parse_code_action_result(
+    response: &Value,
+) -> Result<Vec<lsp_types::CodeActionOrCommand>, String> {
+    if let Some(error) = response.get("error") {
+        return Err(error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("The Dart analyzer could not fetch quick fixes.")
+            .to_string());
+    }
+    match response.get("result") {
+        Some(Value::Null) => Ok(Vec::new()),
+        Some(result) => serde_json::from_value(result.clone()).map_err(|_| {
+            "The Dart analyzer returned an invalid quick-fix response.".to_string()
+        }),
+        None => Err("The Dart analyzer did not return a quick-fix result.".into()),
+    }
+}
+#[cfg(test)]
+mod action_result_tests {
+    use super::*;
+    #[test]
+    fn empty_results_are_distinct_from_failures_and_malformed_responses() {
+        assert!(
+            parse_code_action_result(&json!({"result":null}))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            parse_code_action_result(&json!({"result":[]}))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            parse_code_action_result(
+                &json!({"error":{"code":-32800,"message":"Request cancelled"}})
+            )
+            .unwrap_err(),
+            "Request cancelled"
+        );
+        assert!(parse_code_action_result(&json!({"result":{}})).is_err());
+        assert!(parse_code_action_result(&json!({})).is_err());
+        assert_eq!(
+            parse_code_action_result(
+                &json!({"result":[{"title":"Create variable","kind":"quickfix"}]})
+            )
+            .unwrap()
+            .len(),
+            1
+        );
     }
 }

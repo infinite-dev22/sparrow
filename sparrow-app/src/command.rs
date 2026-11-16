@@ -828,6 +828,10 @@ pub enum InternalCommand {
         child: EditorTabChild,
         kind: TabCloseKind,
     },
+    RequestCodeActions {
+        offset: usize,
+        mouse_click: bool,
+    },
     ShowCodeActions {
         offset: usize,
         mouse_click: bool,

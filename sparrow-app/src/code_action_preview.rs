@@ -273,10 +273,15 @@ fn prepare(
 }
 fn install(window: Rc<WindowTabData>, request_scope: Rc<RefCell<Option<Scope>>>) {
     let data = window.code_action;
-    create_effect(move |last: Option<Option<(usize, usize)>>| {
+    create_effect(move |last: Option<Option<(usize, usize, usize)>>| {
         let current = data.get();
-        let key = (current.status.get() == CodeActionStatus::Active)
-            .then(|| (current.request_id, current.active.get()));
+        let key = (current.status.get() == CodeActionStatus::Active).then(|| {
+            (
+                current.request_id,
+                current.active.get(),
+                current.items_version,
+            )
+        });
         if last == Some(key) {
             return key;
         }
@@ -284,7 +289,7 @@ fn install(window: Rc<WindowTabData>, request_scope: Rc<RefCell<Option<Scope>>>)
             scope.dispose();
         }
         current.preview.set(Preview::Empty);
-        let Some((_, index)) = key else { return key };
+        let Some((_, index, _)) = key else { return key };
         let Some(item) = current.filtered_items.get(index).cloned() else {
             return key;
         };
@@ -468,6 +473,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         .style(move |s| {
             s.padding(12.0)
                 .max_width(600.0)
+                .apply_if(matches!(preview.get(),Preview::Empty) || matches!(preview.get(),Preview::Ready(p) if !p.files.is_empty()),|s|s.hide())
                 .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
         }),
         scroll(
@@ -537,7 +543,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     });
     let apply_data = data;
     let close_data = data;
-    let list=scroll(stack((label(||"No quick fixes available").style(move |s|s.padding(10.0).apply_if(!data.with(|d|d.filtered_items.is_empty()),|s|s.hide())),dyn_stack(move ||data.with(|d|d.filtered_items.clone().into_iter().enumerate().collect::<Vec<_>>()),move |(i,_)|(data.with_untracked(|d|d.request_id),*i),move |(i,item)|{
+    let retry_window = window.clone();
+    let list=scroll(stack((label(move ||data.with(|d|match &d.request_state {crate::code_action::ActionRequestState::Loading=>"Finding quick fixes…".to_string(),crate::code_action::ActionRequestState::Failed(error)=>error.clone(),crate::code_action::ActionRequestState::Ready=>"No quick fixes available".to_string()})).style(move |s|s.padding(10.0).apply_if(!data.with(|d|d.filtered_items.is_empty()),|s|s.hide())),dyn_stack(move ||data.with(|d|d.filtered_items.clone().into_iter().enumerate().collect::<Vec<_>>()),move |(i,_)|(data.with_untracked(|d|d.request_id),*i),move |(i,item)|{
         let title=item.title().replace('\n'," ");let disabled=matches!(&item.item,CodeActionOrCommand::CodeAction(a) if a.disabled.is_some());
         label(move ||title.clone()).on_click_stop(move |_|{let d=data.get_untracked();d.active.set(i);})
             .on_double_click_stop(move |_|data.get_untracked().select())
@@ -557,6 +564,28 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             })
             .on_click_stop(move |_| show.update(|show| *show = !*show)),
             empty().style(|s| s.flex_grow(1.0_f32)),
+            label(|| "Retry")
+                .on_click_stop(move |_| {
+                    data.get_untracked().cancel();
+                    if let Some(editor) =
+                        retry_window.main_split.active_editor.get_untracked()
+                    {
+                        editor.show_code_actions(false);
+                    }
+                })
+                .style(move |s| {
+                    s.padding_horiz(12.0)
+                        .color(config.get().color(SparrowColor::EDITOR_LINK))
+                        .apply_if(
+                            data.with(|d| {
+                                matches!(
+                                    d.request_state,
+                                    crate::code_action::ActionRequestState::Loading
+                                ) || !d.filtered_items.is_empty()
+                            }),
+                            |s| s.hide(),
+                        )
+                }),
             label(|| "Cancel")
                 .on_click_stop(move |_| close_data.get_untracked().cancel())
                 .style(|s| s.padding_horiz(12.0)),

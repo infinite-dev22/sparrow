@@ -26,7 +26,7 @@ use floem::{
 use itertools::Itertools;
 use lapce_xi_rope::{Rope, RopeDelta, Transformer};
 use lsp_types::{
-    CodeActionResponse, CompletionItem, CompletionTextEdit, GotoDefinitionResponse,
+    CompletionItem, CompletionTextEdit, GotoDefinitionResponse,
     HoverContents, InlayHint, InlayHintLabel, InlineCompletionTriggerKind, Location,
     MarkedString, MarkupKind, Range, TextEdit,
 };
@@ -2710,175 +2710,143 @@ impl EditorData {
         }
     }
 
-    pub fn get_code_actions(&self) {
+    /// Fetch once for a particular buffer location; results are delivered on the UI thread.
+    pub fn request_code_actions(
+        &self,
+        callback: impl FnOnce(
+            Result<(PluginId, Vec<lsp_types::CodeActionOrCommand>), String>,
+        ) + 'static,
+    ) {
         let doc = self.doc();
-        let path = match if doc.loaded() {
-            doc.content.with_untracked(|c| c.path().cloned())
-        } else {
-            None
-        } {
-            Some(path) => path,
-            None => return,
-        };
-
-        let offset = self.cursor().with_untracked(|c| c.offset());
-        let exists = doc
-            .code_actions()
-            .with_untracked(|c| c.contains_key(&offset));
-
-        if exists {
+        let Some(path) = doc
+            .content
+            .with_untracked(|c| c.path().cloned())
+            .filter(|_| doc.loaded())
+        else {
+            callback(Err("The source document is not ready.".into()));
             return;
-        }
-
-        // insert some empty data, so that we won't make the request again
-        doc.code_actions().update(|c| {
-            c.insert(offset, (PluginId(0), im::Vector::new()));
-        });
-
-        let (position, rev, diagnostics) = doc.buffer.with_untracked(|buffer| {
-            let position = buffer.offset_to_position(offset);
-            let rev = doc.rev();
-
-            // Get the diagnostics for the current line, which the LSP might use to inform
-            // what code actions are available (such as fixes for the diagnostics).
-            let diagnostics: Vec<lsp_types::Diagnostic> = doc
-                .diagnostics()
-                .diagnostics_span
-                .get_untracked()
-                .iter_chunks(offset..offset)
-                .filter(|(iv, _diag)| iv.start <= offset && iv.end >= offset)
-                .map(|(_iv, diag)| diag)
-                .cloned()
-                .collect();
-
-            (position, rev, diagnostics)
-        });
-
-        // ── Dart fast path ─────────────────────────────────────────────
+        };
+        let offset = self.cursor().with_untracked(|c| c.offset());
+        let position = doc.buffer.with_untracked(|b| b.offset_to_position(offset));
+        let diagnostics: Vec<_> = doc
+            .diagnostics()
+            .diagnostics_span
+            .get_untracked()
+            .iter_chunks(offset..offset)
+            .filter(|(range, _)| range.start <= offset && range.end >= offset)
+            .map(|(_, d)| d.clone())
+            .collect();
         if crate::dart::is_dart_path(&path) {
-            use floem::ext_event::create_ext_action;
-            use sparrow_rpc::plugin::PluginId;
-
+            if !self.common.dart_lsp.is_available() {
+                callback(Err(
+                    "The Dart analyzer is starting. Retry when analysis is ready."
+                        .into(),
+                ));
+                return;
+            }
             let content = doc.buffer.with_untracked(|b| b.to_string());
-            let local_actions = crate::dart::generate_flutter_code_actions(
+            let local = crate::dart::generate_flutter_code_actions(
                 &path,
                 &content,
                 position.line as usize,
                 position.character as usize,
             );
-
-            if self.common.dart_lsp.is_available() {
-                let action_doc = doc.clone();
-                let trigger = create_ext_action(
-                    self.scope,
-                    move |actions: Vec<lsp_types::CodeActionOrCommand>| {
-                        if action_doc.rev() != rev { return; }
-                        let doc = &action_doc;
-                        let mut combined = local_actions;
-                        for act in actions {
-                            let title = match &act {
-                                lsp_types::CodeActionOrCommand::CodeAction(c) => &c.title,
-                                lsp_types::CodeActionOrCommand::Command(c) => &c.title,
+            let send = create_ext_action(
+                self.scope,
+                move |result: Result<
+                    Vec<lsp_types::CodeActionOrCommand>,
+                    String,
+                >| {
+                    callback(result.map(|actions| {
+                        let mut combined = local;
+                        for action in actions {
+                            let title = |a: &lsp_types::CodeActionOrCommand| match a
+                            {
+                                lsp_types::CodeActionOrCommand::CodeAction(a) => {
+                                    a.title.clone()
+                                }
+                                lsp_types::CodeActionOrCommand::Command(a) => {
+                                    a.title.clone()
+                                }
                             };
-                            if !combined.iter().any(|existing| {
-                                let t = match existing {
-                                    lsp_types::CodeActionOrCommand::CodeAction(c) => &c.title,
-                                    lsp_types::CodeActionOrCommand::Command(c) => &c.title,
-                                };
-                                t == title
-                            }) {
-                                combined.push(act);
+                            if !combined
+                                .iter()
+                                .any(|existing| title(existing) == title(&action))
+                            {
+                                combined.push(action);
                             }
                         }
-                        doc.code_actions().update(|c| {
-                            c.insert(
-                                offset,
-                                (PluginId(0), combined.into_iter().collect()),
-                            );
-                        });
-                    },
-                );
-                self.common.dart_lsp.code_actions(
-                    &path,
-                    position.line,
-                    position.character,
-                    &diagnostics,
-                    move |actions| trigger(actions),
-                );
-                return;
-            } else if !local_actions.is_empty() {
-                doc.code_actions().update(|c| {
-                    c.insert(
-                        offset,
-                        (PluginId(0), local_actions.into_iter().collect()),
-                    );
-                });
+                        (PluginId(0), combined)
+                    }));
+                },
+            );
+            self.common.dart_lsp.code_actions_result(
+                &path,
+                position.line,
+                position.character,
+                &diagnostics,
+                None,
+                move |result| send(result),
+            );
+        } else {
+            let send = create_ext_action(self.scope, move |result| callback(result));
+            self.common.proxy.get_code_actions(
+                path,
+                position,
+                diagnostics,
+                move |result| {
+                    send(match result {
+                        Ok(ProxyResponse::GetCodeActionsResponse {
+                            plugin_id,
+                            resp,
+                        }) => Ok((plugin_id, resp)),
+                        _ => {
+                            Err("Could not fetch quick fixes. Please retry.".into())
+                        }
+                    })
+                },
+            );
+        }
+    }
+
+    pub fn get_code_actions(&self) {
+        let doc = self.doc();
+        let offset = self.cursor().with_untracked(|c| c.offset());
+        if !doc.loaded()
+            || doc
+                .code_actions()
+                .with_untracked(|cache| cache.contains_key(&offset))
+        {
+            return;
+        }
+        let revision = doc.rev();
+        doc.code_actions().update(|cache| {
+            cache.insert(offset, (PluginId(0), im::Vector::new()));
+        });
+        self.request_code_actions(move |result| {
+            if doc.rev() != revision {
                 return;
             }
-        }
-
-        let send = create_ext_action(
-            self.scope,
-            move |resp: (PluginId, CodeActionResponse)| {
-                if doc.rev() == rev {
-                    doc.code_actions().update(|c| {
-                        c.insert(offset, (resp.0, resp.1.into()));
-                    });
+            doc.code_actions().update(|cache| match result {
+                Ok((plugin_id, actions)) => {
+                    cache.insert(offset, (plugin_id, actions.into_iter().collect()));
                 }
-            },
-        );
-
-        self.common.proxy.get_code_actions(
-            path,
-            position,
-            diagnostics,
-            move |result| {
-                if let Ok(ProxyResponse::GetCodeActionsResponse {
-                    plugin_id,
-                    resp,
-                }) = result
-                {
-                    send((plugin_id, resp))
+                Err(_) => {
+                    cache.remove(&offset);
                 }
-            },
-        );
+            });
+        });
     }
 
     pub fn show_code_actions(&self, mouse_click: bool) {
-        let offset = self.cursor().with_untracked(|c| c.offset());
-        let doc = self.doc();
-        if !doc.loaded() { return; }
-        // An empty placeholder may be from a request sent while the analyzer
-        // was starting. An explicit invocation must be able to retry it.
-        if doc.code_actions().with_untracked(|cache|cache.get(&offset).is_some_and(|(_,actions)|actions.is_empty())) {
-            doc.code_actions().update(|cache| {cache.remove(&offset);});
-        }
-        self.get_code_actions();
-        let scope = self.scope.create_child();
-        let editor = self.clone();
-        let revision = doc.rev();
-        let waiting = scope.create_rw_signal(true);
-        scope.create_effect(move |_| {
-            if !waiting.get() { return; }
-            if editor.common.focus.get() != Focus::Workbench || !Rc::ptr_eq(&editor.doc_signal().get(), &doc) || editor.cursor().with(|c|c.offset()) != offset || doc.buffer.with(|b|b.rev()) != revision {
-                scope.dispose(); return;
-            }
-            let cached = doc.code_actions().with(|c|c.get(&offset).cloned());
-            if let Some((plugin_id, actions)) = cached.filter(|(_,actions)|!actions.is_empty()) {
-                waiting.set(false);
-                editor.common.internal_command.send(InternalCommand::ShowCodeActions {
-                    offset, mouse_click, plugin_id, code_actions:actions,
+        if self.doc().loaded() {
+            self.common
+                .internal_command
+                .send(InternalCommand::RequestCodeActions {
+                    offset: self.cursor().with_untracked(|c| c.offset()),
+                    mouse_click,
                 });
-                scope.dispose();
-            }
-        });
-        let commands = self.common.internal_command;
-        floem::action::exec_after(std::time::Duration::from_secs(2), move |_| {
-            if waiting.try_get_untracked() == Some(true) {
-                commands.send(InternalCommand::ShowCodeActions {offset,mouse_click,plugin_id:PluginId(0),code_actions:im::Vector::new()});
-                scope.dispose();
-            }
-        });
+        }
     }
 
     fn do_save(&self, after_action: impl FnOnce() + 'static) {

@@ -21,6 +21,14 @@ pub enum CodeActionStatus {
     Active,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum ActionRequestState {
+    Loading,
+    #[default]
+    Ready,
+    Failed(String),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScoredCodeActionItem {
     pub item: CodeActionOrCommand,
@@ -43,6 +51,8 @@ pub struct CodeActionData {
     pub status: RwSignal<CodeActionStatus>,
     pub active: RwSignal<usize>,
     pub request_id: usize,
+    pub items_version: usize,
+    pub request_state: ActionRequestState,
     pub input_id: usize,
     pub offset: usize,
     pub items: im::Vector<ScoredCodeActionItem>,
@@ -116,6 +126,8 @@ impl CodeActionData {
             status,
             active,
             request_id: 0,
+            items_version: 0,
+            request_state: ActionRequestState::Ready,
             input_id: 0,
             offset: 0,
             items: im::Vector::new(),
@@ -202,6 +214,18 @@ impl CodeActionData {
         self.offset = offset;
         self.mouse_click = mouse_click;
         self.request_id += 1;
+        self.replace_items(plugin_id, code_actions);
+        self.common.focus.set(Focus::CodeAction);
+    }
+
+    pub fn replace_items(
+        &mut self,
+        plugin_id: PluginId,
+        code_actions: im::Vector<CodeActionOrCommand>,
+    ) {
+        self.items_version += 1;
+        self.request_state = ActionRequestState::Ready;
+        self.active.set(0);
         let mut code_actions: Vec<_> = code_actions.into_iter().collect();
         // Keep server ordering within groups, with fixes ahead of file-wide tools.
         code_actions.sort_by_key(action_priority);
@@ -215,17 +239,18 @@ impl CodeActionData {
             })
             .collect();
         self.filtered_items = self.items.clone();
-        self.common.focus.set(Focus::CodeAction);
     }
 
     pub fn cancel(&self) {
         self.status.set(CodeActionStatus::Inactive);
-        self.common.focus.set(Focus::Workbench);
-        self.common
-            .window_common
-            .app_view_id
-            .get_untracked()
-            .request_focus();
+        if self.common.focus.get_untracked() == Focus::CodeAction {
+            self.common.focus.set(Focus::Workbench);
+            self.common
+                .window_common
+                .app_view_id
+                .get_untracked()
+                .request_focus();
+        }
     }
 
     pub fn select(&self) {
