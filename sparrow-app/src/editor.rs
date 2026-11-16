@@ -3545,6 +3545,9 @@ impl EditorData {
                 ]
             } else {
                 vec![
+                    Some(CommandKind::Focus(FocusCommand::ShowCodeActions)),
+                    Some(CommandKind::Focus(FocusCommand::FormatDocument)),
+                    None,
                     Some(CommandKind::Focus(FocusCommand::GotoDefinition)),
                     Some(CommandKind::Focus(FocusCommand::GotoTypeDefinition)),
                     Some(CommandKind::Workbench(
@@ -3557,9 +3560,8 @@ impl EditorData {
                         SparrowWorkbenchCommand::GoToImplementation,
                     )),
                     Some(CommandKind::Focus(FocusCommand::Rename)),
-                    Some(CommandKind::Workbench(
-                        SparrowWorkbenchCommand::RunInTerminal,
-                    )),
+                    Some(CommandKind::Workbench(SparrowWorkbenchCommand::RunCurrentFile)),
+                    Some(CommandKind::Workbench(SparrowWorkbenchCommand::DebugCurrentFile)),
                     None,
                     Some(CommandKind::Workbench(
                         SparrowWorkbenchCommand::RevealInPanel,
@@ -3599,16 +3601,62 @@ impl EditorData {
         let sparrow_command = self.common.sparrow_command;
         for cmd in cmds {
             if let Some(cmd) = cmd {
-                menu = menu.entry(
-                    MenuItem::new(cmd.desc().unwrap_or_else(|| cmd.str())).action(
-                        move || {
-                            sparrow_command.send(SparrowCommand {
-                                kind: cmd.clone(),
-                                data: None,
-                            })
-                        },
-                    ),
+                if matches!(
+                    &cmd,
+                    CommandKind::Workbench(
+                        SparrowWorkbenchCommand::RunCurrentFile
+                            | SparrowWorkbenchCommand::DebugCurrentFile
+                    )
+                ) && !path
+                    .as_deref()
+                    .and_then(std::path::Path::extension)
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("dart"))
+                {
+                    continue;
+                }
+                let file_command = matches!(
+                    &cmd,
+                    CommandKind::Workbench(
+                        SparrowWorkbenchCommand::RunCurrentFile
+                            | SparrowWorkbenchCommand::DebugCurrentFile
+                    )
                 );
+                let target = if file_command {
+                    path.clone().map(|path| {
+                        serde_json::to_value(path).expect("path serializes")
+                    })
+                } else {
+                    None
+                };
+                let label = match &cmd {
+                    CommandKind::Workbench(
+                        SparrowWorkbenchCommand::RunCurrentFile,
+                    ) => format!(
+                        "Run '{}'",
+                        path.as_ref()
+                            .unwrap()
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                    ),
+                    CommandKind::Workbench(
+                        SparrowWorkbenchCommand::DebugCurrentFile,
+                    ) => format!(
+                        "Debug '{}'",
+                        path.as_ref()
+                            .unwrap()
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                    ),
+                    _ => cmd.desc().unwrap_or_else(|| cmd.str()).to_owned(),
+                };
+                menu = menu.entry(MenuItem::new(label).action(move || {
+                    sparrow_command.send(SparrowCommand {
+                        kind: cmd.clone(),
+                        data: target.clone(),
+                    })
+                }));
             } else {
                 menu = menu.separator();
             }

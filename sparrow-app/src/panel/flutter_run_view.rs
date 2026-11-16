@@ -34,6 +34,7 @@ pub fn flutter_run_panel(
     let run_name = window_tab_data.run_configs;
     let run_index = window_tab_data.active_run_config_idx;
     let device = hot_reload.selected_device;
+    let run_sessions = window_tab_data.terminal.clone();
     let console_window = window_tab_data.clone();
     let tracked = hot_reload.active_term;
     let logs = hot_reload.run_logs;
@@ -68,7 +69,10 @@ pub fn flutter_run_panel(
         stack((
             label(|| "Run").style(|s| s.height_full().items_center().margin_horiz(12.0).font_bold()),
             label(move || {
-                let name = run_name.get().get(run_index.get()).map(|c| c.name.clone()).unwrap_or_else(|| "Flutter".into());
+                let name = tracked.get().and_then(|id| run_sessions.run_debug_process(true).into_iter()
+                    .find(|(term, _)| *term == id).map(|(_, process)| process.config.name))
+                    .or_else(|| run_name.get().get(run_index.get()).map(|c| c.name.clone()))
+                    .unwrap_or_else(|| "Flutter".into());
                 device.get().map(|d| format!("{name} ({})", d.name)).unwrap_or(name)
             }).style(move |s| s.padding_horiz(10.0).padding_vert(3.0).border_radius(4.0)
                 .border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),

@@ -258,7 +258,6 @@ fn file_node_input_view(data: FileExplorerData, err: Option<String>) -> Containe
         .build_editor(naming_editor_data.clone())
         .on_event_stop(EventListener::FocusLost, move |_| {
             data.finish_naming();
-            data.naming.set(Naming::None);
         })
         .style(move |s| {
             s.width_full()

@@ -73,6 +73,7 @@ pub enum Notification {
     /// would fail if sent before the server is initialized (e.g.
     /// semantic tokens for open files).
     Ready,
+    ApplyEdit { id: Value, edit: Option<lsp_types::WorkspaceEdit> },
     /// Diagnostics for a single file. `version` is the LSP document version
     /// we sent, or `-1` if the server didn't include one.
     Diagnostics {
@@ -678,8 +679,26 @@ impl DartLspService {
     where
         F: FnOnce(Vec<lsp_types::CodeActionOrCommand>) + Send + 'static,
     {
+        self.code_actions_with_kind(path, line, character, diagnostics, None, cb)
+    }
+
+    pub fn code_actions_with_kind<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        diagnostics: &[lsp_types::Diagnostic],
+        kind: Option<&str>,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::CodeActionOrCommand>) + Send + 'static,
+    {
         let uri = path_to_uri(path);
-        let diagnostics = diagnostics.to_vec();
+        let mut context = json!({ "diagnostics": diagnostics, "triggerKind": 1 });
+        if let Some(kind) = kind {
+            context["only"] = json!([kind]);
+        }
         self.request_async(
             "textDocument/codeAction",
             json!({
@@ -688,10 +707,7 @@ impl DartLspService {
                     "start": { "line": line, "character": character },
                     "end": { "line": line, "character": character }
                 },
-                "context": {
-                    "diagnostics": diagnostics,
-                    "triggerKind": 1
-                }
+                "context": context
             }),
             move |resp| {
                 let actions =
@@ -707,6 +723,22 @@ impl DartLspService {
                 cb(actions);
             },
         )
+    }
+
+    pub fn execute_command(&self, command: lsp_types::Command) {
+        self.request_async("workspace/executeCommand", json!({
+            "command": command.command, "arguments": command.arguments.unwrap_or_default(),
+        }), |response| {
+            if let Some(error) = response.get("error") {
+                tracing::warn!("Dart command failed: {error}");
+            }
+        });
+    }
+
+    pub fn respond_to_edit(&self, id: Value, applied: bool) {
+        let result = if applied { json!({ "applied": true }) }
+            else { json!({ "applied": false, "failureReason": "The edit contains unsupported file operations, closed documents, or stale versions." }) };
+        let _ = self.tx.send(LspCommand::Response { id, result });
     }
 
     /// `codeAction/resolve`. Some actions only provide their `edit` after
@@ -858,6 +890,7 @@ enum LspCommand {
         method: String,
         params: Value,
     },
+    Response { id: Value, result: Value },
     Shutdown,
 }
 
@@ -948,6 +981,10 @@ fn run_writer(
                 close_file(&state, &mut out, &path);
                 continue;
             }
+            LspCommand::Response { id, result } => {
+                write_lsp_message(&mut out, &json!({ "jsonrpc": "2.0", "id": id, "result": result })).map_err(|error| error.to_string())?;
+                continue;
+            }
             LspCommand::Shutdown => {
                 shutdown(&state, &mut out);
                 return Ok(());
@@ -984,6 +1021,9 @@ fn run_writer(
                 Ok(LspCommand::Close { path }) => {
                     pending.remove(&path);
                     close_file(&state, &mut out, &path);
+                }
+                Ok(LspCommand::Response { id, result }) => {
+                    write_lsp_message(&mut out, &json!({ "jsonrpc": "2.0", "id": id, "result": result })).map_err(|error| error.to_string())?;
                 }
                 Ok(LspCommand::Shutdown) => {
                     shutdown(&state, &mut out);
@@ -1126,7 +1166,7 @@ fn initialize(
                     "multilineTokenSupport": false
                 }
             },
-            "workspace": { "workspaceFolders": true, "configuration": false },
+            "workspace": { "workspaceFolders": true, "configuration": false, "applyEdit": true, "workspaceEdit": { "documentChanges": true } },
             "window": { "workDoneProgress": true }
         }
     });
@@ -1313,6 +1353,12 @@ fn dispatch(state: &SharedState, notif_tx: &NotifSender, msg: Value) {
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
 
     match method {
+        "workspace/applyEdit" => {
+            if let Some(id) = msg.get("id") {
+                let edit = serde_json::from_value::<lsp_types::WorkspaceEdit>(params["edit"].clone()).ok();
+                let _ = notif_tx.send(Notification::ApplyEdit { id: id.clone(), edit });
+            }
+        }
         "textDocument/publishDiagnostics" => {
             let Some(uri) = params.get("uri").and_then(Value::as_str) else {
                 return;

@@ -955,37 +955,19 @@ impl ProxyHandler for Dispatcher {
                 existing_path,
                 new_path,
             } => {
-                // We first check if the destination already exists, because copy can overwrite it
-                // and that's not the default behavior we want for when a user duplicates a document.
-                let result = if new_path.exists() {
-                    Err(RpcError {
-                        code: 0,
-                        message: format!("{new_path:?} already exists"),
-                    })
-                } else {
-                    if let Some(parent) = new_path.parent() {
-                        if let Err(error) = std::fs::create_dir_all(parent) {
-                            let result = Err(RpcError {
-                                code: 0,
-                                message: error.to_string(),
-                            });
-                            self.respond_rpc(id, result);
-                            return;
-                        }
-                    }
-                    std::fs::copy(existing_path, new_path)
+                let result =
+                    crate::file_ops::duplicate_path(&existing_path, &new_path)
                         .map(|_| ProxyResponse::Success {})
-                        .map_err(|e| RpcError {
+                        .map_err(|error| RpcError {
                             code: 0,
-                            message: e.to_string(),
-                        })
-                };
+                            message: error.to_string(),
+                        });
                 self.respond_rpc(id, result);
             }
             RenamePath { from, to } => {
                 // We first check if the destination already exists, because rename can overwrite it
                 // and that's not the default behavior we want for when a user renames a document.
-                let result = if to.exists() {
+                let result = if fs::symlink_metadata(&to).is_ok() {
                     Err(format!("{} already exists", to.display()))
                 } else {
                     Ok(())

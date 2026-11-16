@@ -40,8 +40,31 @@ pub struct DartSdk {
     pub is_from_flutter: bool,
 }
 
+/// Read explicit SDK selection without recursively loading the IDE configuration.
+fn configured_sdk_root(workspace: Option<&Path>, key: &str) -> Option<PathBuf> {
+    let files = [workspace.map(|root| root.join(".sparrow/settings.toml")), crate::config::SparrowConfig::settings_file()];
+    files.into_iter().flatten().find_map(|path| {
+        let document = std::fs::read_to_string(path).ok()?.parse::<toml::Value>().ok()?;
+        let path = document.get("core")?.get(key)?.as_str()?.trim();
+        (!path.is_empty()).then(|| PathBuf::from(path))
+    })
+}
+
+pub fn validate_sdk_root(root: &Path, flutter: bool) -> Result<(), String> {
+    if resolve_binary(&root.join("bin"), if flutter { "flutter" } else { "dart" }).is_none() {
+        return Err(format!("Choose a {} SDK directory containing bin/{}.", if flutter { "Flutter" } else { "Dart" }, if flutter { "flutter" } else { "dart" }));
+    }
+    if flutter && resolve_dart_from_flutter_root(root).or_else(|| resolve_binary(&root.join("bin"), "dart")).is_none() {
+        return Err("The Flutter SDK must also contain its Dart SDK.".into());
+    }
+    Ok(())
+}
+
 /// Find the optimal Flutter SDK for a given workspace root (or globally).
 pub fn find_flutter_sdk(workspace_root: Option<&Path>) -> Option<FlutterSdk> {
+    if let Some(root) = configured_sdk_root(workspace_root, "flutter-sdk-path") {
+        return build_flutter_sdk_from_root(&root);
+    }
     // 1. Environment variables
     if let Some(sdk) = check_flutter_env_vars() {
         return Some(sdk);
@@ -67,6 +90,14 @@ pub fn find_flutter_sdk(workspace_root: Option<&Path>) -> Option<FlutterSdk> {
 
 /// Find the optimal Dart SDK (standalone or from Flutter) for a given workspace root.
 pub fn find_dart_sdk(workspace_root: Option<&Path>) -> Option<DartSdk> {
+    // A standalone Dart project may explicitly choose its own SDK.
+    let flutter_project = workspace_root.is_some_and(super::is_flutter_project);
+    if !flutter_project {
+        if let Some(root) = configured_sdk_root(workspace_root, "dart-sdk-path") {
+            let dart_bin = resolve_binary(&root.join("bin"), "dart")?;
+            return Some(DartSdk { version: query_dart_version(&dart_bin), dart_bin, root: Some(root), is_from_flutter: false });
+        }
+    }
     // If a Flutter SDK is found, prefer its bundled Dart SDK for Flutter consistency
     if let Some(flutter_sdk) = find_flutter_sdk(workspace_root) {
         let version = query_dart_version(&flutter_sdk.dart_bin);
@@ -619,5 +650,29 @@ mod tests {
 
         let missing = resolve_binary(dir.path(), "non_existent");
         assert!(missing.is_none());
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    #[test]
+    fn explicit_workspace_sdk_path_takes_precedence() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".sparrow")).unwrap();
+        std::fs::write(root.path().join(".sparrow/settings.toml"), "[core]\nflutter-sdk-path = '/chosen/flutter'\ndart-sdk-path = '/chosen/dart'\n").unwrap();
+        assert_eq!(configured_sdk_root(Some(root.path()), "flutter-sdk-path"), Some(PathBuf::from("/chosen/flutter")));
+        assert_eq!(configured_sdk_root(Some(root.path()), "dart-sdk-path"), Some(PathBuf::from("/chosen/dart")));
+    }
+    #[test]
+    fn sdk_validation_checks_both_flutter_and_dart_binaries_without_executing_them() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(validate_sdk_root(root.path(), true).is_err());
+        std::fs::create_dir(root.path().join("bin")).unwrap();
+        std::fs::write(root.path().join(if cfg!(windows) {"bin/flutter.bat"} else {"bin/flutter"}), "").unwrap();
+        assert!(validate_sdk_root(root.path(), true).is_err());
+        std::fs::write(root.path().join(if cfg!(windows) {"bin/dart.bat"} else {"bin/dart"}), "").unwrap();
+        assert!(validate_sdk_root(root.path(), true).is_ok());
+        assert!(validate_sdk_root(root.path(), false).is_ok());
     }
 }

@@ -382,6 +382,30 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "run_selected_configuration")]
     RunSelectedConfiguration,
 
+    #[strum(serialize = "edit_run_configurations")]
+    #[strum(message = "Edit Run/Debug Configurations")]
+    EditRunConfigurations,
+
+    #[strum(serialize = "run_current_file")]
+    #[strum(message = "Run Current Dart File")]
+    RunCurrentFile,
+
+    #[strum(serialize = "debug_current_file")]
+    #[strum(message = "Debug Current Dart File")]
+    DebugCurrentFile,
+
+    #[strum(serialize = "optimize_imports")]
+    #[strum(message = "Optimize Dart Imports")]
+    OptimizeImports,
+
+    #[strum(serialize = "rename_active_file")]
+    #[strum(message = "Rename Active File")]
+    RenameActiveFile,
+
+    #[strum(serialize = "toggle_breakpoint")]
+    #[strum(message = "Toggle Breakpoint")]
+    ToggleBreakpoint,
+
     #[strum(message = "Debug Selected Configuration")]
     #[strum(serialize = "debug_selected_configuration")]
     DebugSelectedConfiguration,
@@ -728,6 +752,11 @@ pub enum InternalCommand {
         direction: SplitDirection,
         editor_tab_id: EditorTabId,
     },
+    SplitAndMove {
+        editor_tab_id: EditorTabId,
+        index: usize,
+        direction: SplitMoveDirection,
+    },
     SplitMove {
         direction: SplitMoveDirection,
         editor_tab_id: EditorTabId,
@@ -776,6 +805,10 @@ pub enum InternalCommand {
         edit: WorkspaceEdit,
     },
     RunAndDebug {
+        mode: RunDebugMode,
+        config: RunDebugConfig,
+    },
+    RunAndDebugSaved {
         mode: RunDebugMode,
         config: RunDebugConfig,
     },

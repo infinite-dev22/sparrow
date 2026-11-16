@@ -1,4 +1,6 @@
 [core]
+flutter-sdk-path = ""
+dart-sdk-path = ""
 modal = false
 color-theme = "Islands Dark"
 icon-theme = "sparrow Modern"

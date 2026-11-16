@@ -25,6 +25,8 @@ pub mod listener;
 pub mod lsp;
 pub mod main_split;
 pub mod markdown;
+pub mod menus;
+pub mod modal_focus;
 pub mod palette;
 pub mod panel;
 pub mod plugin;
@@ -52,3 +54,5 @@ pub mod outline;
 
 #[cfg(windows)]
 extern crate windows_sys as windows;
+
+mod persistence;

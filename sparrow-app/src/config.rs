@@ -655,15 +655,25 @@ impl SparrowConfig {
     }
 
     pub fn folder_svg(&self, path: &Path) -> (String, Option<Color>) {
-        let svg = self.icon_theme.resolve_folder_to_icon(path)
+        let svg = self
+            .icon_theme
+            .resolve_folder_to_icon(path)
             .and_then(|path| self.svg_store.write().get_svg_on_disk(&path))
             .or_else(|| {
-                let path = DEFAULT_ICON_THEME_ICON_CONFIG.resolve_folder_to_icon(path)?;
-                Some(self.svg_store.write().get_default_svg(path.file_name()?.to_str()?))
+                let path =
+                    DEFAULT_ICON_THEME_ICON_CONFIG.resolve_folder_to_icon(path)?;
+                Some(
+                    self.svg_store
+                        .write()
+                        .get_default_svg(path.file_name()?.to_str()?),
+                )
             });
         match svg {
             Some(svg) => {
-                let color = self.icon_theme.use_editor_color.unwrap_or(false)
+                let color = self
+                    .icon_theme
+                    .use_editor_color
+                    .unwrap_or(false)
                     .then(|| self.color(SparrowColor::SPARROW_ICON_ACTIVE));
                 (svg, color)
             }
@@ -1035,6 +1045,37 @@ impl SparrowConfig {
         Ok(())
     }
 
+    pub fn scoped_settings_file(
+        workspace: Option<&std::path::Path>,
+        project: bool,
+    ) -> Result<PathBuf, String> {
+        if project {
+            Ok(workspace
+                .ok_or("Open a local project to edit project settings.")?
+                .join(".sparrow/settings.toml"))
+        } else {
+            Self::settings_file().ok_or("Cannot locate IDE settings".into())
+        }
+    }
+    pub fn update_scoped_settings(
+        changes: Vec<(PathBuf, Vec<(String, String, Option<toml_edit::Value>)>)>,
+    ) -> Result<(), String> {
+        let files = changes
+            .into_iter()
+            .map(|(path, changes)| {
+                let text = match std::fs::read_to_string(&path) {
+                    Ok(text) => text,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        String::new()
+                    }
+                    Err(error) => return Err(error.to_string()),
+                };
+                Ok((path, settings_scope_transaction(&text, changes)?))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        crate::persistence::write_files(files)
+    }
+
     /// Update the config file with the given edit.
     /// This should be called whenever the configuration is changed, so that it is persisted.
     pub fn update_file(
@@ -1076,6 +1117,42 @@ impl SparrowConfig {
         Some(())
     }
 }
+fn settings_scope_transaction(
+    contents: &str,
+    changes: Vec<(String, String, Option<toml_edit::Value>)>,
+) -> Result<String, String> {
+    let mut text = contents.to_string();
+    for (section, key, value) in changes {
+        if let Some(value) = value {
+            text = settings_transaction(&text, vec![(section, key, value)])?;
+        } else {
+            let mut document = text
+                .parse::<toml_edit::Document>()
+                .map_err(|error| error.to_string())?;
+            let (section, key) = if section == "terminal" && key == "default-profile"
+            {
+                (
+                    "terminal.default-profile".to_owned(),
+                    std::env::consts::OS.to_owned(),
+                )
+            } else {
+                (section, key)
+            };
+            let mut table = Some(document.as_table_mut());
+            for segment in section.split('.') {
+                table = table
+                    .and_then(|table| table.get_mut(segment))
+                    .and_then(toml_edit::Item::as_table_mut);
+            }
+            if let Some(table) = table {
+                table.remove(&key);
+            }
+            text = document.to_string();
+        }
+    }
+    Ok(text)
+}
+
 fn settings_transaction(
     contents: &str,
     changes: Vec<(String, String, toml_edit::Value)>,
@@ -1156,5 +1233,94 @@ mod settings_transaction_tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod scoped_settings_tests {
+    use super::*;
+    #[test]
+    fn ide_and_project_values_are_saved_independently_and_override_can_be_removed() {
+        let root = tempfile::tempdir().unwrap();
+        let ide = root.path().join("ide.toml");
+        let project = root.path().join("project/.sparrow/settings.toml");
+        std::fs::write(&ide, "# keep comment\n[editor]\nfont-size = 13\n").unwrap();
+        SparrowConfig::update_scoped_settings(vec![
+            (
+                ide.clone(),
+                vec![("editor".into(), "font-size".into(), Some(15.into()))],
+            ),
+            (
+                project.clone(),
+                vec![("editor".into(), "font-size".into(), Some(19.into()))],
+            ),
+        ])
+        .unwrap();
+        assert!(
+            std::fs::read_to_string(&ide)
+                .unwrap()
+                .contains("font-size = 15")
+        );
+        assert!(
+            std::fs::read_to_string(&project)
+                .unwrap()
+                .contains("font-size = 19")
+        );
+        SparrowConfig::update_scoped_settings(vec![(
+            project.clone(),
+            vec![("editor".into(), "font-size".into(), None)],
+        )])
+        .unwrap();
+        assert!(
+            !std::fs::read_to_string(project)
+                .unwrap()
+                .contains("font-size")
+        );
+        assert!(
+            std::fs::read_to_string(ide)
+                .unwrap()
+                .starts_with("# keep comment")
+        );
+    }
+    #[test]
+    fn invalid_project_document_does_not_partially_apply_ide_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let ide = root.path().join("ide.toml");
+        let project = root.path().join("project.toml");
+        std::fs::write(&ide, "[editor]\nfont-size=13\n").unwrap();
+        std::fs::write(&project, "[broken").unwrap();
+        assert!(
+            SparrowConfig::update_scoped_settings(vec![
+                (
+                    ide.clone(),
+                    vec![("editor".into(), "font-size".into(), Some(15.into()))]
+                ),
+                (
+                    project.clone(),
+                    vec![("editor".into(), "font-size".into(), Some(19.into()))]
+                )
+            ])
+            .is_err()
+        );
+        assert!(
+            std::fs::read_to_string(ide)
+                .unwrap()
+                .contains("font-size=13")
+        );
+        assert_eq!(std::fs::read_to_string(project).unwrap(), "[broken");
+    }
+    #[test]
+    fn reset_terminal_profile_uses_platform_key_and_preserves_other_platforms() {
+        let source = format!(
+            "[terminal.default-profile]\n{}='current'\nother='keep'\n",
+            std::env::consts::OS
+        );
+        let result = settings_scope_transaction(
+            &source,
+            vec![("terminal".into(), "default-profile".into(), None)],
+        )
+        .unwrap();
+        assert!(!result.contains("'current'"));
+        assert!(result.contains("other='keep'"));
     }
 }

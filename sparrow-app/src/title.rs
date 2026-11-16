@@ -38,6 +38,7 @@ use crate::{
 };
 
 fn left(
+    window_tab_data: Rc<WindowTabData>,
     workspace: Arc<SparrowWorkspace>,
     sparrow_command: Listener<SparrowCommand>,
     workbench_command: Listener<SparrowWorkbenchCommand>,
@@ -71,7 +72,13 @@ fn left(
             || "Menu",
             config,
         )
-        .popout_menu(move || window_menu(sparrow_command, workbench_command))
+        .popout_menu(move || {
+            window_menu(
+                sparrow_command,
+                workbench_command,
+                crate::menus::MenuContext::from_window(&window_tab_data),
+            )
+        })
         .style(move |s| {
             s.margin_left(4.0)
                 .margin_right(6.0)
@@ -618,7 +625,6 @@ fn right(
 
     // Stop button (crimson red stop square)
     let stop_button = {
-        let hr = hot_reload.clone();
         tooltip_label(
             config,
             container(
@@ -632,12 +638,9 @@ fn right(
             )
             .disabled(move || !has_running_process.get())
             .on_click_stop(move |_| {
-                if hr.state.get_untracked() == crate::dart::FlutterRunState::Running
-                {
-                    hr.stop();
-                } else {
-                    workbench_command.send(SparrowWorkbenchCommand::RunAndDebugStop);
-                }
+                // The active Debug task/session takes priority over an older
+                // Flutter Run session that may still be alive.
+                workbench_command.send(SparrowWorkbenchCommand::RunAndDebugStop);
             })
             .style(move |s| {
                 let config = config.get();
@@ -825,6 +828,7 @@ pub fn title(
     let branch_text = move || branch.get();
     stack((
         left(
+            window_tab_data.clone(),
             window_tab_data.workspace.clone(),
             sparrow_command,
             workbench_command,

@@ -1,6 +1,6 @@
 //! Editable run configuration drafts and argument/storage helpers.
 use crate::debug::RunDebugConfigs;
-use sparrow_rpc::dap_types::{RunDebugConfig, RunDebugProgram};
+use sparrow_rpc::dap_types::{BeforeLaunchTask, RunDebugConfig};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -41,19 +41,62 @@ pub fn discover_defaults(root: &Path) -> Vec<RunDebugConfig> {
     }).into_iter().collect()
 }
 
+/// Context menus launch their clicked file, independently of the toolbar selection.
+pub fn configuration_for_file(
+    path: &Path,
+    workspace: Option<&Path>,
+) -> Result<RunDebugConfig, String> {
+    if !path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("dart"))
+    {
+        return Err("Only Dart entrypoints can be run or debugged.".into());
+    }
+    let root = path
+        .parent()
+        .and_then(|parent| {
+            parent
+                .ancestors()
+                .find(|dir| dir.join("pubspec.yaml").is_file())
+        })
+        .or(workspace)
+        .or(path.parent())
+        .ok_or("The file has no parent directory")?;
+    let flutter = super::is_flutter_project(root);
+    let target = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    serde_json::from_value(serde_json::json!({
+        "name":path.file_name().unwrap_or_default().to_string_lossy(),
+        "type":if flutter {"flutter"} else {"dart"},
+        "program":if flutter {"flutter"} else {"dart"},
+        "args":if flutter {vec!["run", "--target", &target]} else {vec!["run", &target]},
+        "cwd":root.to_string_lossy()
+    })).map_err(|error| error.to_string())
+}
+
 pub fn is_flutter_run(config: &RunDebugConfig) -> bool {
     config.debug_command.is_none() && is_flutter_target(config)
 }
 
 pub fn is_flutter_target(config: &RunDebugConfig) -> bool {
-    Path::new(&config.program).file_stem()
+    Path::new(&config.program)
+        .file_stem()
         .is_some_and(|stem| stem.eq_ignore_ascii_case("flutter"))
-        && config.args.as_ref().and_then(|args| args.first())
+        && config
+            .args
+            .as_ref()
+            .and_then(|args| args.first())
             .is_some_and(|arg| matches!(arg.as_str(), "run" | "attach"))
 }
 
 /// Keep session presentation independent of the PTY used to run its process.
-pub fn console_panel(mode: crate::debug::RunDebugMode, config: &RunDebugConfig) -> crate::panel::kind::PanelKind {
+pub fn console_panel(
+    mode: crate::debug::RunDebugMode,
+    config: &RunDebugConfig,
+) -> crate::panel::kind::PanelKind {
     if mode == crate::debug::RunDebugMode::Run && is_flutter_run(config) {
         crate::panel::kind::PanelKind::FlutterRun
     } else {
@@ -239,17 +282,47 @@ fn parse_environment(text: &str) -> Result<HashMap<String, String>, String> {
     Ok(env)
 }
 
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct TaskDraft {
+    pub program: String,
+    pub args: String,
+    pub enabled: bool,
+}
+impl TaskDraft {
+    pub fn new() -> Self {
+        Self {
+            enabled: true,
+            ..Self::default()
+        }
+    }
+    fn build(&self) -> Result<BeforeLaunchTask, String> {
+        if self.program.trim().is_empty() {
+            return Err(
+                "Before-launch tasks require a program. Remove unused tasks with −."
+                    .into(),
+            );
+        }
+        Ok(BeforeLaunchTask {
+            program: self.program.trim().into(),
+            args: Some(split_args(&self.args)?),
+            enabled: self.enabled,
+        })
+    }
+}
 #[derive(Clone, PartialEq)]
 pub struct Draft {
     pub original: RunDebugConfig,
     pub name: String,
     pub entry: String,
+    pub dart_entry: bool,
+    dart_prefix: Vec<String>,
     pub args: String,
     pub attach: String,
     pub flavor: String,
     pub env: String,
-    pub before: String,
-    pub before_args: String,
+    pub cwd: String,
+    pub tasks: Vec<TaskDraft>,
+    pub project: bool,
     pub activate: bool,
     pub focus: bool,
 }
@@ -264,21 +337,28 @@ impl Draft {
         let mut d = Self {
             name: c.name.clone(),
             entry: c.program.clone(),
+            dart_entry: false,
+            dart_prefix: Vec::new(),
             args: String::new(),
             attach: join_args(&c.flutter_options.attach_args),
             flavor: String::new(),
             env: String::new(),
-            before: c
+            cwd: c.cwd.clone().unwrap_or_default(),
+            tasks: c
                 .prelaunch
-                .as_ref()
-                .map(|p| p.program.clone())
-                .unwrap_or_default(),
-            before_args: c
-                .prelaunch
-                .as_ref()
-                .and_then(|p| p.args.as_ref())
-                .map(|a| join_args(a))
-                .unwrap_or_default(),
+                .iter()
+                .map(|task| TaskDraft {
+                    program: task.program.clone(),
+                    args: join_args(task.args.as_deref().unwrap_or_default()),
+                    enabled: true,
+                })
+                .chain(c.before_launch.iter().map(|task| TaskDraft {
+                    program: task.program.clone(),
+                    args: join_args(task.args.as_deref().unwrap_or_default()),
+                    enabled: task.enabled,
+                }))
+                .collect(),
+            project: c.store_in_project,
             activate: c.flutter_options.activate_tool_window,
             focus: c.flutter_options.focus_tool_window,
             original: c.clone(),
@@ -310,6 +390,22 @@ impl Draft {
             }
             args = rest;
         }
+        if !d.flutter() && c.ty.as_deref() != Some("flutter-test") {
+            if let Some(index) = args
+                .iter()
+                .position(|argument| argument.ends_with(".dart"))
+                .or_else(|| {
+                    (args.first().is_some_and(|arg| arg == "run")
+                        && args.get(1).is_some_and(String::is_empty))
+                    .then_some(1)
+                })
+            {
+                d.dart_entry = true;
+                d.entry = args[index].clone();
+                d.dart_prefix = args[..index].to_vec();
+                args = args[index + 1..].to_vec();
+            }
+        }
         d.args = join_args(&args);
         let mut env = c.env.unwrap_or_default().into_iter().collect::<Vec<_>>();
         env.sort();
@@ -333,17 +429,27 @@ impl Draft {
         d
     }
     pub fn build(&self) -> Result<RunDebugConfig, String> {
+        self.build_inner(false)
+    }
+    pub fn build_template(&self) -> Result<RunDebugConfig, String> {
+        self.build_inner(true)
+    }
+    fn build_inner(&self, template: bool) -> Result<RunDebugConfig, String> {
         if !self.original.is_dart_flutter() {
             return Err(
                 "Run configurations must use the Dart or Flutter SDK executable."
                     .into(),
             );
         }
-        if self.name.trim().is_empty() || self.entry.trim().is_empty() {
+        if self.name.trim().is_empty()
+            || (self.entry.trim().is_empty()
+                && !(template && (self.flutter() || self.dart_entry)))
+        {
             return Err("Name and entrypoint/program are required.".into());
         }
         let mut c = self.original.clone();
         c.name = self.name.trim().into();
+        c.cwd = (!self.cwd.trim().is_empty()).then(|| self.cwd.trim().to_owned());
         let extra = split_args(&self.args)?;
         if self.flutter() {
             if extra.iter().any(|a| {
@@ -362,6 +468,11 @@ impl Draft {
             }
             args.extend(extra);
             c.args = Some(args);
+        } else if self.dart_entry {
+            let mut args = self.dart_prefix.clone();
+            args.push(self.entry.trim().into());
+            args.extend(extra);
+            c.args = Some(args);
         } else {
             c.program = self.entry.trim().into();
             c.args = Some(extra);
@@ -374,17 +485,69 @@ impl Draft {
         c.flutter_options.attach_args = split_args(&self.attach)?;
         c.flutter_options.activate_tool_window = self.activate;
         c.flutter_options.focus_tool_window = self.focus;
-        c.prelaunch = if self.before.trim().is_empty() {
-            None
-        } else {
-            Some(RunDebugProgram {
-                program: self.before.trim().into(),
-                args: Some(split_args(&self.before_args)?),
-            })
-        };
+        c.prelaunch = None;
+        c.before_launch = self
+            .tasks
+            .iter()
+            .map(TaskDraft::build)
+            .collect::<Result<_, _>>()?;
+        c.store_in_project = self.project;
         Ok(c)
     }
 }
+pub fn unique_name(drafts: &[Draft], base: &str) -> String {
+    if !drafts.iter().any(|draft| draft.name.trim() == base) {
+        return base.into();
+    }
+    (2..)
+        .map(|number| format!("{base} ({number})"))
+        .find(|name| !drafts.iter().any(|draft| draft.name.trim() == name))
+        .unwrap()
+}
+
+pub fn build_drafts(
+    drafts: &[Draft],
+    root: &Path,
+) -> Result<Vec<RunDebugConfig>, String> {
+    let mut names = std::collections::HashSet::new();
+    drafts
+        .iter()
+        .map(|draft| {
+            let config = draft
+                .build()
+                .map_err(|error| format!("{}: {error}", draft.name))?;
+            if !names.insert(config.name.clone()) {
+                return Err(format!(
+                    "A configuration named '{}' already exists.",
+                    config.name
+                ));
+            }
+            let directory = launch_directory(root, config.cwd.as_deref());
+            if !directory.is_dir() {
+                return Err(format!(
+                    "{}: working directory does not exist: {}",
+                    config.name,
+                    directory.display()
+                ));
+            }
+            if draft.flutter() || draft.dart_entry {
+                let target = directory.join(draft.entry.trim());
+                if !target.is_file()
+                    || !target.extension().is_some_and(|extension| {
+                        extension.eq_ignore_ascii_case("dart")
+                    })
+                {
+                    return Err(format!(
+                        "{}: choose an existing Dart entrypoint.",
+                        config.name
+                    ));
+                }
+            }
+            Ok(config)
+        })
+        .collect()
+}
+
 pub fn local_file(root: &Path) -> Option<PathBuf> {
     use sha2::{Digest, Sha256};
     let key = format!("{:x}", Sha256::digest(root.to_string_lossy().as_bytes()));
@@ -394,35 +557,264 @@ pub fn local_file(root: &Path) -> Option<PathBuf> {
             .join(format!("{key}.toml")),
     )
 }
-pub fn load(root: &Path) -> Option<Vec<RunDebugConfig>> {
-    [local_file(root), Some(root.join(".sparrow/run.toml"))]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct LocalConfigs {
+    #[serde(default)]
+    configuration_order: Vec<String>,
+    configs: Vec<RunDebugConfig>,
+}
+fn read_configs(path: &Path) -> Option<Vec<RunDebugConfig>> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| toml::from_str::<RunDebugConfigs>(&text).ok())
+        .map(|data| data.configs)
+}
+pub fn project_file(root: &Path, name: &str) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let slug = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(64)
+        .collect::<String>();
+    let hash = format!("{:x}", Sha256::digest(name.as_bytes()));
+    root.join(".run")
+        .join(format!("{slug}_{}.sparrow.run.toml", &hash[..8]))
+}
+fn project_files(root: &Path) -> Vec<PathBuf> {
+    let mut paths = std::fs::read_dir(root.join(".run"))
         .into_iter()
         .flatten()
-        .find_map(|path| {
-            std::fs::read_to_string(path)
-                .ok()
-                .and_then(|s| toml::from_str::<RunDebugConfigs>(&s).ok())
-                .map(|c| c.configs)
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name().is_some_and(|name| {
+                name.to_string_lossy().ends_with(".sparrow.run.toml")
+            })
         })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
-pub fn save(
+pub fn load(root: &Path) -> Option<Vec<RunDebugConfig>> {
+    load_with_local(root, local_file(root).as_deref())
+}
+fn load_with_local(
+    root: &Path,
+    local: Option<&Path>,
+) -> Option<Vec<RunDebugConfig>> {
+    let mut configs = load_from(&root.join(".sparrow/run.toml"), None);
+    for file in project_files(root) {
+        if let Some(shared) = read_configs(&file) {
+            let configs = configs.get_or_insert_with(Vec::new);
+            for mut config in shared {
+                config.store_in_project = true;
+                if let Some(index) =
+                    configs.iter().position(|old| old.name == config.name)
+                {
+                    configs[index] = config;
+                } else {
+                    configs.push(config);
+                }
+            }
+        }
+    }
+    if let Some(private) = local.and_then(read_configs) {
+        let configs = configs.get_or_insert_with(Vec::new);
+        for mut config in private {
+            config.store_in_project = false;
+            if let Some(index) =
+                configs.iter().position(|old| old.name == config.name)
+            {
+                configs[index] = config;
+            } else {
+                configs.push(config);
+            }
+        }
+    }
+    if let Some(order) = local
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|text| toml::from_str::<LocalConfigs>(&text).ok())
+        .map(|local| local.configuration_order)
+    {
+        if let Some(configs) = &mut configs {
+            configs.sort_by_key(|config| {
+                order
+                    .iter()
+                    .position(|name| name == &config.name)
+                    .unwrap_or(usize::MAX)
+            });
+        }
+    }
+    configs
+}
+fn load_from(project: &Path, local: Option<&Path>) -> Option<Vec<RunDebugConfig>> {
+    let shared = read_configs(project);
+    let private = local.and_then(read_configs);
+    if shared.is_none() && private.is_none() {
+        return None;
+    }
+    let mut configs = shared.unwrap_or_default();
+    for config in &mut configs {
+        config.store_in_project = true;
+    }
+    for mut config in private.unwrap_or_default() {
+        config.store_in_project = false;
+        if let Some(index) = configs
+            .iter()
+            .position(|existing| existing.name == config.name)
+        {
+            configs[index] = config;
+        } else {
+            configs.push(config);
+        }
+    }
+    Some(configs)
+}
+pub fn templates_file(root: &Path) -> Option<PathBuf> {
+    local_file(root).map(|path| path.with_extension("templates.toml"))
+}
+pub fn default_templates(root: &Path) -> Vec<RunDebugConfig> {
+    [true, false]
+        .into_iter()
+        .map(|flutter| {
+            let mut config = new_configuration(Some(root));
+            config.name = if flutter {
+                "Flutter"
+            } else {
+                "Dart Command Line App"
+            }
+            .into();
+            config.ty = Some(if flutter { "flutter" } else { "dart" }.into());
+            config.program = if flutter { "flutter" } else { "dart" }.into();
+            config.args = Some(if flutter {
+                vec!["run".into(), "--target".into(), "lib/main.dart".into()]
+            } else {
+                vec!["run".into(), "bin/main.dart".into()]
+            });
+            config.cwd = None;
+            config
+        })
+        .collect()
+}
+pub fn load_templates(root: &Path) -> Vec<RunDebugConfig> {
+    let saved = templates_file(root)
+        .and_then(|path| read_configs(&path))
+        .unwrap_or_default();
+    default_templates(root)
+        .into_iter()
+        .map(|default| {
+            saved
+                .iter()
+                .find(|config| config.ty == default.ty && config.is_dart_flutter())
+                .cloned()
+                .unwrap_or(default)
+        })
+        .collect()
+}
+pub fn save_bundle(
     root: &Path,
     configs: Vec<RunDebugConfig>,
-    project: bool,
+    templates: Option<Vec<RunDebugConfig>>,
 ) -> Result<(), String> {
     let local =
         local_file(root).ok_or("Cannot locate user configuration directory.")?;
-    let path = if project {
-        root.join(".sparrow/run.toml")
-    } else {
-        local.clone()
-    };
-    save_to(&path, configs)?;
-    if project && local.is_file() {
-        std::fs::remove_file(local).map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    let templates_path =
+        templates_file(root).ok_or("Cannot locate templates file")?;
+    save_bundle_to(root, local, templates_path, configs, templates)
 }
+fn save_bundle_to(
+    root: &Path,
+    local: PathBuf,
+    templates_path: PathBuf,
+    configs: Vec<RunDebugConfig>,
+    templates: Option<Vec<RunDebugConfig>>,
+) -> Result<(), String> {
+    let mut existing = project_files(root);
+    existing.extend([local.clone(), root.join(".sparrow/run.toml")]);
+    if templates.is_some() {
+        existing.push(templates_path.clone());
+    }
+    for path in existing.into_iter().filter(|path| path.is_file()) {
+        let text =
+            std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        toml::from_str::<RunDebugConfigs>(&text)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+    }
+    let configuration_order = configs
+        .iter()
+        .map(|config| config.name.clone())
+        .collect::<Vec<_>>();
+    let legacy = root.join(".sparrow/run.toml");
+    let mut files = Vec::new();
+    let mut retained = std::collections::HashSet::new();
+    let mut private = Vec::new();
+    for config in configs {
+        if config.store_in_project {
+            let path = project_file(root, &config.name);
+            retained.insert(path.clone());
+            files.push((
+                path,
+                Some(
+                    toml_edit::ser::to_string_pretty(&RunDebugConfigs {
+                        configs: vec![config],
+                    })
+                    .map_err(|error| error.to_string())?,
+                ),
+            ));
+        } else {
+            private.push(config);
+        }
+    }
+    for path in project_files(root) {
+        if !retained.contains(&path) {
+            files.push((path, None));
+        }
+    }
+    // Retire the old whole-list project file only after preparing the replacement records.
+    if legacy.is_file() {
+        files.push((legacy, Some("configs = []\n".into())));
+    }
+    files.push((
+        local,
+        Some(
+            toml_edit::ser::to_string_pretty(&LocalConfigs {
+                configuration_order,
+                configs: private,
+            })
+            .map_err(|error| error.to_string())?,
+        ),
+    ));
+    if let Some(configs) = templates {
+        files.push((
+            templates_path,
+            Some(
+                toml_edit::ser::to_string_pretty(&RunDebugConfigs { configs })
+                    .map_err(|error| error.to_string())?,
+            ),
+        ));
+    }
+    crate::persistence::write_changes(files)
+}
+
+#[cfg(test)]
+pub fn save(
+    root: &Path,
+    mut configs: Vec<RunDebugConfig>,
+    project: bool,
+) -> Result<(), String> {
+    for config in &mut configs {
+        config.store_in_project = project;
+    }
+    save_bundle(root, configs, None)
+}
+#[cfg(test)]
 fn save_to(path: &Path, configs: Vec<RunDebugConfig>) -> Result<(), String> {
     let text = toml_edit::ser::to_string_pretty(&RunDebugConfigs { configs })
         .map_err(|e| e.to_string())?;
@@ -493,11 +885,14 @@ mod tests {
     fn env_and_prelaunch_are_validated() {
         let mut d = Draft::from_config(sample());
         d.env = "TOKEN=a=b;MODE=dev".into();
-        d.before = "dart".into();
-        d.before_args = "run tool/build.dart".into();
+        d.tasks.push(TaskDraft {
+            program: "dart".into(),
+            args: "run tool/build.dart".into(),
+            enabled: true,
+        });
         let c = d.build().unwrap();
         assert_eq!(c.env.unwrap()["TOKEN"], "a=b");
-        assert_eq!(c.prelaunch.unwrap().program, "dart");
+        assert_eq!(c.before_launch[0].program, "dart");
         d.env = "1INVALID=x".into();
         assert!(d.build().is_err());
     }
@@ -605,15 +1000,30 @@ mod flutter_session_tests {
             "name":"app", "program":"/sdk/flutter/bin/flutter", "args":["run","--target","lib/main.dart"],
             "prelaunch":{"program":"dart","args":["run","tool/build.dart"]}
         })).unwrap();
-        assert_eq!(console_panel(RunDebugMode::Run, &config), PanelKind::FlutterRun);
-        assert_eq!(console_panel(RunDebugMode::Debug, &config), PanelKind::Terminal);
+        assert_eq!(
+            console_panel(RunDebugMode::Run, &config),
+            PanelKind::FlutterRun
+        );
+        assert_eq!(
+            console_panel(RunDebugMode::Debug, &config),
+            PanelKind::Terminal
+        );
         config.args = Some(vec!["attach".into()]);
-        assert_eq!(console_panel(RunDebugMode::Run, &config), PanelKind::FlutterRun);
+        assert_eq!(
+            console_panel(RunDebugMode::Run, &config),
+            PanelKind::FlutterRun
+        );
         config.args = Some(vec!["test".into()]);
-        assert_eq!(console_panel(RunDebugMode::Run, &config), PanelKind::Terminal);
+        assert_eq!(
+            console_panel(RunDebugMode::Run, &config),
+            PanelKind::Terminal
+        );
         config.program = "dart".into();
-        config.args = Some(vec!["run".into(),"bin/main.dart".into()]);
-        assert_eq!(console_panel(RunDebugMode::Run, &config), PanelKind::Terminal);
+        config.args = Some(vec!["run".into(), "bin/main.dart".into()]);
+        assert_eq!(
+            console_panel(RunDebugMode::Run, &config),
+            PanelKind::Terminal
+        );
     }
 
     #[test]
@@ -629,5 +1039,299 @@ mod flutter_session_tests {
         assert!(is_flutter_run(&config));
         config.program = "dart".into();
         assert!(!is_flutter_run(&config));
+    }
+}
+
+#[cfg(test)]
+mod context_file_launch_tests {
+    use super::*;
+    #[test]
+    fn context_launch_uses_clicked_file_and_its_nearest_flutter_package() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("pubspec.yaml"),
+            "name: context_app\ndependencies:\n  flutter:\n    sdk: flutter\n",
+        )
+        .unwrap();
+        let target = root.path().join("lib/alternate entry.dart");
+        let unrelated = tempfile::tempdir().unwrap();
+        let config =
+            configuration_for_file(&target, Some(unrelated.path())).unwrap();
+        assert_eq!(config.program, "flutter");
+        assert_eq!(
+            config.args.unwrap(),
+            ["run", "--target", "lib/alternate entry.dart"]
+        );
+        assert_eq!(config.cwd.as_deref(), root.path().to_str());
+    }
+    #[test]
+    fn dart_context_launch_does_not_become_a_flutter_command() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("pubspec.yaml"),
+            "name: cli\nenvironment:\n  sdk: ^3.0.0\n",
+        )
+        .unwrap();
+        let config =
+            configuration_for_file(&root.path().join("bin/tool.dart"), None)
+                .unwrap();
+        assert_eq!(config.program, "dart");
+        assert_eq!(config.args.unwrap(), ["run", "bin/tool.dart"]);
+        assert!(
+            configuration_for_file(
+                &root.path().join("android/app.kt"),
+                Some(root.path())
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod dialog_validation_tests {
+    use super::*;
+    #[test]
+    fn empty_lists_unique_names_and_invalid_directories_are_handled() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(build_drafts(&[], root.path()).unwrap().is_empty());
+        std::fs::create_dir(root.path().join("bin")).unwrap();
+        std::fs::write(root.path().join("bin/main.dart"), "void main() {}").unwrap();
+        let mut draft = Draft::from_config(new_configuration(None));
+        draft.name = "Tool".into();
+        assert_eq!(unique_name(&[draft.clone()], "Tool"), "Tool (2)");
+        assert!(
+            build_drafts(&[draft.clone(), draft.clone()], root.path())
+                .unwrap_err()
+                .contains("already exists")
+        );
+        draft.cwd = "missing".into();
+        assert!(
+            build_drafts(&[draft], root.path())
+                .unwrap_err()
+                .contains("working directory")
+        );
+    }
+    #[test]
+    fn flutter_target_is_validated_against_edited_working_directory() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("example/lib")).unwrap();
+        std::fs::write(root.path().join("example/lib/main.dart"), "void main() {} ")
+            .unwrap();
+        let mut draft = Draft::from_config(serde_json::from_value(serde_json::json!({"name":"Example", "type":"flutter", "program":"flutter", "args":["run","-t","lib/main.dart"]})).unwrap());
+        draft.cwd = "${workspace}/example".into();
+        let configs = build_drafts(&[draft.clone()], root.path()).unwrap();
+        assert_eq!(configs[0].cwd.as_deref(), Some("${workspace}/example"));
+        draft.entry = "lib/missing.dart".into();
+        assert!(build_drafts(&[draft], root.path()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod dart_form_tests {
+    use super::*;
+    #[test]
+    fn dart_script_fields_keep_vm_options_sdk_and_program_arguments_separate() {
+        let original: RunDebugConfig = serde_json::from_value(serde_json::json!({"name":"tool", "program":"/sdk/dart", "args":["run","--enable-asserts","bin/my tool.dart","hello world"]})).unwrap();
+        let mut draft = Draft::from_config(original.clone());
+        assert!(draft.dart_entry);
+        assert_eq!(draft.entry, "bin/my tool.dart");
+        assert_eq!(draft.args, "\"hello world\"");
+        assert_eq!(draft.build().unwrap().args, original.args);
+        draft.entry = "bin/other.dart".into();
+        draft.args = "--verbose".into();
+        let built = draft.build().unwrap();
+        assert_eq!(built.program, "/sdk/dart");
+        assert_eq!(
+            built.args.unwrap(),
+            ["run", "--enable-asserts", "bin/other.dart", "--verbose"]
+        );
+    }
+    #[test]
+    fn non_script_dart_commands_remain_editable_without_rewriting_them() {
+        let original: RunDebugConfig = serde_json::from_value(serde_json::json!({"name":"tests", "program":"dart", "args":["test","--reporter","expanded"]})).unwrap();
+        let draft = Draft::from_config(original.clone());
+        assert!(!draft.dart_entry);
+        let built = draft.build().unwrap();
+        assert_eq!(built.program, original.program);
+        assert_eq!(built.args, original.args);
+    }
+}
+
+#[cfg(test)]
+mod independent_storage_tests {
+    use super::*;
+    fn config(name: &str, shared: bool) -> RunDebugConfig {
+        let mut config = new_configuration(None);
+        config.name = name.into();
+        config.store_in_project = shared;
+        config
+    }
+    #[test]
+    fn templates_allow_blank_entrypoints_but_launch_configurations_require_them() {
+        let root = tempfile::tempdir().unwrap();
+        for template in default_templates(root.path()) {
+            let mut draft = Draft::from_config(template);
+            draft.entry.clear();
+            let saved = draft.build_template().unwrap();
+            let inherited = Draft::from_config(saved);
+            assert!(inherited.entry.is_empty());
+            assert!(inherited.build().is_err());
+        }
+    }
+    #[test]
+    fn mixed_storage_survives_rename_move_delete_and_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let private = root.path().join("private/run.toml");
+        let templates = root.path().join("private/templates.toml");
+        save_bundle_to(
+            root.path(),
+            private.clone(),
+            templates.clone(),
+            vec![config("shared", true), config("private", false)],
+            None,
+        )
+        .unwrap();
+        assert!(project_file(root.path(), "shared").is_file());
+        assert!(!project_file(root.path(), "private").exists());
+        let loaded = load_with_local(root.path(), Some(&private)).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(
+            loaded
+                .iter()
+                .find(|config| config.name == "shared")
+                .unwrap()
+                .store_in_project
+        );
+        assert!(
+            !loaded
+                .iter()
+                .find(|config| config.name == "private")
+                .unwrap()
+                .store_in_project
+        );
+        save_bundle_to(
+            root.path(),
+            private.clone(),
+            templates.clone(),
+            vec![config("renamed", true), config("private", true)],
+            None,
+        )
+        .unwrap();
+        assert!(!project_file(root.path(), "shared").exists());
+        assert!(project_file(root.path(), "renamed").is_file());
+        assert!(project_file(root.path(), "private").is_file());
+        assert_eq!(
+            load_with_local(root.path(), Some(&private)).unwrap().len(),
+            2
+        );
+        save_bundle_to(
+            root.path(),
+            private.clone(),
+            templates,
+            vec![config("renamed", false)],
+            None,
+        )
+        .unwrap();
+        assert!(project_files(root.path()).is_empty());
+        let loaded = load_with_local(root.path(), Some(&private)).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert!(!loaded[0].store_in_project);
+    }
+    #[test]
+    fn malformed_existing_storage_is_preserved() {
+        let root = tempfile::tempdir().unwrap();
+        let private = root.path().join("local.toml");
+        std::fs::write(&private, "[invalid").unwrap();
+        assert!(
+            save_bundle_to(
+                root.path(),
+                private.clone(),
+                root.path().join("templates.toml"),
+                vec![config("new", true)],
+                None
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(private).unwrap(), "[invalid");
+        assert!(!root.path().join(".run").exists());
+    }
+    #[test]
+    fn private_legacy_override_merges_with_other_project_configs() {
+        let root = tempfile::tempdir().unwrap();
+        let shared = root.path().join("project.toml");
+        let private = root.path().join("local.toml");
+        save_to(&shared, vec![config("same", true), config("shared", true)])
+            .unwrap();
+        save_to(&private, vec![config("same", false)]).unwrap();
+        let loaded = load_from(&shared, Some(&private)).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(!loaded[0].store_in_project);
+        assert!(loaded[1].store_in_project);
+    }
+    #[test]
+    fn templates_are_separate_defaults_and_do_not_modify_existing_configurations() {
+        let root = tempfile::tempdir().unwrap();
+        let private = root.path().join("local.toml");
+        let templates = root.path().join("templates.toml");
+        let original = config("existing", false);
+        let mut defaults = default_templates(root.path());
+        defaults[0].env = Some(HashMap::from([("MODE".into(), "template".into())]));
+        defaults[0].before_launch.push(BeforeLaunchTask {
+            program: "dart".into(),
+            args: Some(vec!["run".into(), "tool/build.dart".into()]),
+            enabled: true,
+        });
+        save_bundle_to(
+            root.path(),
+            private.clone(),
+            templates.clone(),
+            vec![original],
+            Some(defaults.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(read_configs(&templates).unwrap()).unwrap(),
+            serde_json::to_value(&defaults).unwrap()
+        );
+        assert!(
+            load_with_local(root.path(), Some(&private)).unwrap()[0]
+                .env
+                .is_none()
+        );
+        let inherited = Draft::from_config(defaults[0].clone()).build().unwrap();
+        assert_eq!(inherited.env.unwrap()["MODE"], "template");
+        assert_eq!(inherited.before_launch.len(), 1);
+    }
+    #[test]
+    fn ordered_task_drafts_preserve_flags_quoting_and_reject_empty_programs() {
+        let mut draft = Draft::from_config(config("task", false));
+        draft.tasks = vec![
+            TaskDraft {
+                program: "dart".into(),
+                args: "run 'tool/a b.dart'".into(),
+                enabled: false,
+            },
+            TaskDraft {
+                program: "dart".into(),
+                args: "run tool/c.dart".into(),
+                enabled: true,
+            },
+        ];
+        let config = draft.build().unwrap();
+        assert!(config.prelaunch.is_none());
+        assert!(!config.before_launch[0].enabled);
+        assert_eq!(
+            config.before_launch[0].args.as_ref().unwrap()[1],
+            "tool/a b.dart"
+        );
+        assert_eq!(
+            Draft::from_config(config.clone())
+                .build()
+                .unwrap()
+                .before_launch,
+            config.before_launch
+        );
+        draft.tasks.push(TaskDraft::new());
+        assert!(draft.build().is_err());
     }
 }

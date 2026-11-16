@@ -1,5 +1,5 @@
-use crate::text_input::modal_text_input as text_input;
-use super::run_config::{self, Draft};
+use super::run_config::{self, Draft, TaskDraft};
+use crate::modal_focus::{ModalChoice, ModalFocus, list_destination};
 use crate::{
     app::clickable_icon,
     command::InternalCommand,
@@ -9,35 +9,124 @@ use crate::{
 };
 use floem::{
     View,
-    action::open_file,
-    event::{Event, EventListener},
-    file::FileDialogOptions,
-    keyboard::{Key, NamedKey},
+    event::{Event, EventListener, EventPropagation},
+    file::{FileDialogOptions, FileSpec},
+    keyboard::{Key, Modifiers, NamedKey},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
-    views::{
-        Decorators, container, dyn_stack, empty, label, scroll, stack, svg,
-    },
+    views::{Decorators, container, dyn_stack, empty, label, scroll, stack, svg},
 };
 use std::rc::Rc;
 struct Dialog {
     window: Rc<WindowTabData>,
+    keyboard: ModalFocus,
     drafts: RwSignal<Vec<Draft>>,
     baseline: RwSignal<Vec<Draft>>,
     selected: RwSignal<usize>,
-    fields: [RwSignal<String>; 8],
+    fields: [RwSignal<String>; 9],
+    load_epoch: RwSignal<usize>,
+    name_input: RwSignal<Option<floem::ViewId>>,
     activate: RwSignal<bool>,
     focus: RwSignal<bool>,
     project: RwSignal<bool>,
-    baseline_project: RwSignal<bool>,
+    templates: RwSignal<Vec<Draft>>,
+    baseline_templates: RwSignal<Vec<Draft>>,
+    templates_mode: RwSignal<bool>,
+    task_selected: RwSignal<usize>,
     error: RwSignal<String>,
 }
 impl Dialog {
+    fn current(&self) -> RwSignal<Vec<Draft>> {
+        if self.templates_mode.get_untracked() {
+            self.templates
+        } else {
+            self.drafts
+        }
+    }
+    fn current_tracked(&self) -> RwSignal<Vec<Draft>> {
+        let _ = self.templates_mode.get();
+        self.current()
+    }
+    fn choose_config(&self, index: usize) {
+        self.capture();
+        self.templates_mode.set(false);
+        self.selected.set(index);
+        self.load();
+        self.error.set(String::new());
+    }
+    fn choose_template(&self, index: usize) {
+        self.capture();
+        self.templates_mode.set(true);
+        self.selected.set(index);
+        self.load();
+        self.error.set(String::new());
+    }
+    fn load_task(&self) {
+        let task = self.current().with_untracked(|drafts| {
+            drafts
+                .get(self.selected.get_untracked())
+                .and_then(|draft| {
+                    draft.tasks.get(self.task_selected.get_untracked())
+                })
+                .cloned()
+        });
+        self.fields[6].set(
+            task.as_ref()
+                .map(|task| task.program.clone())
+                .unwrap_or_default(),
+        );
+        self.fields[7].set(task.map(|task| task.args).unwrap_or_default());
+    }
+    fn choose_task(&self, index: usize) {
+        self.capture();
+        self.task_selected.set(index);
+        self.load_task();
+    }
+    fn edit_task(&self, action: i8) {
+        self.capture();
+        let selected = self.task_selected.get_untracked();
+        let mut next = selected;
+        self.current().update(|drafts| {
+            if let Some(draft) = drafts.get_mut(self.selected.get_untracked()) {
+                match action {
+                    0 => {
+                        draft.tasks.push(TaskDraft::new());
+                        next = draft.tasks.len() - 1;
+                    }
+                    1 if selected < draft.tasks.len() => {
+                        draft.tasks.remove(selected);
+                        next = selected.min(draft.tasks.len().saturating_sub(1));
+                    }
+                    -1 if selected > 0 => {
+                        draft.tasks.swap(selected, selected - 1);
+                        next = selected - 1;
+                    }
+                    2 if selected + 1 < draft.tasks.len() => {
+                        draft.tasks.swap(selected, selected + 1);
+                        next = selected + 1;
+                    }
+                    _ => {}
+                }
+            }
+        });
+        self.task_selected.set(next);
+        self.load_task();
+    }
+
     fn load(&self) {
         let Some(d) = self
-            .drafts
+            .current()
             .with_untracked(|d| d.get(self.selected.get_untracked()).cloned())
         else {
+            for field in self.fields {
+                field.set(String::new());
+            }
+            self.load_epoch.update(|epoch| *epoch += 1);
+            let keyboard = self.keyboard.clone();
+            floem::action::exec_after(
+                std::time::Duration::from_millis(30),
+                move |_| keyboard.focus_first(),
+            );
             return;
         };
         for (field, text) in self.fields.iter().zip([
@@ -47,36 +136,46 @@ impl Dialog {
             d.attach,
             d.flavor,
             d.env,
-            d.before,
-            d.before_args,
+            String::new(),
+            String::new(),
+            d.cwd,
         ]) {
             field.set(text);
         }
+        self.task_selected.set(0);
+        self.load_task();
+        self.project.set(d.project);
         self.activate.set(d.activate);
         self.focus.set(d.focus);
+        self.load_epoch.update(|epoch| *epoch += 1);
     }
     fn snapshot(&self) -> Option<Draft> {
         let mut d = self
-            .drafts
+            .current()
             .with_untracked(|d| d.get(self.selected.get_untracked()).cloned())?;
-        [
-            d.name,
-            d.entry,
-            d.args,
-            d.attach,
-            d.flavor,
-            d.env,
-            d.before,
-            d.before_args,
-        ] = self.fields.map(|f| f.get_untracked());
+        d.name = self.fields[0].get_untracked();
+        d.entry = self.fields[1].get_untracked();
+        d.args = self.fields[2].get_untracked();
+        d.attach = self.fields[3].get_untracked();
+        d.flavor = self.fields[4].get_untracked();
+        d.env = self.fields[5].get_untracked();
+        d.cwd = self.fields[8].get_untracked();
+        if let Some(task) = d.tasks.get_mut(self.task_selected.get_untracked()) {
+            task.program = self.fields[6].get_untracked();
+            task.args = self.fields[7].get_untracked();
+        }
+        d.project = self.project.get_untracked();
         d.activate = self.activate.get_untracked();
         d.focus = self.focus.get_untracked();
         Some(d)
     }
     fn capture(&self) {
         if let Some(d) = self.snapshot() {
-            self.drafts
-                .update(|drafts| drafts[self.selected.get_untracked()] = d);
+            self.current().update(|drafts| {
+                if let Some(slot) = drafts.get_mut(self.selected.get_untracked()) {
+                    *slot = d;
+                }
+            });
         }
     }
     fn choose(&self, index: usize) {
@@ -92,23 +191,26 @@ impl Dialog {
         }
         let _ = self.activate.get();
         let _ = self.focus.get();
+        let _ = self.project.get();
         let mut drafts = self.drafts.get();
-        if let Some(d) = self.snapshot() {
-            if let Some(slot) = drafts.get_mut(self.selected.get()) {
-                *slot = d;
+        let mut templates = self.templates.get();
+        if let Some(draft) = self.snapshot() {
+            let current = if self.templates_mode.get() {
+                &mut templates
+            } else {
+                &mut drafts
+            };
+            if let Some(slot) = current.get_mut(self.selected.get()) {
+                *slot = draft;
             }
         }
-        drafts != self.baseline.get()
-            || self.project.get() != self.baseline_project.get()
+        drafts != self.baseline.get() || templates != self.baseline_templates.get()
     }
+
     fn apply(&self) -> bool {
         self.capture();
         let result = (|| {
             let drafts = self.drafts.get_untracked();
-            let configs = drafts
-                .iter()
-                .map(Draft::build)
-                .collect::<Result<Vec<_>, _>>()?;
             let root = self
                 .window
                 .workspace
@@ -121,13 +223,26 @@ impl Dialog {
                         .into(),
                 );
             }
-            run_config::save(root, configs.clone(), self.project.get_untracked())?;
+            let configs = run_config::build_drafts(&drafts, root)?;
+            let template_drafts = self.templates.get_untracked();
+            let templates = template_drafts
+                .iter()
+                .map(Draft::build_template)
+                .collect::<Result<Vec<_>, _>>()?;
+            run_config::save_bundle(root, configs.clone(), Some(templates))?;
             self.window.run_configs.set(configs);
-            self.window
-                .active_run_config_idx
-                .set(self.selected.get_untracked());
+            self.window.active_run_config_idx.set(
+                if self.templates_mode.get_untracked() {
+                    self.window
+                        .active_run_config_idx
+                        .get_untracked()
+                        .min(drafts.len().saturating_sub(1))
+                } else {
+                    self.selected.get_untracked()
+                },
+            );
             self.baseline.set(drafts);
-            self.baseline_project.set(self.project.get_untracked());
+            self.baseline_templates.set(template_drafts);
             Ok::<_, String>(())
         })();
         match result {
@@ -141,7 +256,84 @@ impl Dialog {
             }
         }
     }
-    fn launch(&self, attach: bool) {
+    fn remove(&self) {
+        if self.templates_mode.get_untracked() {
+            return;
+        }
+        self.capture();
+        if !self.drafts.with_untracked(Vec::is_empty) {
+            let index = self.selected.get_untracked();
+            self.drafts.update(|v| {
+                v.remove(index);
+            });
+            self.selected.set(index.saturating_sub(1));
+            self.load();
+        }
+    }
+    fn focus_name(&self) {
+        let name = self.name_input;
+        let visible = self.window.run_config_modal_visible;
+        floem::action::exec_after(std::time::Duration::from_millis(30), move |_| {
+            if visible.get_untracked() {
+                if let Some(id) = name.get_untracked() {
+                    id.request_focus();
+                }
+            }
+        });
+    }
+    fn duplicate(&self) {
+        if self.templates_mode.get_untracked() {
+            return;
+        }
+        self.capture();
+        if let Some(mut draft) = self
+            .drafts
+            .with_untracked(|v| v.get(self.selected.get_untracked()).cloned())
+        {
+            draft.name = self.drafts.with_untracked(|drafts| {
+                run_config::unique_name(drafts, &format!("{} (copy)", draft.name))
+            });
+            draft.original.dap_id = Default::default();
+            let index = self.drafts.with_untracked(Vec::len);
+            self.drafts.update(|v| v.push(draft));
+            self.selected.set(index);
+            self.load();
+            self.focus_name();
+        }
+    }
+    fn add(&self, flutter: bool) {
+        self.capture();
+        let index = if flutter { 0 } else { 1 };
+        let config = match self
+            .templates
+            .with_untracked(|templates| templates[index].build_template())
+        {
+            Ok(config) => config,
+            Err(error) => {
+                self.error.set(format!(
+                    "Fix the template before creating a configuration: {error}"
+                ));
+                return;
+            }
+        };
+        self.templates_mode.set(false);
+        let mut draft = Draft::from_config(config);
+        draft.original.dap_id = Default::default();
+        draft.name = self
+            .drafts
+            .with_untracked(|drafts| run_config::unique_name(drafts, &draft.name));
+        let index = self.drafts.with_untracked(Vec::len);
+        self.drafts.update(|drafts| drafts.push(draft));
+        self.selected.set(index);
+        self.error.set(String::new());
+        self.load();
+        self.focus_name();
+    }
+
+    fn launch(&self, mode: RunDebugMode, attach: bool) {
+        if self.templates_mode.get_untracked() {
+            return;
+        }
         if !self.apply() {
             return;
         }
@@ -167,10 +359,7 @@ impl Dialog {
             self.window
                 .common
                 .internal_command
-                .send(InternalCommand::RunAndDebug {
-                    mode: RunDebugMode::Run,
-                    config: c,
-                });
+                .send(InternalCommand::RunAndDebug { mode, config: c });
         }
     }
 }
@@ -178,16 +367,23 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let cx = Scope::current();
     let visible = window.run_config_modal_visible;
     let config = window.common.config;
+    let keyboard = ModalFocus::default();
     let d = Rc::new(Dialog {
         window,
+        keyboard: keyboard.clone(),
         drafts: cx.create_rw_signal(Vec::new()),
         baseline: cx.create_rw_signal(Vec::new()),
         selected: cx.create_rw_signal(0),
         fields: std::array::from_fn(|_| cx.create_rw_signal(String::new())),
+        load_epoch: cx.create_rw_signal(0),
+        name_input: cx.create_rw_signal(None),
         activate: cx.create_rw_signal(true),
         focus: cx.create_rw_signal(false),
         project: cx.create_rw_signal(false),
-        baseline_project: cx.create_rw_signal(false),
+        templates: cx.create_rw_signal(Vec::new()),
+        baseline_templates: cx.create_rw_signal(Vec::new()),
+        templates_mode: cx.create_rw_signal(false),
+        task_selected: cx.create_rw_signal(0),
         error: cx.create_rw_signal(String::new()),
     });
     cx.create_effect({
@@ -209,109 +405,224 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 );
                 d.baseline.set(drafts.clone());
                 d.drafts.set(drafts);
-                let project =
-                    d.window.workspace.path.as_deref().is_some_and(|root| {
-                        !run_config::local_file(root).is_some_and(|p| p.is_file())
-                            && root.join(".sparrow/run.toml").is_file()
-                    });
-                d.project.set(project);
-                d.baseline_project.set(project);
+                d.templates_mode.set(false);
+                let templates = run_config::load_templates(
+                    d.window
+                        .workspace
+                        .path
+                        .as_deref()
+                        .unwrap_or(std::path::Path::new(".")),
+                )
+                .into_iter()
+                .map(Draft::from_config)
+                .collect::<Vec<_>>();
+                d.templates.set(templates.clone());
+                d.baseline_templates.set(templates);
                 d.error.set(String::new());
                 d.load();
             }
         }
     });
+    keyboard.set_submit({
+        let d = d.clone();
+        move || {
+            if d.apply() {
+                visible.set(false);
+            }
+        }
+    });
+    let templates_mode = d.templates_mode;
     let is_flutter = cx.create_memo({
-        let drafts = d.drafts;
-        let selected = d.selected;
-        move |_| drafts.with(|drafts| drafts.get(selected.get()).is_some_and(Draft::flutter))
+        let d = d.clone();
+        move |_| {
+            d.current_tracked().with(|drafts| {
+                drafts.get(d.selected.get()).is_some_and(Draft::flutter)
+            })
+        }
+    });
+    let is_dart_entry = cx.create_memo({
+        let d = d.clone();
+        move |_| {
+            d.current_tracked().with(|drafts| {
+                drafts
+                    .get(d.selected.get())
+                    .is_some_and(|draft| draft.dart_entry)
+            })
+        }
+    });
+    let has_selected = cx.create_memo({
+        let d = d.clone();
+        move |_| !d.current_tracked().with(Vec::is_empty)
     });
     let add = d.clone();
     let remove = d.clone();
     let duplicate = d.clone();
+    let list_focus = cx.create_rw_signal(None::<floem::ViewId>);
+    let configuration_list = scroll(
+        dyn_stack(
+            {
+                let d = d.clone();
+                move || d.drafts.get().into_iter().enumerate().collect::<Vec<_>>()
+            },
+            |(i, draft)| (*i, draft.flutter()),
+            {
+                let d = d.clone();
+                move |(i, draft)| {
+                    let select = d.clone();
+                    let active = d.selected;
+                    let name = d.fields[0];
+                    let drafts = d.drafts;
+                    stack((
+                        svg({
+                            let flutter = draft.flutter();
+                            move || {
+                                config.get().ui_svg(if flutter {
+                                    SparrowIcons::FLUTTER
+                                } else {
+                                    SparrowIcons::DART
+                                })
+                            }
+                        })
+                        .style(|s| s.size(16.0, 16.0)),
+                        label(move || {
+                            if !templates_mode.get() && active.get() == i {
+                                name.get()
+                            } else {
+                                drafts.with(|drafts| {
+                                    drafts
+                                        .get(i)
+                                        .map(|draft| draft.name.clone())
+                                        .unwrap_or_default()
+                                })
+                            }
+                        }),
+                    ))
+                    .on_click_stop(move |_| {
+                        select.choose_config(i);
+                        if let Some(id) = list_focus.get_untracked() {
+                            id.request_focus();
+                        }
+                    })
+                    .style(move |s| {
+                        s.height(22.0)
+                            .width_full()
+                            .padding_left(36.0)
+                            .gap(4.0)
+                            .items_center()
+                            .border_radius(4.0)
+                            .apply_if(
+                                !templates_mode.get() && active.get() == i,
+                                |s| {
+                                    s.background(config.get().color(
+                                        SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND,
+                                    ))
+                                },
+                            )
+                            .hover(|s| s.cursor(CursorStyle::Pointer))
+                    })
+                }
+            },
+        )
+        .style(|s| s.flex_col().min_width_full()),
+    )
+    .style(|s| s.flex_grow(1.0_f32).min_height(0.0));
+    let selected_row = d.selected;
+    let configuration_list = configuration_list.ensure_visible(move || {
+        let y = selected_row.get() as f64 * 22.0;
+        floem::kurbo::Rect::new(0.0, y, 1.0, y + 22.0)
+    });
+    let list_id = configuration_list.id();
+    list_focus.set(Some(list_id));
+    let list_dialog = d.clone();
+    let configuration_list = keyboard
+        .control_if(configuration_list, move || has_selected.get_untracked())
+        .style(|s| s.focus(|s| s.background(floem::peniko::Color::TRANSPARENT)))
+        .on_event(EventListener::KeyDown, move |event| {
+            let Event::KeyDown(key) = event else {
+                return EventPropagation::Continue;
+            };
+            if key.key.logical_key == Key::Named(NamedKey::Delete) && key.modifiers.is_empty() {
+                list_dialog.remove(); return EventPropagation::Stop;
+            }
+            if key.modifiers == Modifiers::CONTROL && matches!(&key.key.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("d")) {
+                list_dialog.duplicate(); return EventPropagation::Stop;
+            }
+            if !key.modifiers.is_empty() { return EventPropagation::Continue; }
+            let len = list_dialog.current_tracked().with_untracked(Vec::len);
+            if let Some(index) = list_destination(
+                &key.key.logical_key,
+                list_dialog.selected.get_untracked(),
+                len,
+            ) {
+                list_dialog.choose(index);
+                EventPropagation::Stop
+            } else {
+                EventPropagation::Continue
+            }
+        });
+    let template_link = d.clone();
+    let d_selected = d.selected;
+    let template_rows = [0usize, 1].map(|index| {
+        let choose = d.clone();
+        keyboard.control(
+            label(move || {
+                if index == 0 {
+                    "    Flutter"
+                } else {
+                    "    Dart Command Line App"
+                }
+            })
+            .on_click_stop(move |_| choose.choose_template(index))
+            .style(move |s| {
+                s.height(24.0).width_full().items_center().apply_if(
+                    templates_mode.get() && d_selected.get() == index,
+                    |s| {
+                        s.background(
+                            config
+                                .get()
+                                .color(SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND),
+                        )
+                    },
+                )
+            }),
+        )
+    });
     let sidebar = stack((
         stack((
-            clickable_icon(
-                || SparrowIcons::ADD,
+            keyboard.menu(
+                svg(move || config.get().ui_svg(SparrowIcons::ADD)).style(|s| {
+                    s.size(16.0, 16.0)
+                        .margin_horiz(5.0)
+                        .cursor(CursorStyle::Pointer)
+                }),
                 move || {
-                    add.capture();
-                    {
-                        let empty = add.drafts.with_untracked(Vec::is_empty);
-                        let mut draft = add.drafts.with_untracked(|v| {
-                            v.get(add.selected.get_untracked()).cloned()
-                        }).unwrap_or_else(|| Draft::from_config(run_config::new_configuration(add.window.workspace.path.as_deref())));
-                        if !draft.original.is_dart_flutter() {
-                            draft.original.ty = Some("flutter".into());
-                            draft.original.program =
-                                crate::dart::sdk::find_flutter_binary(
-                                    add.window.workspace.path.as_deref(),
-                                )
-                                .unwrap_or_else(|| "flutter".into())
-                                .display()
-                                .to_string();
-                            draft.entry = "lib/main.dart".into();
-                        }
-                        draft.name = "New configuration".into();
-                        draft.original.dap_id = Default::default();
-                        if draft.flutter() {
-                            draft.entry = "lib/main.dart".into();
-                        }
-                        if !empty { draft.args.clear(); }
-                        draft.attach.clear();
-                        draft.flavor.clear();
-                        draft.env.clear();
-                        draft.before.clear();
-                        draft.before_args.clear();
-                        let index = add.drafts.with_untracked(Vec::len);
-                        add.drafts.update(|v| v.push(draft));
-                        add.selected.set(index);
-                        add.load();
-                    }
+                    let flutter = add.clone();
+                    let dart = add.clone();
+                    vec![
+                        ModalChoice::new("Flutter", move || flutter.add(true)),
+                        ModalChoice::new("Dart Command Line App", move || {
+                            dart.add(false)
+                        }),
+                    ]
                 },
-                || false,
-                || false,
-                || "Add Configuration",
-                config,
             ),
-            clickable_icon(
+            keyboard.icon(
                 || SparrowIcons::WINDOW_MINIMIZE,
-                move || {
-                    remove.capture();
-                    if remove.drafts.with_untracked(Vec::len) > 1 {
-                        let index = remove.selected.get_untracked();
-                        remove.drafts.update(|v| {
-                            v.remove(index);
-                        });
-                        remove.selected.set(index.saturating_sub(1));
-                        remove.load();
-                    }
-                },
+                move || remove.remove(),
                 || false,
                 {
                     let drafts = d.drafts;
-                    move || drafts.with(|v| v.len() <= 1)
+                    move || templates_mode.get() || drafts.with(Vec::is_empty)
                 },
-                || "Remove Configuration",
+                || "Remove Configuration (Delete)",
                 config,
             ),
-            clickable_icon(
+            keyboard.icon(
                 || SparrowIcons::FILE,
-                move || {
-                    duplicate.capture();
-                    if let Some(mut draft) = duplicate.drafts.with_untracked(|v| {
-                        v.get(duplicate.selected.get_untracked()).cloned()
-                    }) {
-                        draft.name.push_str(" (copy)");
-                        draft.original.dap_id = Default::default();
-                        let index = duplicate.drafts.with_untracked(Vec::len);
-                        duplicate.drafts.update(|v| v.push(draft));
-                        duplicate.selected.set(index);
-                        duplicate.load();
-                    }
-                },
+                move || duplicate.duplicate(),
                 || false,
-                || false,
-                || "Duplicate Configuration",
+                move || templates_mode.get() || !has_selected.get(),
+                || "Duplicate Configuration (Ctrl+D)",
                 config,
             ),
         ))
@@ -320,63 +631,38 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             let drafts = d.drafts;
             move || {
                 drafts.with(|drafts| {
-                    if drafts.is_empty() { "⌄  Run configurations" }
-                    else if drafts.iter().all(Draft::flutter) { "⌄  Flutter" }
-                    else if drafts.iter().all(|draft| !draft.flutter()) { "⌄  Dart" }
-                    else { "⌄  Run configurations" }
+                    if drafts.is_empty() {
+                        "⌄  Run configurations"
+                    } else if drafts.iter().all(Draft::flutter) {
+                        "⌄  Flutter"
+                    } else if drafts.iter().all(|draft| !draft.flutter()) {
+                        "⌄  Dart"
+                    } else {
+                        "⌄  Run configurations"
+                    }
                 })
             }
         })
         .style(|s| s.padding_left(10.0).height(24.0).font_bold()),
-        scroll(
-            dyn_stack(
-                {
-                    let d = d.clone();
-                    move || {
-                        d.drafts.get().into_iter().enumerate().collect::<Vec<_>>()
-                    }
-                },
-                |(i, _)| *i,
-                {
-                    let d = d.clone();
-                    move |(i, draft)| {
-                        let select = d.clone();
-                        let active = d.selected;
-                        let name = d.fields[0];
-                        stack((
-                            svg({
-                                let flutter = draft.flutter();
-                                move || config.get().ui_svg(if flutter { SparrowIcons::FLUTTER } else { SparrowIcons::DART })
-                            }).style(|s| s.size(16.0, 16.0)),
-                            label(move || {
-                                if active.get() == i {
-                                    name.get()
-                                } else {
-                                    draft.name.clone()
-                                }
-                            }),
-                        ))
-                        .on_click_stop(move |_| select.choose(i))
-                        .style(move |s| {
-                            s.height(22.0)
-                                .width_full()
-                                .padding_left(36.0)
-                                .gap(4.0)
-                                .items_center()
-                                .border_radius(4.0)
-                                .apply_if(active.get() == i, |s| {
-                                    s.background(config.get().color(
-                                        SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND,
-                                    ))
-                                })
-                                .hover(|s| s.cursor(CursorStyle::Pointer))
-                        })
-                    }
-                },
-            )
-            .style(|s| s.flex_col().min_width_full()),
-        )
-        .style(|s| s.flex_grow(1.0_f32).min_height(0.0)),
+        configuration_list,
+        keyboard.control(
+            label(|| "Edit configuration templates…")
+                .on_click_stop(move |_| template_link.choose_template(0))
+                .style(move |s| {
+                    s.height(30.0)
+                        .items_center()
+                        .color(config.get().color(SparrowColor::EDITOR_LINK))
+                }),
+        ),
+        stack({
+            let [flutter, dart] = template_rows;
+            (flutter, dart)
+        })
+        .style(move |s| {
+            s.flex_col()
+                .width_full()
+                .apply_if(!templates_mode.get(), |s| s.hide())
+        }),
     ))
     .style(move |s| {
         s.width(210.0)
@@ -387,14 +673,30 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .border_right(1.0)
             .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
     });
-    let name_input = cx.create_rw_signal(None::<floem::ViewId>);
-    let form_row =
-        move |title: &'static str, field: RwSignal<String>, help: &'static str| {
-            let input = text_input(field);
-            if title == "Name:" { name_input.set(Some(input.id())); }
-            stack((
+    let name_input = d.name_input;
+    let task_program_focus = cx.create_rw_signal(None::<floem::ViewId>);
+    let entry_focus = cx.create_rw_signal(None::<floem::ViewId>);
+    let cwd_focus = cx.create_rw_signal(None::<floem::ViewId>);
+    let form_keyboard = keyboard.clone();
+    let form_row = move |title: &'static str,
+                         field: RwSignal<String>,
+                         help: &'static str| {
+        let input = form_keyboard.input(field);
+        match title {
+            "Name:" => name_input.set(Some(input.id())),
+            "Dart entrypoint:" => entry_focus.set(Some(input.id())),
+            "Working directory:" => cwd_focus.set(Some(input.id())),
+            "Program:" => task_program_focus.set(Some(input.id())),
+            _ => {}
+        }
+        stack((
                 stack((
-                    label(move || if title == "Dart entrypoint:" && !is_flutter.get() { "Dart SDK executable:" } else { title }).style(move |s| {
+                    label(move || {
+                        if title == "Dart entrypoint:" && !is_flutter.get() {
+                            if is_dart_entry.get() { "Dart file:" } else { "Dart SDK executable:" }
+                        } else if title == "Additional run args:" && is_dart_entry.get() { "Program arguments:" } else { title }
+                    })
+                    .style(move |s| {
                         s.width(if title == "Name:" { 64.0 } else { 154.0 })
                             .flex_shrink(0.0_f32)
                     }),
@@ -415,10 +717,15 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 ))
                 .style(|s| s.items_center().width_full()),
                 label(move || {
-                    if !is_flutter.get() && title == "Dart entrypoint:" { "Dart SDK executable or its full path." }
-                    else if !is_flutter.get() && title == "Additional run args:" { "Arguments for Dart, for example: run bin/main.dart." }
-                    else { help }
-                }).style(move |s| {
+                    if !is_flutter.get() && title == "Dart entrypoint:" {
+                        if is_dart_entry.get() { "The Dart file to run. The configured Dart SDK remains the executable." } else { "Dart SDK executable or its full path." }
+                    } else if !is_flutter.get() && title == "Additional run args:" {
+                        if is_dart_entry.get() { "Arguments passed to the Dart application." } else { "Arguments for Dart, for example: run bin/main.dart." }
+                    } else {
+                        help
+                    }
+                })
+                .style(move |s| {
                     s.margin_left(154.0)
                         .margin_top(6.0)
                         .font_size(12.0)
@@ -431,18 +738,129 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     .margin_bottom(if title == "Name:" { 0.0 } else { 15.0 })
                     .width_full()
             })
-        };
+    };
     let entry = d.fields[1];
     let before = d.fields[6];
     let before_args = d.fields[7];
-    let editing_task = cx.create_rw_signal(false);
-    let selected_task = d.selected;
-    cx.create_effect(move |_| {
-        let _ = selected_task.get();
-        if visible.get() {
-            editing_task.set(!before.get_untracked().is_empty());
+    let task_count = cx.create_memo({
+        let d = d.clone();
+        move |_| {
+            d.current_tracked().with(|drafts| {
+                drafts
+                    .get(d.selected.get())
+                    .map(|draft| draft.tasks.len())
+                    .unwrap_or(0)
+            })
         }
     });
+    let editing_task = cx.create_memo(move |_| task_count.get() > 0);
+    let selected_task = d.task_selected;
+    let tasks = dyn_stack(
+        {
+            let d = d.clone();
+            move || {
+                d.current_tracked()
+                    .with(|drafts| {
+                        drafts
+                            .get(d.selected.get())
+                            .map(|draft| draft.tasks.clone())
+                            .unwrap_or_default()
+                    })
+                    .into_iter()
+                    .enumerate()
+                    .collect::<Vec<_>>()
+            }
+        },
+        |(index, _)| *index,
+        {
+            let d = d.clone();
+            let keyboard = keyboard.clone();
+            move |(index, _task): (usize, TaskDraft)| {
+                let select = d.clone();
+                let toggle = d.clone();
+                let enabled_state = d.clone();
+                let program_state = d.clone();
+                keyboard.control(
+                    stack((
+                        keyboard.control(
+                            label(move || {
+                                if enabled_state.current_tracked().with(|drafts| {
+                                    drafts
+                                        .get(enabled_state.selected.get())
+                                        .and_then(|draft| draft.tasks.get(index))
+                                        .is_some_and(|task| task.enabled)
+                                }) {
+                                    "☑"
+                                } else {
+                                    "☐"
+                                }
+                            })
+                            .on_click_stop(move |_| {
+                                toggle.capture();
+                                toggle.current_tracked().update(|drafts| {
+                                    if let Some(task) = drafts
+                                        [toggle.selected.get_untracked()]
+                                    .tasks
+                                    .get_mut(index)
+                                    {
+                                        task.enabled = !task.enabled;
+                                    }
+                                });
+                            }),
+                        ),
+                        label(move || {
+                            if selected_task.get() == index {
+                                format!(
+                                    "{}. {} {}",
+                                    index + 1,
+                                    before.get(),
+                                    before_args.get()
+                                )
+                            } else {
+                                format!(
+                                    "{}. {}",
+                                    index + 1,
+                                    program_state.current_tracked().with(|drafts| {
+                                        drafts
+                                            .get(program_state.selected.get())
+                                            .and_then(|draft| draft.tasks.get(index))
+                                            .map(|task| {
+                                                format!(
+                                                    "{} {}",
+                                                    task.program, task.args
+                                                )
+                                            })
+                                            .unwrap_or_default()
+                                    })
+                                )
+                            }
+                        })
+                        .style(|s| {
+                            s.flex_grow(1.0_f32).min_width(0.0).text_ellipsis()
+                        }),
+                    ))
+                    .on_click_stop(move |_| select.choose_task(index))
+                    .style(move |s| {
+                        s.height(24.0)
+                            .width_full()
+                            .items_center()
+                            .gap(6.0)
+                            .padding_horiz(8.0)
+                            .apply_if(selected_task.get() == index, |s| {
+                                s.background(config.get().color(
+                                    SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND,
+                                ))
+                            })
+                    }),
+                )
+            }
+        },
+    )
+    .style(|s| s.flex_col().width_full());
+    let add_task = d.clone();
+    let remove_task = d.clone();
+    let up_task = d.clone();
+    let down_task = d.clone();
     let apply = d.clone();
     let ok = d.clone();
     let run = d.clone();
@@ -452,56 +870,182 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let focus = d.focus;
     let project = d.project;
     let error = d.error;
+    let checkbox_keyboard = keyboard.clone();
     let checkbox = move |value: RwSignal<bool>, text: &'static str| {
-        stack((
-            label(move || if value.get() { "✓" } else { "" }).style(move |s| {
-                s.size(16.0, 16.0)
+        checkbox_keyboard.control(
+            stack((
+                label(move || if value.get() { "✓" } else { "" }).style(move |s| {
+                    s.size(16.0, 16.0)
+                        .items_center()
+                        .justify_center()
+                        .border(1.0)
+                        .border_radius(3.0)
+                        .border_color(
+                            config.get().color(SparrowColor::SPARROW_BORDER),
+                        )
+                        .apply_if(value.get(), |s| {
+                            s.background(config.get().color(
+                                SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND,
+                            ))
+                        })
+                }),
+                label(move || text),
+            ))
+            .on_click_stop(move |_| value.update(|v| *v = !*v))
+            .style(|s| {
+                s.items_center()
+                    .gap(8.0)
+                    .padding_vert(4.0)
+                    .flex_shrink(0.0_f32)
+            }),
+        )
+    };
+    let button_keyboard = keyboard.clone();
+    let button_draft = d.clone();
+    let button = move |text: &'static str| {
+        let draft = button_draft.clone();
+        button_keyboard.control_if(
+            label(move || text).style(move |s| {
+                s.min_width(72.0)
+                    .height(24.0)
+                    .padding_horiz(14.0)
                     .items_center()
                     .justify_center()
                     .border(1.0)
-                    .border_radius(3.0)
+                    .border_radius(4.0)
                     .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-                    .apply_if(value.get(), |s| {
-                        s.background(
-                            config.get().color(
-                                SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND,
-                            ),
+                    .hover(|s| {
+                        s.cursor(CursorStyle::Pointer).background(
+                            config
+                                .get()
+                                .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
                         )
                     })
             }),
-            label(move || text),
-        ))
-        .on_click_stop(move |_| value.update(|v| *v = !*v))
-        .style(|s| {
-            s.items_center()
-                .gap(8.0)
-                .padding_vert(4.0)
-                .flex_shrink(0.0_f32)
-        })
+            move || match text {
+                "Apply" => draft.dirty(),
+                "▷ Run" | "▾" => {
+                    has_selected.get_untracked() && !templates_mode.get_untracked()
+                }
+                _ => true,
+            },
+        )
     };
-    let button = move |text: &'static str| {
-        label(move || text).style(move |s| {
-            s.min_width(72.0)
-                .height(24.0)
-                .padding_horiz(14.0)
-                .items_center()
-                .justify_center()
-                .border(1.0)
-                .border_radius(4.0)
-                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer).background(
-                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
+    let launch_options = keyboard.menu_if(
+        label(|| "▾")
+            .style(move |s| {
+                s.width(24.0)
+                    .height(24.0)
+                    .items_center()
+                    .justify_center()
+                    .border(1.0)
+                    .border_radius(4.0)
+                    .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+            })
+            .disabled(move || !has_selected.get() || templates_mode.get()),
+        move || has_selected.get_untracked() && !templates_mode.get_untracked(),
+        move || {
+            let attach = attach.clone();
+            let debug = attach.clone();
+            vec![
+                ModalChoice::new("Debug", move || {
+                    debug.launch(RunDebugMode::Debug, false)
+                }),
+                ModalChoice::new("Attach to Flutter App", move || {
+                    attach.launch(RunDebugMode::Run, true)
                 })
-        })
-    };
+                .enabled(is_flutter.get_untracked()),
+            ]
+        },
+    );
+    let browse_root = d.window.workspace.path.clone().unwrap_or_default();
+    let cwd = d.fields[8];
+    let entry_root = browse_root.clone();
+    let entry_browser = keyboard.clone();
+    let browse_entry = keyboard.icon(
+        || SparrowIcons::DIRECTORY,
+        move || {
+            let dart_file =
+                is_flutter.get_untracked() || is_dart_entry.get_untracked();
+            let directory = run_config::launch_directory(
+                &entry_root,
+                Some(&cwd.get_untracked()),
+            );
+            let mut options = FileDialogOptions::new()
+                .title(if dart_file {
+                    "Choose Dart entrypoint"
+                } else {
+                    "Choose Dart SDK executable"
+                })
+                .force_starting_directory(&directory);
+            if dart_file {
+                options = options.allowed_types(vec![FileSpec {
+                    name: "Dart source",
+                    extensions: &["dart"],
+                }]);
+            }
+            entry_browser.open_file(options, move |file| {
+                if !visible.get_untracked() {
+                    return;
+                }
+                if let Some(path) = file.and_then(|file| file.path.first().cloned())
+                {
+                    let path = if dart_file {
+                        path.strip_prefix(&directory).unwrap_or(&path)
+                    } else {
+                        &path
+                    };
+                    entry.set(path.to_string_lossy().into_owned());
+                }
+                if let Some(id) = entry_focus.get_untracked() {
+                    id.request_focus();
+                }
+            });
+        },
+        || false,
+        || false,
+        || "Browse Dart entrypoint",
+        config,
+    );
+    let directory_browser = keyboard.clone();
+    let browse_cwd = keyboard.icon(
+        || SparrowIcons::DIRECTORY,
+        move || {
+            directory_browser.open_file(
+                FileDialogOptions::new()
+                    .title("Choose working directory")
+                    .select_directories()
+                    .force_starting_directory(run_config::launch_directory(
+                        &browse_root,
+                        Some(&cwd.get_untracked()),
+                    )),
+                move |file| {
+                    if !visible.get_untracked() {
+                        return;
+                    }
+                    if let Some(path) =
+                        file.and_then(|file| file.path.first().cloned())
+                    {
+                        cwd.set(path.to_string_lossy().into_owned());
+                    }
+                    if let Some(id) = cwd_focus.get_untracked() {
+                        id.request_focus();
+                    }
+                },
+            );
+        },
+        || false,
+        || false,
+        || "Browse working directory",
+        config,
+    );
     let dialog = container(container(stack((
         stack((empty().style(|s|s.width(26.0)),label(||"Run/Debug Configurations").style(|s|s.flex_grow(1.0_f32).items_center().justify_center().font_bold()),clickable_icon(||SparrowIcons::CLOSE,move ||visible.set(false),||false,||false,||"Close",config)))
             .style(move |s|s.height(36.0).width_full().items_center().flex_shrink(0.0_f32).background(floem::peniko::Color::from_rgb8(40,40,40))),
-        stack((sidebar,scroll(stack((
-            stack((form_row("Name:",d.fields[0],"").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),checkbox(project,"Store as project file"))).style(|s|s.items_center().gap(16.0).margin_bottom(16.0)),
-            stack((form_row("Dart entrypoint:",entry,"The entry-point for the application (e.g. lib/main.dart).").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),clickable_icon(||SparrowIcons::DIRECTORY,move ||open_file(FileDialogOptions::new().title(if is_flutter.get_untracked() { "Choose Dart entrypoint" } else { "Choose Dart SDK executable" }),move |file|{if let Some(file)=file{if let Some(path)=file.path.first(){entry.set(path.display().to_string());}}}),||false,||false,||"Browse",config))).style(|s|s.items_start()),
+        stack((sidebar,label(||"Add a Dart or Flutter configuration to get started.").style(move |s|s.flex_grow(1.0_f32).items_center().justify_center().apply_if(has_selected.get(),|s|s.hide())),scroll(stack((
+            stack((form_row("Name:",d.fields[0],"").style(move |s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).apply_if(templates_mode.get(),|s|s.hide())),label(||"Defaults for new configurations").style(move |s|s.flex_grow(1.0_f32).font_bold().apply_if(!templates_mode.get(),|s|s.hide())),checkbox(project,"Store as project file"))).style(|s|s.items_center().gap(16.0).margin_bottom(16.0)),
+            stack((form_row("Dart entrypoint:",entry,"The entry-point for the application (e.g. lib/main.dart).").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),browse_entry)).style(|s|s.items_start()),
+            stack((form_row("Working directory:", d.fields[8], "Leave empty to use the project directory. ${workspace} is supported.").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)), browse_cwd)).style(|s|s.items_start()),
             form_row("Additional run args:",d.fields[2],"Additional arguments to 'flutter run'."),
             form_row("Additional attach args:",d.fields[3],"Additional arguments to 'flutter attach'.").style(move |s|s.apply_if(!is_flutter.get(),|s|s.hide())),
             form_row("Build flavor:",d.fields[4],"Optional Gradle product flavor or Xcode custom scheme.").style(move |s|s.apply_if(!is_flutter.get(),|s|s.hide())),
@@ -509,31 +1053,42 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             label(||"⌄  Before launch").style(|s|s.margin_top(6.0).margin_bottom(10.0)),
             stack((
                 stack((
-                    clickable_icon(||SparrowIcons::ADD,move ||editing_task.set(true),||false,||false,||"Add before-launch task",config),
-                    clickable_icon(||SparrowIcons::REMOVE,move ||{before.set(String::new());before_args.set(String::new());editing_task.set(false);},||false,move ||!editing_task.get(),||"Remove before-launch task",config),
+                    keyboard.icon(||SparrowIcons::ADD,move ||{add_task.edit_task(0);floem::action::exec_after(std::time::Duration::from_millis(30),move |_|{if visible.get_untracked(){if let Some(id)=task_program_focus.get_untracked(){id.request_focus();}}});},||false,||false,||"Add before-launch task",config),
+                    keyboard.icon(||SparrowIcons::REMOVE,move ||remove_task.edit_task(1),||false,move ||!editing_task.get(),||"Remove selected task",config),
+                    keyboard.icon(||SparrowIcons::FILE_PICKER_UP,move ||up_task.edit_task(-1),||false,move ||selected_task.get()==0 || !editing_task.get(),||"Move task up",config),
+                    keyboard.icon(||SparrowIcons::FOLD_DOWN,move ||down_task.edit_task(2),||false,move ||selected_task.get()+1>=task_count.get(),||"Move task down",config),
                 )).style(move |s|s.height(26.0).width_full().items_center().border_bottom(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
                 label(||"There are no tasks to run before launch").style(move |s|s.width_full().flex_grow(1.0_f32).items_center().justify_center().color(config.get().color(SparrowColor::EDITOR_DIM)).apply_if(editing_task.get(),|s|s.hide())),
+                scroll(tasks).style(move |s|s.height(72.0).width_full().apply_if(!editing_task.get(),|s|s.hide())),
                 stack((form_row("Program:",before,""),form_row("Arguments:",before_args,""))).style(move |s|s.flex_col().padding(8.0).width_full().apply_if(!editing_task.get(),|s|s.hide())),
-            )).style(move |s|s.flex_col().height(134.0).margin_left(24.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+            )).style(move |s|s.flex_col().min_height(134.0).margin_left(24.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
             stack((checkbox(activate,"Activate tool window"),checkbox(focus,"Focus tool window"))).style(|s|s.gap(12.0).margin_top(4.0)),
             label(move ||error.get()).style(move |s|s.color(config.get().color(SparrowColor::SPARROW_ERROR)).selectable(true)),
-        )).style(|s|s.flex_col().padding(16.0).width_full())).style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full())))
+        )).style(|s|s.flex_col().padding(16.0).width_full())).style(move |s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).height_full().apply_if(!has_selected.get(),|s|s.hide()))))
             .style(|s|s.width_full().flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0)),
-        stack((empty().style(|s|s.flex_grow(1.0_f32)),stack((button("▷ Run").on_click_stop(move |_|run.launch(false)),button("▾").style(|s|s.min_width(24.0).padding_horiz(4.0)).disabled(move ||!is_flutter.get()).popout_menu(move ||{let attach=attach.clone();floem::menu::Menu::new("").entry(floem::menu::MenuItem::new("Attach to Flutter App").action(move ||attach.launch(true)))}))).style(|s|s.gap(0.0)),button("OK").on_click_stop(move |_|{if ok.apply(){visible.set(false);}}).style(move |s|s.background(config.get().color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))),button("Cancel").on_click_stop(move |_|visible.set(false)),button("Apply").on_click_stop(move |_|{apply.apply();}).disabled(move ||!dirty.dirty())))
+        stack((empty().style(|s|s.flex_grow(1.0_f32)),stack((button("▷ Run").disabled(move || !has_selected.get() || templates_mode.get()).on_click_stop(move |_|run.launch(RunDebugMode::Run, false)),launch_options)).style(|s|s.gap(0.0)),button("OK").on_click_stop(move |_|{if ok.apply(){visible.set(false);}}).style(move |s|s.background(config.get().color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))),button("Cancel").on_click_stop(move |_|visible.set(false)),button("Apply").on_click_stop(move |_|{apply.apply();}).disabled(move ||!dirty.dirty())))
             .style(move |s|s.height(46.0).width_full().padding_horiz(16.0).gap(12.0).items_center().flex_shrink(0.0_f32).border_top(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
-    )).style(|s|s.flex_col().size_full())).style(move |s|s.font_family(config.get().ui.font_family.clone()).font_size(13.0).width(916.0).height(684.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().color(config.get().color(SparrowColor::EDITOR_FOREGROUND)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_radius(8.0)))
+    )).style(|s|s.flex_col().size_full())).style(move |s|s.font_family(config.get().ui.font_family.clone()).font_size(13.0).width(916.0).height(732.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().color(config.get().color(SparrowColor::EDITOR_FOREGROUND)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_radius(8.0)))
     .on_event_stop(EventListener::PointerDown,|_|{})
     .on_event(EventListener::KeyDown,move |event|{if let Event::KeyDown(key)=event{if key.key.logical_key==Key::Named(NamedKey::Escape){visible.set(false);return floem::event::EventPropagation::Stop;}}floem::event::EventPropagation::Continue})
-    .style(move |s|s.absolute().size_full().padding_bottom(116.0).items_center().justify_center().z_index(200).background(floem::peniko::Color::from_rgba8(0,0,0,70)).apply_if(!visible.get(),|s|s.hide()));
+    .style(move |s|s.absolute().size_full().padding_bottom(100.0).items_center().justify_center().z_index(200).background(floem::peniko::Color::from_rgba8(0,0,0,70)).apply_if(!visible.get(),|s|s.hide()));
+    let dialog = keyboard.bind_root(dialog, visible, config);
     let id = dialog.id();
     cx.create_effect(move |_| {
         if visible.get() {
             // Focus only after the hidden dialog has completed its style/layout pass.
-            floem::action::exec_after(std::time::Duration::from_millis(30), move |_| {
-                if visible.get_untracked() {
-                    name_input.get_untracked().unwrap_or(id).request_focus();
-                }
-            });
+            floem::action::exec_after(
+                std::time::Duration::from_millis(30),
+                move |_| {
+                    if visible.get_untracked() {
+                        if has_selected.get_untracked() {
+                            name_input.get_untracked().unwrap_or(id).request_focus();
+                        } else {
+                            id.request_focus();
+                        }
+                    }
+                },
+            );
         }
     });
     dialog

@@ -1489,7 +1489,7 @@ pub fn editor_container_view(
     .debug_name("Editor Container")
 }
 
-fn toggle_gutter_breakpoint(
+pub(crate) fn toggle_gutter_breakpoint(
     line: usize, doc: DocSignal,
     daps: RwSignal<im::HashMap<DapId, DapData>>,
     breakpoints: RwSignal<BTreeMap<PathBuf, BTreeMap<usize, SparrowBreakpoint>>>,

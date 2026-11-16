@@ -3,6 +3,7 @@
 pub mod buffer;
 pub mod cli;
 pub mod dispatch;
+pub mod file_ops;
 pub mod plugin;
 pub mod terminal;
 pub mod watcher;

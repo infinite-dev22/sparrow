@@ -44,6 +44,18 @@ pub struct RunDebugProgram {
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "kebab-case")]
+pub struct BeforeLaunchTask {
+    pub program: String,
+    pub args: Option<Vec<String>>,
+    #[serde(default = "enabled_task")]
+    pub enabled: bool,
+}
+fn enabled_task() -> bool {
+    true
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "kebab-case")]
 pub struct RunDebugConfig {
     #[serde(rename = "type")]
     pub ty: Option<String>,
@@ -53,6 +65,10 @@ pub struct RunDebugConfig {
     pub cwd: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub prelaunch: Option<RunDebugProgram>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before_launch: Vec<BeforeLaunchTask>,
+    #[serde(default)]
+    pub store_in_project: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub debug_adapter: Option<RunDebugProgram>,
     #[serde(default)]
@@ -70,6 +86,28 @@ pub struct RunDebugConfig {
 /// IDE run/debug targets are Dart or Flutter SDK invocations. Auxiliary
 /// terminal/pre-launch commands are separate from language integrations.
 impl RunDebugConfig {
+    /// Promote the first enabled task. Legacy prelaunch runs before the new list.
+    pub fn begin_before_launch(&mut self) -> bool {
+        if self.prelaunch.is_some() {
+            return true;
+        }
+        while !self.before_launch.is_empty() {
+            let task = self.before_launch.remove(0);
+            if task.enabled {
+                self.prelaunch = Some(RunDebugProgram {
+                    program: task.program,
+                    args: task.args,
+                });
+                return true;
+            }
+        }
+        false
+    }
+    pub fn advance_before_launch(&mut self) -> bool {
+        self.prelaunch = None;
+        self.begin_before_launch()
+    }
+
     pub fn is_dart_flutter(&self) -> bool {
         let sdk = |program: &str| {
             std::path::Path::new(program)
@@ -1027,5 +1065,33 @@ mod dart_scope_tests {
         });
         assert!(test.is_dart_flutter());
         assert_eq!(test.dart_debug_adapter(), test.debug_adapter);
+    }
+}
+
+#[cfg(test)]
+mod ordered_task_tests {
+    use super::*;
+    #[test]
+    fn legacy_task_then_enabled_tasks_in_order_without_changing_saved_source() {
+        let original: RunDebugConfig = serde_json::from_value(serde_json::json!({"program":"flutter","name":"test","prelaunch":{"program":"legacy","args":[]},"before-launch":[{"program":"first","args":["one"]},{"program":"disabled","enabled":false},{"program":"last"}]})).unwrap();
+        let mut launch = original.clone();
+        assert!(launch.begin_before_launch());
+        assert_eq!(launch.prelaunch.as_ref().unwrap().program, "legacy");
+        assert!(launch.advance_before_launch());
+        assert_eq!(launch.prelaunch.as_ref().unwrap().program, "first");
+        assert!(launch.advance_before_launch());
+        assert_eq!(launch.prelaunch.as_ref().unwrap().program, "last");
+        assert!(!launch.advance_before_launch());
+        assert!(launch.prelaunch.is_none());
+        assert_eq!(original.before_launch.len(), 3);
+        assert_eq!(original.prelaunch.unwrap().program, "legacy");
+    }
+    #[test]
+    fn all_disabled_tasks_do_not_delay_launch_and_roundtrip_disabled_state() {
+        let mut launch: RunDebugConfig = serde_json::from_value(serde_json::json!({"program":"dart","name":"test","before-launch":[{"program":"skip","enabled":false}]})).unwrap();
+        let restored: RunDebugConfig =
+            serde_json::from_value(serde_json::to_value(&launch).unwrap()).unwrap();
+        assert!(!restored.before_launch[0].enabled);
+        assert!(!launch.begin_before_launch());
     }
 }

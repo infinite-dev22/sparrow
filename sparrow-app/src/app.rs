@@ -636,6 +636,7 @@ impl AppData {
                             floem::keyboard::NamedKey::Escape,
                         )
                     {
+                        if crate::modal_focus::consume_popup_escape() || crate::modal_focus::external_dialog_active() { return EventPropagation::Stop; }
                         let active = key_up_window_data.active.get_untracked();
                         if let Some((_, tab)) = key_up_window_data
                             .window_tabs
@@ -744,7 +745,8 @@ fn editor_tab_header(
     let focus = window_tab_data.common.focus;
     let config = window_tab_data.common.config;
     let internal_command = window_tab_data.common.internal_command;
-    let _workbench_command = window_tab_data.common.workbench_command;
+    let tab_commands = window_tab_data.common.sparrow_command;
+    let tab_focus = window_tab_data.main_split.active_editor_tab;
     let editor_tab_id =
         editor_tab.with_untracked(|editor_tab| editor_tab.editor_tab_id);
 
@@ -966,10 +968,41 @@ fn editor_tab_header(
                     let editor_tab_id =
                         editor_tab.with_untracked(|t| t.editor_tab_id);
 
+                    let index = i.get_untracked();
+                    tab_focus.set(Some(editor_tab_id));
+                    focus.set(Focus::Workbench);
+                    editor_tab.update(|tab| tab.active = index);
+                    let count = editor_tab.with_untracked(|tab| tab.children.len());
+                    let path = match &child_for_mouse_close_2 {
+                        EditorTabChild::Editor(id) => {
+                            editors.editor_untracked(*id).and_then(|editor| {
+                                editor.doc().content.with_untracked(|content| {
+                                    content.path().cloned()
+                                })
+                            })
+                        }
+                        _ => None,
+                    };
+                    let root = path
+                        .as_ref()
+                        .and_then(|_| {
+                            editors.editor_untracked(
+                                match &child_for_mouse_close_2 {
+                                    EditorTabChild::Editor(id) => *id,
+                                    _ => unreachable!(),
+                                },
+                            )
+                        })
+                        .and_then(|editor| editor.common.workspace.path.clone());
                     tab_secondary_click(
                         internal_command,
+                        tab_commands,
                         editor_tab_id,
                         child_for_mouse_close_2.clone(),
+                        index,
+                        count,
+                        path,
+                        root,
                     );
                 })
                 .on_event_stop(EventListener::DragStart, move |_| {
@@ -4014,7 +4047,11 @@ fn window(window_data: WindowData) -> impl View {
             window_tab.common.keypress.track();
             let workbench_command = window_tab.common.workbench_command;
             let sparrow_command = window_tab.common.sparrow_command;
-            window_menu(sparrow_command, workbench_command)
+            window_menu(
+                sparrow_command,
+                workbench_command,
+                crate::menus::MenuContext::from_window(window_tab),
+            )
         } else {
             Menu::new("Sparrow")
         }
@@ -4531,6 +4568,7 @@ fn listen_local_socket(tx: SyncSender<CoreNotification>) -> Result<()> {
 pub fn window_menu(
     sparrow_command: Listener<SparrowCommand>,
     workbench_command: Listener<SparrowWorkbenchCommand>,
+    context: crate::menus::MenuContext,
 ) -> Menu {
     use crate::command::SparrowWorkbenchCommand::*;
 
@@ -4630,7 +4668,12 @@ pub fn window_menu(
                     data: None,
                 });
             }))
-            .entry(MenuItem::new("Join Lines").enabled(false))
+            .entry(MenuItem::new("Join Lines").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::JoinLines),
+                    data: None,
+                });
+            }))
             .separator()
             .entry(MenuItem::new("Indent Selection").action(move || {
                 sparrow_command.send(SparrowCommand {
@@ -4734,7 +4777,12 @@ pub fn window_menu(
                     data: None,
                 });
             }))
-            .entry(MenuItem::new("Type Declaration").enabled(false))
+            .entry(MenuItem::new("Type Declaration").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::GotoTypeDefinition),
+                    data: None,
+                });
+            }))
             .entry(MenuItem::new("Super Method").enabled(false))
             .entry(MenuItem::new("Test").enabled(false))
             .entry(MenuItem::new("File Structure").action(move || {
@@ -4781,7 +4829,11 @@ pub fn window_menu(
                     data: None,
                 });
             }))
-            .entry(MenuItem::new("Optimize Imports").enabled(false))
+            .entry(
+                MenuItem::new("Optimize Imports")
+                    .enabled(context.dart_editor)
+                    .action(move || workbench_command.send(OptimizeImports)),
+            )
             .separator()
             .entry(MenuItem::new("Move Statement Down").action(move || {
                 sparrow_command.send(SparrowCommand {
@@ -4804,11 +4856,14 @@ pub fn window_menu(
         Menu::new("Refactor")
             .entry(MenuItem::new("Refactor This...").action(move || {
                 sparrow_command.send(SparrowCommand {
-                    kind: CommandKind::Focus(FocusCommand::Rename),
+                    kind: CommandKind::Focus(FocusCommand::ShowCodeActions),
                     data: None,
                 });
             }))
-            .entry(MenuItem::new("Rename File...").enabled(false))
+            .entry(
+                MenuItem::new("Rename File...")
+                    .action(move || workbench_command.send(RenameActiveFile)),
+            )
             .separator()
             .entry(MenuItem::new("Extract/Introduce...").enabled(false))
             .entry(MenuItem::new("Inline...").enabled(false))
@@ -4829,50 +4884,104 @@ pub fn window_menu(
     // ── RUN ─────────────────────────────────────────────────────────
     menu = menu.entry(
         Menu::new("Run")
-            .entry(MenuItem::new("Run 'main.dart'").action(move || {
-                workbench_command.send(FlutterRun);
-            }))
-            .entry(MenuItem::new("Debug 'main.dart'").action(move || {
-                workbench_command.send(PaletteRunAndDebug);
-            }))
+            .entry(
+                MenuItem::new(context.run_label)
+                    .enabled(context.can_run)
+                    .action(move || {
+                        workbench_command.send(RunSelectedConfiguration);
+                    }),
+            )
+            .entry(
+                MenuItem::new(context.debug_label)
+                    .enabled(context.can_run)
+                    .action(move || {
+                        workbench_command.send(DebugSelectedConfiguration);
+                    }),
+            )
             .entry(MenuItem::new("Edit Configurations...").action(move || {
-                workbench_command.send(PaletteRunAndDebug);
+                workbench_command.send(EditRunConfigurations);
             }))
             .separator()
-            .entry(MenuItem::new("Stop").action(move || {
-                workbench_command.send(FlutterStop);
-            }))
+            .entry(MenuItem::new("Stop").enabled(context.can_stop).action(
+                move || {
+                    workbench_command.send(RunAndDebugStop);
+                },
+            ))
             .separator()
-            .entry(MenuItem::new("Flutter Hot Reload").action(move || {
-                workbench_command.send(FlutterHotReload);
-            }))
-            .entry(MenuItem::new("Flutter Hot Restart").action(move || {
-                workbench_command.send(FlutterHotRestart);
-            }))
+            .entry(
+                MenuItem::new("Flutter Hot Reload")
+                    .enabled(context.can_reload)
+                    .action(move || {
+                        workbench_command.send(FlutterHotReload);
+                    }),
+            )
+            .entry(
+                MenuItem::new("Flutter Hot Restart")
+                    .enabled(context.can_reload)
+                    .action(move || {
+                        workbench_command.send(FlutterHotRestart);
+                    }),
+            )
             .separator()
-            .entry(MenuItem::new("Toggle Breakpoint").enabled(false))
-            .entry(MenuItem::new("View Breakpoints...").enabled(false)),
+            .entry(
+                MenuItem::new("Toggle Breakpoint")
+                    .enabled(context.dart_editor)
+                    .action(move || workbench_command.send(ToggleBreakpoint)),
+            )
+            .entry(MenuItem::new("View Breakpoints...").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Workbench(ShowPanel),
+                    data: Some(
+                        serde_json::to_value(crate::panel::kind::PanelKind::Debug)
+                            .expect("panel kind serializes"),
+                    ),
+                });
+            })),
     );
 
     // ── TOOLS ───────────────────────────────────────────────────────
     menu = menu.entry(
         Menu::new("Tools")
-            .entry(MenuItem::new("Device Manager").enabled(false))
+            .entry(MenuItem::new("Device Manager").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Workbench(ShowPanel),
+                    data: Some(
+                        serde_json::to_value(
+                            crate::panel::kind::PanelKind::DeviceManager,
+                        )
+                        .expect("panel kind serializes"),
+                    ),
+                });
+            }))
             .entry(MenuItem::new("SDK Manager").enabled(false))
             .entry(MenuItem::new("Resource Manager").enabled(false))
             .separator()
             .entry(MenuItem::new("Layout Inspector").enabled(false))
-            .entry(MenuItem::new("Generate Javadoc...").enabled(false))
             .entry(MenuItem::new("Create Command Line Launcher...").enabled(false))
             .separator()
             .entry(
                 Menu::new("Flutter")
                     .entry(MenuItem::new("Open Widget Tree").action(move || {
-                        // Note: Assuming this opens the panel
-                        workbench_command.send(TogglePanelVisual) // Placeholder, requires data payload
+                        sparrow_command.send(SparrowCommand {
+                            kind: CommandKind::Workbench(ShowPanel),
+                            data: Some(
+                                serde_json::to_value(
+                                    crate::panel::kind::PanelKind::WidgetTree,
+                                )
+                                .expect("panel kind serializes"),
+                            ),
+                        });
                     }))
                     .entry(MenuItem::new("Open Outline").action(move || {
-                        workbench_command.send(TogglePanelVisual) // Placeholder
+                        sparrow_command.send(SparrowCommand {
+                            kind: CommandKind::Workbench(ShowPanel),
+                            data: Some(
+                                serde_json::to_value(
+                                    crate::panel::kind::PanelKind::DartOutline,
+                                )
+                                .expect("panel kind serializes"),
+                            ),
+                        });
                     })),
             ),
     );
@@ -4881,7 +4990,10 @@ pub fn window_menu(
     menu = menu.entry(
         Menu::new("Git")
             .entry(MenuItem::new("Commit...").action(move || {
-                workbench_command.send(SourceControlCommit);
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Workbench(ShowPanel),
+                    data: serde_json::to_value(crate::panel::kind::PanelKind::SourceControl).ok(),
+                });
             }))
             .entry(MenuItem::new("Push...").enabled(false))
             .entry(MenuItem::new("Update Project...").enabled(false))
@@ -4895,7 +5007,12 @@ pub fn window_menu(
             }))
             .entry(MenuItem::new("Reset HEAD...").enabled(false))
             .separator()
-            .entry(MenuItem::new("Show Git Log").enabled(false))
+            .entry(MenuItem::new("Show Git Log").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Workbench(ShowPanel),
+                    data: serde_json::to_value(crate::panel::kind::PanelKind::GitHistory).ok(),
+                });
+            }))
             .entry(MenuItem::new("Manage Remotes...").enabled(false))
             .entry(MenuItem::new("Clone...").enabled(false)),
     );
@@ -4961,10 +5078,16 @@ pub fn window_menu(
 
 fn tab_secondary_click(
     internal_command: Listener<InternalCommand>,
+    commands: Listener<SparrowCommand>,
     editor_tab_id: EditorTabId,
     child: EditorTabChild,
+    index: usize,
+    count: usize,
+    path: Option<PathBuf>,
+    workspace: Option<PathBuf>,
 ) {
     let mut menu = Menu::new("");
+    let child_unmodified = child.clone();
     let child_other = child.clone();
     let child_right = child.clone();
     let child_left = child.clone();
@@ -4975,29 +5098,108 @@ fn tab_secondary_click(
                 child: child.clone(),
             });
         }))
-        .entry(MenuItem::new("Close Other Tabs").action(move || {
-            internal_command.send(InternalCommand::EditorTabCloseByKind {
-                editor_tab_id,
-                child: child_other.clone(),
-                kind: TabCloseKind::CloseOther,
-            });
-        }))
+        .entry(MenuItem::new("Close Other Tabs").enabled(count > 1).action(
+            move || {
+                internal_command.send(InternalCommand::EditorTabCloseByKind {
+                    editor_tab_id,
+                    child: child_other.clone(),
+                    kind: TabCloseKind::CloseOther,
+                });
+            },
+        ))
         .entry(MenuItem::new("Close All Tabs").action(move || {
             internal_command.send(InternalCommand::EditorTabClose { editor_tab_id });
         }))
-        .entry(MenuItem::new("Close Tabs to the Right").action(move || {
-            internal_command.send(InternalCommand::EditorTabCloseByKind {
-                editor_tab_id,
-                child: child_right.clone(),
-                kind: TabCloseKind::CloseToRight,
-            });
-        }))
-        .entry(MenuItem::new("Close Tabs to the Left").action(move || {
-            internal_command.send(InternalCommand::EditorTabCloseByKind {
-                editor_tab_id,
-                child: child_left.clone(),
-                kind: TabCloseKind::CloseToLeft,
-            });
-        }));
+        .entry(
+            MenuItem::new("Close Tabs to the Right")
+                .enabled(index + 1 < count)
+                .action(move || {
+                    internal_command.send(InternalCommand::EditorTabCloseByKind {
+                        editor_tab_id,
+                        child: child_right.clone(),
+                        kind: TabCloseKind::CloseToRight,
+                    });
+                }),
+        )
+        .entry(
+            MenuItem::new("Close Tabs to the Left")
+                .enabled(index > 0)
+                .action(move || {
+                    internal_command.send(InternalCommand::EditorTabCloseByKind {
+                        editor_tab_id,
+                        child: child_left.clone(),
+                        kind: TabCloseKind::CloseToLeft,
+                    });
+                }),
+        );
+    menu = menu.entry(MenuItem::new("Close Unmodified Tabs").action(move || {
+        internal_command.send(InternalCommand::EditorTabCloseByKind {
+            editor_tab_id, child: child_unmodified.clone(), kind: TabCloseKind::CloseUnmodified,
+        });
+    })).separator();
+    if let Some(path) = path {
+        let copy_path = path.clone();
+        menu = menu
+            .entry(MenuItem::new("Copy Path/Reference...").action(move || {
+                let path = copy_path.clone();
+                let root = workspace.clone();
+                floem::action::exec_after(std::time::Duration::ZERO, move |_| {
+                    show_context_menu(crate::menus::copy_path_menu(path, root), None)
+                });
+            }))
+            .separator();
+        let is_dart = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dart"));
+        for (label, command) in [
+            ("Run", SparrowWorkbenchCommand::RunCurrentFile),
+            ("Debug", SparrowWorkbenchCommand::DebugCurrentFile),
+        ] {
+            if is_dart {
+                let target = path.clone();
+                let name = target
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                menu = menu.entry(
+                    MenuItem::new(format!("{label} '{name}'")).action(move || {
+                        commands.send(SparrowCommand {
+                            kind: CommandKind::Workbench(command.clone()),
+                            data: serde_json::to_value(&target).ok(),
+                        })
+                    }),
+                );
+            }
+        }
+        menu = menu
+            .entry(MenuItem::new("Rename File...").action(move || {
+                commands.send(SparrowCommand {
+                    kind: CommandKind::Workbench(
+                        SparrowWorkbenchCommand::RenameActiveFile,
+                    ),
+                    data: serde_json::to_value(&path).ok(),
+                })
+            }))
+            .separator();
+    }
+    for (label, direction) in [
+        ("Split and Move Right", SplitMoveDirection::Right),
+        ("Split and Move Down", SplitMoveDirection::Down),
+    ] {
+        menu =
+            menu.entry(MenuItem::new(label).enabled(count > 1).action(move || {
+                internal_command.send(InternalCommand::SplitAndMove {
+                    editor_tab_id,
+                    index,
+                    direction,
+                })
+            }));
+    }
+    menu = menu.entry(MenuItem::new("Split Right").action(move || {
+        internal_command.send(InternalCommand::Split { direction: SplitDirection::Vertical, editor_tab_id });
+    })).entry(MenuItem::new("Split Down").action(move || {
+        internal_command.send(InternalCommand::Split { direction: SplitDirection::Horizontal, editor_tab_id });
+    }));
     show_context_menu(menu, None);
 }

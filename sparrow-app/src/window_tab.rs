@@ -36,8 +36,12 @@ use lsp_types::{
 };
 use serde_json::Value;
 use sparrow_core::{
-    command::FocusCommand, cursor::CursorAffinity, directory::Directory, meta,
-    mode::Mode, register::Register,
+    command::{EditCommand, FocusCommand},
+    cursor::CursorAffinity,
+    directory::Directory,
+    meta,
+    mode::Mode,
+    register::Register,
 };
 use sparrow_rpc::{
     RpcError,
@@ -946,6 +950,10 @@ impl WindowTabData {
                                 e,
                             );
                         }
+                        DartNotification::ApplyEdit { id, edit } => {
+                            let applied = edit.as_ref().is_some_and(|edit| main_split_apply.apply_dart_server_edit(edit));
+                            main_split_apply.common.dart_lsp.respond_to_edit(id.clone(), applied);
+                        }
                         DartNotification::Ready => {
                             crate::panel::workflow_tools::record(
                                 notices,
@@ -1104,21 +1112,25 @@ impl WindowTabData {
         window_tab_data
     }
 
-    pub fn reload_config(&self) {
+    pub fn config_for_workspace(&self, workspace: &SparrowWorkspace) -> SparrowConfig {
         let db: Arc<SparrowDb> = use_context().unwrap();
 
         let disabled_volts = db.get_disabled_volts().unwrap_or_default();
         let workspace_disabled_volts = db
-            .get_workspace_disabled_volts(&self.workspace)
+            .get_workspace_disabled_volts(workspace)
             .unwrap_or_default();
         let mut all_disabled_volts = disabled_volts;
         all_disabled_volts.extend(workspace_disabled_volts);
 
-        let config = SparrowConfig::load(
-            &self.workspace,
+        SparrowConfig::load(
+            workspace,
             &all_disabled_volts,
             &self.common.window_common.extra_plugin_paths,
-        );
+        )
+    }
+
+    pub fn reload_config(&self) {
+        let config = self.config_for_workspace(&self.workspace);
         self.common.keypress.update(|keypress| {
             keypress.update_keymaps(&config);
         });
@@ -1137,12 +1149,23 @@ impl WindowTabData {
             | CommandKind::Move(_) => {
                 if self.palette.status.get_untracked() != PaletteStatus::Inactive {
                     self.palette.run_command(&cmd, None, Modifiers::empty());
+                } else if self.common.focus.get_untracked()
+                    == Focus::Panel(PanelKind::FileExplorer)
+                    && matches!(
+                        cmd.kind,
+                        CommandKind::Edit(
+                            EditCommand::ClipboardCopy
+                                | EditCommand::ClipboardCut
+                                | EditCommand::ClipboardPaste
+                        )
+                    )
+                {
+                    self.file_explorer
+                        .run_command(&cmd, None, Modifiers::empty());
                 } else if let Some(editor_data) =
                     self.main_split.active_editor.get_untracked()
                 {
                     editor_data.run_command(&cmd, None, Modifiers::empty());
-                } else {
-                    // TODO: dispatch to current focused view?
                 }
             }
             CommandKind::MotionMode(_) => {}
@@ -1913,7 +1936,7 @@ impl WindowTabData {
             NextError => {
                 self.main_split.next_error();
             }
-            PreviousError => {}
+            PreviousError => self.main_split.previous_error(),
             Quit => {
                 floem::quit_app();
             }
@@ -2019,6 +2042,8 @@ impl WindowTabData {
                             cwd: None,
                             env: None,
                             prelaunch: None,
+                before_launch: Vec::new(),
+                store_in_project: false,
                             flutter_options: Default::default(),
                             debug_adapter: None,
                             debug_command: None,
@@ -2078,6 +2103,68 @@ impl WindowTabData {
                     self.main_split.active_editor.get_untracked()
                 {
                     editor_data.jump_highlight(InlineFindDirection::Left);
+                }
+            }
+            RunCurrentFile | DebugCurrentFile => {
+                let path = data.clone().and_then(|value| serde_json::from_value::<PathBuf>(value).ok())
+                    .or_else(|| self.main_split.active_editor.get_untracked()
+                        .and_then(|editor| editor.doc().content.with_untracked(|content| content.path().cloned())));
+                if let Some(path) = path {
+                    if crate::dart::test_runner::is_test_file(&path)
+                        && crate::dart::test_runner::project_root(&path).is_some_and(|root| crate::dart::is_flutter_project(&root)) {
+                        self.prepare_flutter_tests(vec![(path, String::new())], cmd == DebugCurrentFile, false);
+                        return;
+                    }
+                    match crate::dart::run_config::configuration_for_file(&path, self.workspace.path.as_deref()) {
+                        Ok(config) => self.common.internal_command.send(InternalCommand::RunAndDebug {
+                            mode: if cmd == DebugCurrentFile { RunDebugMode::Debug } else { RunDebugMode::Run }, config,
+                        }),
+                        Err(message) => self.show_alert("Run configuration".into(), message, Vec::new()),
+                    }
+                }
+            }
+            EditRunConfigurations => self.run_config_modal_visible.set(true),
+            OptimizeImports => {
+                if let Some(editor) = self.main_split.active_editor.get_untracked() {
+                    let doc = editor.doc();
+                    let path = doc.content.with_untracked(|content| content.path().cloned());
+                    if let Some(path) = path.filter(|path| crate::dart::is_dart_path(path)) {
+                        if !self.common.dart_lsp.is_available() {
+                            self.show_alert("Optimize Imports".into(), "The Dart analysis server is not ready yet.".into(), Vec::new());
+                            return;
+                        }
+                        let rev = doc.rev();
+                        let commands = self.common.internal_command;
+                        let apply = create_ext_action(self.scope, move |actions: Vec<CodeActionOrCommand>| {
+                            if doc.rev() != rev { return; }
+                            if let Some(action) = actions.into_iter().find(|action| match action {
+                                CodeActionOrCommand::CodeAction(action) => action.disabled.is_none(),
+                                CodeActionOrCommand::Command(_) => true,
+                            }) {
+                                commands.send(InternalCommand::RunCodeAction { plugin_id: PluginId(0), action });
+                            }
+                        });
+                        self.common.dart_lsp.code_actions_with_kind(&path, 0, 0, &[], Some("source.organizeImports"), move |actions| apply(actions));
+                    }
+                }
+            }
+            RenameActiveFile => {
+                let path = data.and_then(|value| serde_json::from_value::<PathBuf>(value).ok())
+                    .or_else(|| self.main_split.active_editor.get_untracked().and_then(|editor| editor.doc().content.with_untracked(|content| content.path().cloned())));
+                if let Some(path) = path {
+                    self.show_panel(PanelKind::FileExplorer);
+                    self.common.focus.set(Focus::Panel(PanelKind::FileExplorer));
+                    self.file_explorer.reveal_in_file_tree(path.clone());
+                    self.file_explorer.rename_path(path);
+                }
+            }
+            ToggleBreakpoint => {
+                if let Some(editor) = self.main_split.active_editor.get_untracked() {
+                    let doc = editor.doc();
+                    let offset = editor.cursor().with_untracked(|cursor| cursor.offset());
+                    let line = doc.buffer.with_untracked(|buffer| buffer.line_of_offset(offset));
+                    crate::editor::view::toggle_gutter_breakpoint(line, editor.doc_signal(),
+                        self.terminal.debug.daps, self.terminal.debug.breakpoints, self.common.clone());
                 }
             }
             RunSelectedConfiguration | DebugSelectedConfiguration => {
@@ -2195,6 +2282,10 @@ impl WindowTabData {
                 let send_new_path = new_path.clone();
                 let file_explorer = self.file_explorer.clone();
                 let editors = self.main_split.editors;
+                let docs = self.main_split.docs;
+                let diagnostics = self.main_split.diagnostics;
+                let dart_lsp = self.common.dart_lsp.clone();
+
 
                 let send = create_ext_action(
                     self.scope,
@@ -2248,6 +2339,28 @@ impl WindowTabData {
                                 });
                             }
 
+                            // Rekey caches as well as editor content. Otherwise reopening the
+                            // old path can return the moved document under its stale key.
+                            docs.update(|docs| {
+                                let paths = docs.keys().filter(|path| path.starts_with(&send_current_path)).cloned().collect::<Vec<_>>();
+                                for old in paths {
+                                    if let Some(doc) = docs.remove(&old) {
+                                        let target = new_path.join(old.strip_prefix(&send_current_path).expect("matching prefix"));
+                                        dart_lsp.send_close(old);
+                                        docs.insert(target, doc);
+                                    }
+                                }
+                            });
+                            diagnostics.update(|diagnostics| {
+                                let paths = diagnostics.keys().filter(|path| path.starts_with(&send_current_path)).cloned().collect::<Vec<_>>();
+                                for old in paths {
+                                    if let Some(data) = diagnostics.remove(&old) {
+                                        diagnostics.insert(new_path.join(old.strip_prefix(&send_current_path).expect("matching prefix")), data);
+                                    }
+                                }
+                            });
+
+                            file_explorer.finish_file_move(&send_current_path);
                             file_explorer.reload();
                             file_explorer.naming.set(Naming::None);
                         }
@@ -2289,6 +2402,8 @@ impl WindowTabData {
                         cwd,
                         env: None,
                         prelaunch: None,
+                before_launch: Vec::new(),
+                store_in_project: false,
                         flutter_options: Default::default(),
                         debug_adapter: None,
                         debug_command: None,
@@ -2381,6 +2496,18 @@ impl WindowTabData {
             } => {
                 self.main_split.split(direction, editor_tab_id);
             }
+            InternalCommand::SplitAndMove {
+                editor_tab_id,
+                index,
+                direction,
+            } => {
+                self.main_split.move_editor_tab_child_to_new_split(
+                    editor_tab_id,
+                    index,
+                    editor_tab_id,
+                    direction,
+                );
+            }
             InternalCommand::SplitMove {
                 direction,
                 editor_tab_id,
@@ -2451,6 +2578,43 @@ impl WindowTabData {
                 self.terminal.split_exchange(term_id);
             }
             InternalCommand::RunAndDebug { mode, config } => {
+                let dirty = self.main_split.docs.with_untracked(|docs| {
+                    docs.values()
+                        .filter(|doc| {
+                            doc.content
+                                .with_untracked(|content| content.path().is_some())
+                                && !doc
+                                    .buffer
+                                    .with_untracked(|buffer| buffer.is_pristine())
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>()
+                });
+                let commands = self.common.internal_command;
+                if dirty.is_empty() {
+                    commands
+                        .send(InternalCommand::RunAndDebugSaved { mode, config });
+                } else {
+                    let remaining = Rc::new(std::cell::Cell::new(dirty.len()));
+                    for doc in dirty {
+                        let remaining = remaining.clone();
+                        let config = config.clone();
+                        doc.save(move || {
+                            remaining.set(remaining.get() - 1);
+                            if remaining.get() == 0 {
+                                commands.send(InternalCommand::RunAndDebugSaved {
+                                    mode,
+                                    config,
+                                });
+                            }
+                        });
+                    }
+                }
+            }
+            InternalCommand::RunAndDebugSaved { mode, mut config } => {
+                // A configuration can launch repeatedly or switch Run/Debug.
+                // Keep each launch distinct from stopped adapter sessions.
+                config.dap_id = Default::default();
                 self.run_and_debug(cx, &mode, &config);
             }
             InternalCommand::StartRename {
@@ -2969,6 +3133,9 @@ impl WindowTabData {
                     self.terminal.focus_terminal_in_panel(id, PanelKind::FlutterRun);
                     self.terminal.key_down(event, &keypress)
                 } else { None }
+            }
+            Focus::Panel(PanelKind::FileExplorer) => {
+                Some(keypress.key_down(event, &self.file_explorer))
             }
             Focus::Panel(PanelKind::Search) => {
                 Some(keypress.key_down(event, &self.global_search))
@@ -3494,6 +3661,7 @@ impl WindowTabData {
             _ => None,
         };
         if let Some(binary) = binary { prepared.program = binary.to_string_lossy().into_owned(); }
+        prepared.begin_before_launch();
         let config = &prepared;
         debug!("Starting Dart/Flutter target: {}", config.name);
         match mode {
@@ -3520,8 +3688,12 @@ impl WindowTabData {
                         config.clone(), self.terminal.debug.source_breakpoints(),
                     )
                 };
-                if !self.panel.is_panel_visible(&PanelKind::Debug) {
+                if config.flutter_options.activate_tool_window || config.flutter_options.focus_tool_window {
                     self.panel.show_panel(&PanelKind::Debug);
+                }
+                if config.flutter_options.focus_tool_window {
+                    self.common.focus.set(Focus::Panel(PanelKind::Debug));
+                    self.common.view_id.get_untracked().request_focus();
                 }
             }
         }
@@ -3979,6 +4151,8 @@ impl WindowTabData {
                 cwd: root.map(|p| p.display().to_string()),
                 env: None,
                 prelaunch: None,
+                before_launch: Vec::new(),
+                store_in_project: false,
                 flutter_options: Default::default(),
                 debug_adapter: Some(sparrow_rpc::dap_types::RunDebugProgram {
                     program: flutter.display().to_string(),

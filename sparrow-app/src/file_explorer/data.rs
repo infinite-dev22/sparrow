@@ -14,13 +14,11 @@ use floem::{
     keyboard::Modifiers,
     menu::{Menu, MenuItem},
     reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
-    views::editor::text::SystemClipboard,
 };
 use globset::Glob;
 use sparrow_core::{
     command::{EditCommand, FocusCommand},
     mode::Mode,
-    register::Clipboard,
 };
 use sparrow_rpc::{
     file::{
@@ -57,6 +55,7 @@ pub struct FileExplorerData {
     pub scroll_to_line: RwSignal<Option<f64>>,
     left_diff_path: RwSignal<Option<PathBuf>>,
     pub select: RwSignal<Option<FileNodeViewKind>>,
+    file_clipboard: RwSignal<Option<(PathBuf, bool)>>,
 }
 
 impl KeyPressFocus for FileExplorerData {
@@ -104,7 +103,26 @@ impl KeyPressFocus for FileExplorerData {
                 _ => self.naming_editor_data.run_command(command, count, mods),
             }
         } else {
-            CommandExecuted::No
+            let Some(path) = self
+                .select
+                .get_untracked()
+                .and_then(|kind| kind.path().map(Path::to_path_buf))
+            else {
+                return CommandExecuted::No;
+            };
+            match command.kind {
+                CommandKind::Edit(EditCommand::ClipboardCopy) => {
+                    self.copy_file(path, false)
+                }
+                CommandKind::Edit(EditCommand::ClipboardCut) => {
+                    self.copy_file(path, true)
+                }
+                CommandKind::Edit(EditCommand::ClipboardPaste) => {
+                    self.paste_file(path)
+                }
+                _ => return CommandExecuted::No,
+            }
+            CommandExecuted::Yes
         }
     }
 
@@ -142,6 +160,7 @@ impl FileExplorerData {
             scroll_to_line: cx.create_rw_signal(None),
             left_diff_path: cx.create_rw_signal(None),
             select: cx.create_rw_signal(None),
+            file_clipboard: cx.create_rw_signal(None),
         };
         if data.common.workspace.path.is_some() {
             // only fill in the child files if there is open folder
@@ -150,15 +169,86 @@ impl FileExplorerData {
         data
     }
 
+    fn copy_file(&self, path: PathBuf, cut: bool) {
+        if self.common.workspace.path.as_ref() == Some(&path) {
+            return;
+        }
+        use floem::views::editor::{
+            core::register::Clipboard, text::SystemClipboard,
+        };
+        SystemClipboard::new().put_string(path.to_string_lossy());
+        self.file_clipboard.set(Some((path, cut)));
+    }
+
+    pub fn finish_file_move(&self, source: &Path) {
+        if self.file_clipboard.with_untracked(|item| {
+            item.as_ref()
+                .is_some_and(|(path, cut)| *cut && path == source)
+        }) {
+            self.file_clipboard.set(None);
+        }
+    }
+
+    fn clipboard_file(&self) -> Option<(PathBuf, bool)> {
+        use floem::views::editor::{
+            core::register::Clipboard, text::SystemClipboard,
+        };
+        let item = self.file_clipboard.get_untracked()?;
+        (SystemClipboard::new().get_string().as_deref()
+            == Some(item.0.to_string_lossy().as_ref()))
+        .then_some(item)
+    }
+
+    fn paste_file(&self, target: PathBuf) {
+        let Some((source, cut)) = self.clipboard_file() else {
+            return;
+        };
+        let base = if self.is_dir(&target) {
+            target
+        } else {
+            target.parent().unwrap_or(&target).to_path_buf()
+        };
+        // Name entry also handles conflicts without ever replacing an existing file.
+        let data = self.clone();
+        let read_base = base.clone();
+        self.read_dir_cb(&read_base, move |read| {
+            if !read {
+                return;
+            }
+            data.root.update(|root| {
+                if let Some(node) = root.get_file_node_mut(&base) {
+                    node.open = true;
+                }
+                root.update_node_count_recursive(&base);
+            });
+            let is_dir = data.is_dir(&source);
+            data.naming.set(Naming::Duplicating(Duplicating {
+                state: NamingState::Naming,
+                path: source,
+                destination: Some(base),
+                is_dir,
+                move_on_finish: cut,
+                editor_needs_reset: true,
+            }));
+        });
+    }
+
+    pub fn rename_path(&self, path: PathBuf) {
+        if self.common.workspace.path.as_ref() == Some(&path) {
+            return;
+        }
+        self.naming.set(Naming::Renaming(Renaming {
+            state: NamingState::Naming,
+            path,
+            editor_needs_reset: true,
+        }));
+    }
+
     /// Rename the currently selected file, if it exists.
     pub fn rename_selected(&self) {
         if let Some(file) = self.select.get_untracked() {
             if let Some(path) = file.path() {
-                self.naming.set(Naming::Renaming(Renaming {
-                    state: NamingState::Naming,
-                    path: path.to_path_buf(),
-                    editor_needs_reset: true,
-                }));
+                self.rename_path(path.to_path_buf());
             }
         }
     }
@@ -324,8 +414,11 @@ impl FileExplorerData {
                     Cow::Owned(path) => Cow::Owned(path.into()),
                 };
 
-                let new_path =
-                    d.path.parent().unwrap_or("".as_ref()).join(relative_path);
+                let new_path = d
+                    .destination
+                    .as_deref()
+                    .unwrap_or_else(|| d.path.parent().unwrap_or("".as_ref()))
+                    .join(relative_path);
 
                 Some(new_path)
             }
@@ -370,6 +463,9 @@ impl FileExplorerData {
     /// If a naming is in progress and the user has entered a valid path, send the request to
     /// actually perform the change.
     pub fn finish_naming(&self) {
+        if !self.naming.with_untracked(Naming::is_accepting_input) {
+            return;
+        }
         match self.naming.get_untracked() {
             Naming::None => {}
             Naming::Renaming(_) => {
@@ -410,12 +506,17 @@ impl FileExplorerData {
                     return;
                 };
 
-                self.common.internal_command.send(
+                self.common.internal_command.send(if d.move_on_finish {
+                    InternalCommand::FinishRenamePath {
+                        current_path: d.path,
+                        new_path: path,
+                    }
+                } else {
                     InternalCommand::FinishDuplicate {
-                        source: d.path.to_owned(),
+                        source: d.path,
                         path,
-                    },
-                );
+                    }
+                });
             }
         }
     }
@@ -495,6 +596,9 @@ impl FileExplorerData {
         path: &Path,
         config: ReadSignal<Arc<SparrowConfig>>,
     ) -> EventPropagation {
+        if !self.is_dir(path) {
+            self.common.focus.set(crate::window_tab::Focus::Workbench);
+        }
         if self.is_dir(path) {
             EventPropagation::Continue
         } else if config.get_untracked().core.file_explorer_double_click {
@@ -513,6 +617,11 @@ impl FileExplorerData {
     }
 
     pub fn secondary_click(&self, path: &Path) {
+        self.select
+            .set(Some(FileNodeViewKind::Path(path.to_path_buf())));
+        self.common.focus.set(crate::window_tab::Focus::Panel(
+            crate::panel::kind::PanelKind::FileExplorer,
+        ));
         let common = self.common.clone();
         let path_a = path.to_owned();
         let left_diff_path = self.left_diff_path;
@@ -583,7 +692,64 @@ impl FileExplorerData {
             })
         }));
 
+        if !is_dir
+            && path_a
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("dart"))
+        {
+            for (label, command) in [
+                (
+                    "Run",
+                    crate::command::SparrowWorkbenchCommand::RunCurrentFile,
+                ),
+                (
+                    "Debug",
+                    crate::command::SparrowWorkbenchCommand::DebugCurrentFile,
+                ),
+            ] {
+                let path = path_a.clone();
+                let commands = common.sparrow_command;
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                menu = menu.entry(
+                    MenuItem::new(format!("{label} '{name}'")).action(move || {
+                        commands.send(crate::command::SparrowCommand {
+                            kind: crate::command::CommandKind::Workbench(
+                                command.clone(),
+                            ),
+                            data: Some(
+                                serde_json::to_value(&path)
+                                    .expect("path serializes"),
+                            ),
+                        });
+                    }),
+                );
+            }
+        }
+
         menu = menu.separator();
+
+        for (label, cut) in [("Cut", true), ("Copy", false)] {
+            let data = self.clone();
+            let path = path_a.clone();
+            menu = menu.entry(
+                MenuItem::new(label)
+                    .enabled(!is_workspace)
+                    .action(move || data.copy_file(path.clone(), cut)),
+            );
+        }
+        let data = self.clone();
+        let target = path_a.clone();
+        menu = menu
+            .entry(
+                MenuItem::new("Paste...")
+                    .enabled(self.clipboard_file().is_some())
+                    .action(move || data.paste_file(target.clone())),
+            )
+            .separator();
 
         // TODO: there are situations where we can open the file explorer to remote files
         if !common.workspace.kind.is_remote() {
@@ -622,6 +788,9 @@ impl FileExplorerData {
                 naming.set(Naming::Duplicating(Duplicating {
                     state: NamingState::Naming,
                     path: path.clone(),
+                    destination: None,
+                    is_dir,
+                    move_on_finish: false,
                     editor_needs_reset: true,
                 }));
             }));
@@ -646,30 +815,26 @@ impl FileExplorerData {
 
         menu = menu.separator();
 
-        let path = path_a.clone();
-        menu = menu.entry(MenuItem::new("Copy Path").action(move || {
-            let mut clipboard = SystemClipboard::new();
-            clipboard.put_string(path.to_string_lossy());
-        }));
-
-        let path = path_a.clone();
-        let workspace = common.workspace.clone();
-        menu = menu.entry(MenuItem::new("Copy Relative Path").action(move || {
-            let relative_path = if let Some(workspace_path) = &workspace.path {
-                path.strip_prefix(workspace_path).unwrap_or(&path)
-            } else {
-                path.as_ref()
-            };
-
-            let mut clipboard = SystemClipboard::new();
-            clipboard.put_string(relative_path.to_string_lossy());
-        }));
+        let copy_path = path_a.clone();
+        let copy_workspace = common.workspace.path.clone();
+        menu =
+            menu.entry(MenuItem::new("Copy Path/Reference...").action(move || {
+                let path = copy_path.clone();
+                let root = copy_workspace.clone();
+                floem::action::exec_after(std::time::Duration::ZERO, move |_| {
+                    show_context_menu(
+                        crate::menus::copy_path_menu(path, root),
+                        None,
+                    );
+                });
+            }));
 
         menu = menu.separator();
 
         let path = path_a.clone();
         menu = menu.entry(
             MenuItem::new("Select for Compare")
+                .enabled(!is_dir)
                 .action(move || left_diff_path.set(Some(path.clone()))),
         );
 
@@ -677,16 +842,19 @@ impl FileExplorerData {
             let common = self.common.clone();
             let right_path = path_a.to_owned();
 
-            menu = menu.entry(MenuItem::new("Compare with Selected").action(
-                move || {
-                    common
-                        .internal_command
-                        .send(InternalCommand::OpenDiffFiles {
-                            left_path: left_path.clone(),
-                            right_path: right_path.clone(),
-                        })
-                },
-            ))
+            let comparable = !is_dir && !self.is_dir(&left_path);
+            menu = menu.entry(
+                MenuItem::new("Compare with Selected")
+                    .enabled(comparable)
+                    .action(move || {
+                        common.internal_command.send(
+                            InternalCommand::OpenDiffFiles {
+                                left_path: left_path.clone(),
+                                right_path: right_path.clone(),
+                            },
+                        )
+                    }),
+            )
         }
 
         menu = menu.separator();
