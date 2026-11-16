@@ -103,6 +103,9 @@ pub struct PanelData {
     pub panels: RwSignal<PanelOrder>,
     pub styles: RwSignal<im::HashMap<PanelPosition, PanelStyle>>,
     pub size: RwSignal<PanelSize>,
+    pub(crate) hidden_styles:
+        RwSignal<Option<im::HashMap<PanelPosition, PanelStyle>>>,
+    pub last_opened: RwSignal<Option<PanelKind>>,
     pub available_size: Memo<Size>,
     pub sections: RwSignal<im::HashMap<PanelSection, RwSignal<bool>>>,
     pub common: Rc<CommonData>,
@@ -169,7 +172,7 @@ impl PanelData {
         let panels = cx.create_rw_signal(panels);
         let styles = cx.create_rw_signal(styles);
         let size = cx.create_rw_signal(PanelSize {
-            left: 400.0,
+            left: 420.0,
             left_split: 0.5,
             bottom: 342.0,
             bottom_split: 0.5,
@@ -187,10 +190,20 @@ impl PanelData {
             panels,
             styles,
             size,
+            hidden_styles: cx.create_rw_signal(None),
+            last_opened: cx.create_rw_signal(Some(PanelKind::FileExplorer)),
             available_size,
             sections,
             common,
         }
+    }
+
+    pub fn toggle_all_tool_windows(&self) {
+        let current = self.styles.get_untracked();
+        let (next, saved) =
+            toggle_tool_windows(current, self.hidden_styles.get_untracked());
+        self.hidden_styles.set(saved);
+        self.styles.set(next);
     }
 
     pub fn panel_info(&self) -> PanelInfo {
@@ -266,6 +279,7 @@ impl PanelData {
     }
 
     pub fn show_panel(&self, kind: &PanelKind) {
+        self.last_opened.set(Some(kind.canonical()));
         if let Some((index, position)) = self.panel_position(kind) {
             self.styles.update(|styles| {
                 if let Some(style) = styles.get_mut(&position) {
@@ -724,5 +738,45 @@ mod layout_tests {
             panel_position(&order, &PanelKind::DocumentSymbol),
             panel_position(&order, &PanelKind::DartOutline)
         );
+    }
+}
+
+fn toggle_tool_windows(
+    mut current: im::HashMap<PanelPosition, PanelStyle>,
+    saved: Option<im::HashMap<PanelPosition, PanelStyle>>,
+) -> (
+    im::HashMap<PanelPosition, PanelStyle>,
+    Option<im::HashMap<PanelPosition, PanelStyle>>,
+) {
+    if current.values().any(|style| style.shown) {
+        let saved = current.clone();
+        for (_, style) in current.iter_mut() {
+            style.shown = false;
+        }
+        (current, Some(saved))
+    } else {
+        (saved.unwrap_or(current), None)
+    }
+}
+#[cfg(test)]
+mod tool_window_tests {
+    use super::*;
+    #[test]
+    fn hiding_and_restoring_keeps_active_tabs_and_maximized_state() {
+        let layout = im::hashmap! {
+            PanelPosition::LeftTop => PanelStyle { active:2,shown:true,maximized:false },
+            PanelPosition::BottomLeft => PanelStyle { active:3,shown:true,maximized:true },
+            PanelPosition::RightTop => PanelStyle { active:0,shown:false,maximized:false },
+        };
+        let (hidden, saved) = toggle_tool_windows(layout.clone(), None);
+        assert!(hidden.values().all(|style| !style.shown));
+        let (restored, _) = toggle_tool_windows(hidden, saved);
+        for (position, expected) in layout.iter() {
+            let actual = &restored[position];
+            assert_eq!(
+                (actual.active, actual.shown, actual.maximized),
+                (expected.active, expected.shown, expected.maximized)
+            );
+        }
     }
 }

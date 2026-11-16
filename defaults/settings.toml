@@ -5,7 +5,7 @@ modal = false
 color-theme = "Islands Dark"
 icon-theme = "sparrow Modern"
 custom-titlebar = true
-file-explorer-double-click = false
+file-explorer-double-click = true
 
 [editor]
 font-family = "JetBrains Mono, Noto Sans Mono, monospace"

@@ -319,7 +319,8 @@ fn status_breadcrumbs(
             let Some(editor) = editor.get() else {
                 return Vec::new().into_iter().enumerate();
             };
-            let doc = editor.doc();
+            // Preview tabs can change documents while retaining the editor ID.
+            let doc = editor.doc_signal().get();
             let path = doc.content.with(|content| match content {
                 crate::doc::DocContent::History(history) => {
                     Some(history.path.clone())

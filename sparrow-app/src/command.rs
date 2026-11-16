@@ -456,8 +456,13 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "toggle_maximized_panel")]
     ToggleMaximizedPanel,
 
+    #[strum(message = "Hide Active Tool Window")]
     #[strum(serialize = "hide_panel")]
     HidePanel,
+
+    #[strum(message = "Hide/Restore All Tool Windows")]
+    #[strum(serialize = "toggle_all_tool_windows")]
+    ToggleAllToolWindows,
 
     #[strum(serialize = "show_panel")]
     ShowPanel,
@@ -505,6 +510,32 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "Toggle Search Focus")]
     #[strum(serialize = "toggle_search_focus")]
     ToggleSearchFocus,
+
+    #[strum(
+        message = "Activate Run Tool Window",
+        serialize = "activate_run_tool_window"
+    )]
+    ActivateRunToolWindow,
+    #[strum(
+        message = "Activate Debug Tool Window",
+        serialize = "activate_debug_tool_window"
+    )]
+    ActivateDebugToolWindow,
+    #[strum(
+        message = "Activate Problems Tool Window",
+        serialize = "activate_problems_tool_window"
+    )]
+    ActivateProblemsToolWindow,
+    #[strum(
+        message = "Activate Structure Tool Window",
+        serialize = "activate_structure_tool_window"
+    )]
+    ActivateStructureToolWindow,
+    #[strum(
+        message = "Activate Git Tool Window",
+        serialize = "activate_git_tool_window"
+    )]
+    ActivateGitToolWindow,
 
     // Visual toggle commands
     #[strum(serialize = "toggle_terminal_visual")]

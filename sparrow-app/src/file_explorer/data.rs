@@ -11,7 +11,7 @@ use floem::{
     action::show_context_menu,
     event::EventPropagation,
     ext_event::create_ext_action,
-    keyboard::Modifiers,
+    keyboard::{Key, KeyEvent, Modifiers, NamedKey},
     menu::{Menu, MenuItem},
     reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
 };
@@ -526,6 +526,74 @@ impl FileExplorerData {
         self.naming.set(Naming::None);
     }
 
+    /// Project-tree navigation keeps focus in Project until a file is opened.
+    pub fn navigate_key(&self, key: &KeyEvent) -> bool {
+        if self.naming.with_untracked(Naming::is_accepting_input)
+            || !key.modifiers.is_empty()
+        {
+            return false;
+        }
+        let selected = self
+            .select
+            .get_untracked()
+            .and_then(|kind| kind.path().map(Path::to_path_buf));
+        let nodes = self.root.with_untracked(visible_project_nodes);
+        if nodes.is_empty() {
+            return false;
+        }
+        let index = selected
+            .as_ref()
+            .and_then(|path| nodes.iter().position(|node| &node.0 == path))
+            .unwrap_or(0);
+        let (path, is_dir, open) = &nodes[index];
+        let mut next = Some(index);
+        match &key.key.logical_key {
+            Key::Named(NamedKey::ArrowDown) => {
+                next = Some((index + 1).min(nodes.len() - 1))
+            }
+            Key::Named(NamedKey::ArrowUp) => next = Some(index.saturating_sub(1)),
+            Key::Named(NamedKey::Home) => next = Some(0),
+            Key::Named(NamedKey::End) => next = Some(nodes.len() - 1),
+            Key::Named(NamedKey::ArrowRight) => {
+                if *is_dir && !*open {
+                    self.toggle_expand(path);
+                } else if *is_dir {
+                    if nodes.get(index + 1)
+                        .is_some_and(|child| child.0.parent() == Some(path.as_path()))
+                    {
+                        next = Some(index + 1);
+                    }
+                }
+            }
+            Key::Named(NamedKey::ArrowLeft) => {
+                if *is_dir && *open {
+                    self.toggle_expand(path);
+                } else {
+                    next = path.parent().and_then(|parent| {
+                        nodes.iter().position(|node| node.0 == parent)
+                    });
+                }
+            }
+            Key::Named(NamedKey::Enter | NamedKey::F4) => {
+                if *is_dir {
+                    self.toggle_expand(path);
+                } else {
+                    self.common.focus.set(crate::window_tab::Focus::Workbench);
+                    self.common.internal_command.send(
+                        InternalCommand::OpenAndConfirmedFile { path: path.clone() },
+                    );
+                }
+            }
+            _ => return false,
+        }
+        if let Some(index) = next {
+            self.select
+                .set(Some(FileNodeViewKind::Path(nodes[index].0.clone())));
+            self.scroll_to_line.set(Some(index as f64));
+        }
+        true
+    }
+
     pub fn click(&self, path: &Path, config: ReadSignal<Arc<SparrowConfig>>) {
         if self.is_dir(path) {
             self.toggle_expand(path);
@@ -878,5 +946,64 @@ impl FileExplorerData {
                 });
             EventPropagation::Stop
         }
+    }
+}
+
+fn visible_project_nodes(root: &FileNodeItem) -> Vec<(PathBuf, bool, bool)> {
+    fn visit(node: &FileNodeItem, out: &mut Vec<(PathBuf, bool, bool)>) {
+        out.push((node.path.clone(), node.is_dir, node.open));
+        if node.is_dir && node.open {
+            for child in node.sorted_children() {
+                visit(child, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    visit(root, &mut out);
+    out
+}
+#[cfg(test)]
+mod project_navigation_tests {
+    use super::*;
+    #[test]
+    fn visible_tree_uses_explorer_order_and_skips_collapsed_descendants() {
+        let node = |path: &str, is_dir: bool, open: bool| FileNodeItem {
+            path: PathBuf::from(path),
+            is_dir,
+            read: true,
+            open,
+            children: HashMap::new(),
+            children_open_count: 0,
+        };
+        let mut root = node("/project", true, true);
+        let mut lib = node("/project/lib", true, false);
+        lib.children.insert(
+            PathBuf::from("/project/lib/main.dart"),
+            node("/project/lib/main.dart", false, false),
+        );
+        root.children.insert(lib.path.clone(), lib);
+        root.children.insert(
+            PathBuf::from("/project/README.md"),
+            node("/project/README.md", false, false),
+        );
+        assert_eq!(
+            visible_project_nodes(&root)
+                .iter()
+                .map(|node| node.0.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("/project"),
+                PathBuf::from("/project/lib"),
+                PathBuf::from("/project/README.md")
+            ]
+        );
+        root.children
+            .get_mut(&PathBuf::from("/project/lib"))
+            .unwrap()
+            .open = true;
+        assert_eq!(
+            visible_project_nodes(&root)[2].0,
+            PathBuf::from("/project/lib/main.dart")
+        );
     }
 }

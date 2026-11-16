@@ -928,6 +928,12 @@ impl Doc {
 
         // ── Dart fast path ─────────────────────────────────────────
         if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            // File loading can request styles before the active-editor effect
+            // publishes didOpen. Always synchronize this loaded buffer first.
+            let content = self.buffer.with_untracked(|buffer| buffer.to_string());
+            self.common
+                .dart_lsp
+                .sync_document(path.clone(), Some((content, rev as i64)));
             // Legend might not be captured yet — Ready notification will
             // trigger a re-request once it is.
             if self.common.dart_lsp.semantic_tokens_legend().is_none() {

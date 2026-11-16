@@ -279,6 +279,13 @@ impl DartLspService {
         )
     }
 
+    /// None means the editor buffer is still loading, not an empty Dart file.
+    pub fn sync_document(&self, path: PathBuf, snapshot: Option<(String, i64)>) {
+        if let Some((content, version)) = snapshot {
+            self.send_change(path, content, version);
+        }
+    }
+
     pub fn send_change(&self, path: PathBuf, content: String, version: i64) {
         if !self.state.is_running.load(Ordering::Relaxed) {
             return;
@@ -1524,6 +1531,44 @@ mod tests {
         assert!(!svc.is_available());
     }
 
+    #[test]
+    fn initial_load_never_publishes_a_placeholder_at_the_real_documents_version() {
+        let (tx, rx) = unbounded();
+        let service = DartLspService {
+            tx,
+            state: Arc::new(SharedState {
+                next_id: AtomicI64::new(1),
+                pending_requests: Mutex::new(HashMap::new()),
+                open_files: Mutex::new(HashMap::new()),
+                shutting_down: AtomicBool::new(false),
+                semantic_tokens_legend: Mutex::new(None),
+                completion_trigger_characters: Mutex::new(Vec::new()),
+                is_running: AtomicBool::new(true),
+            }),
+            last_sent: Arc::new(Mutex::new(HashMap::new())),
+            alive: Arc::new(()),
+        };
+        let path = PathBuf::from("/project/lib/main.dart");
+        service.sync_document(path.clone(), None);
+        assert!(rx.try_recv().is_err());
+        service.sync_document(path.clone(), Some(("void main() {}".into(), 0)));
+        match rx.try_recv().unwrap() {
+            LspCommand::Change {
+                content, version, ..
+            } => {
+                assert_eq!(content, "void main() {}");
+                assert_eq!(version, 0);
+            }
+            _ => panic!("Expected didOpen content"),
+        }
+        service.sync_document(path.clone(), Some(("void main() {}".into(), 0)));
+        assert!(rx.try_recv().is_err());
+        service.sync_document(path, Some(("void main() { print(1); }".into(), 1)));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            LspCommand::Change { version: 1, .. }
+        ));
+    }
     #[test]
     fn request_id_is_monotonic() {
         let (tx, _rx) = unbounded();

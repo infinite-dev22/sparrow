@@ -70,6 +70,10 @@ impl KeyPressFocus for TerminalData {
         self.common.view_id.get_untracked().request_paint();
         let config = self.common.config.get_untracked();
         match &command.kind {
+            CommandKind::Workbench(_) => {
+                // Handle IDE shortcuts before falling back to PTY input.
+                self.common.sparrow_command.send(command.clone());
+            }
             CommandKind::Move(cmd) => {
                 let movement = cmd.to_movement(count);
                 let raw = self.raw.get_untracked();

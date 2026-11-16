@@ -520,6 +520,8 @@ impl WindowTabData {
                     panels: cx.create_rw_signal(panel_order),
                     styles: cx.create_rw_signal(styles),
                     size: cx.create_rw_signal(i.panel.size.clone()),
+                    hidden_styles: cx.create_rw_signal(None),
+                    last_opened: cx.create_rw_signal(Some(PanelKind::FileExplorer)),
                     available_size: panel_available_size,
                     sections: cx.create_rw_signal(
                         i.panel
@@ -871,13 +873,17 @@ impl WindowTabData {
                 if !crate::dart::is_dart_path(&path) {
                     return;
                 }
-                let _ = doc.loaded.get();
+                let loaded = doc.loaded.get();
+                if !loaded {
+                    dart_lsp.sync_document(path, None);
+                    return;
+                }
                 let version = doc.buffer.with(|b| b.rev() as i64);
                 let content = doc.buffer.with(|b| b.to_string());
                 let closing =
                     crate::dart::extract_closing_labels_from_source(&content);
                 doc.closing_labels.set(Some(closing));
-                dart_lsp.send_change(path, content, version);
+                dart_lsp.sync_document(path, Some((content, version)));
             });
         }
 
@@ -1726,11 +1732,21 @@ impl WindowTabData {
                 }
             }
             HidePanel => {
-                if let Some(data) = data {
-                    if let Ok(kind) = serde_json::from_value::<PanelKind>(data) {
-                        self.hide_panel(kind);
-                    }
+                let kind = data
+                    .and_then(|data| serde_json::from_value::<PanelKind>(data).ok())
+                    .or_else(|| match self.common.focus.get_untracked() {
+                        Focus::Panel(kind) => Some(kind),
+                        _ => self.panel.last_opened.get_untracked()
+                            .filter(|kind| self.panel.is_panel_visible(kind)),
+                    });
+                if let Some(kind) = kind {
+                    self.hide_panel(kind);
                 }
+            }
+            ToggleAllToolWindows => {
+                self.panel.toggle_all_tool_windows();
+                self.common.focus.set(Focus::Workbench);
+                self.common.view_id.get_untracked().request_focus();
             }
             ShowPanel => {
                 if let Some(data) = data {
@@ -1780,6 +1796,11 @@ impl WindowTabData {
             ToggleSearchFocus => {
                 self.toggle_panel_focus(PanelKind::Search);
             }
+            ActivateRunToolWindow => self.toggle_panel_focus(PanelKind::FlutterRun),
+            ActivateDebugToolWindow => self.toggle_panel_focus(PanelKind::Debug),
+            ActivateProblemsToolWindow => self.toggle_panel_focus(PanelKind::Problems),
+            ActivateStructureToolWindow => self.toggle_panel_focus(PanelKind::DartOutline),
+            ActivateGitToolWindow => self.toggle_panel_focus(PanelKind::GitHistory),
             ToggleTerminalVisual => {
                 self.toggle_panel_visual(PanelKind::Terminal);
             }
@@ -1803,6 +1824,7 @@ impl WindowTabData {
             }
             FocusEditor => {
                 self.common.focus.set(Focus::Workbench);
+                self.common.view_id.get_untracked().request_focus();
             }
             FocusTerminal => {
                 self.common.focus.set(Focus::Panel(PanelKind::Terminal));
@@ -3135,6 +3157,11 @@ impl WindowTabData {
                 } else { None }
             }
             Focus::Panel(PanelKind::FileExplorer) => {
+                if let EventRef::Keyboard(key) = event.into() {
+                    if self.file_explorer.navigate_key(key) {
+                        return true;
+                    }
+                }
                 Some(keypress.key_down(event, &self.file_explorer))
             }
             Focus::Panel(PanelKind::Search) => {
@@ -3466,7 +3493,6 @@ impl WindowTabData {
         let should_hide = match kind {
             PanelKind::Plugin
             | PanelKind::Problem
-            | PanelKind::Debug
             | PanelKind::CallHierarchy
             | PanelKind::References
             | PanelKind::Implementation => {
@@ -3475,6 +3501,7 @@ impl WindowTabData {
                 self.panel.is_panel_visible(&kind)
             }
             PanelKind::Terminal
+            | PanelKind::Debug
             | PanelKind::SourceControl
             | PanelKind::Search
             | PanelKind::WidgetTree
@@ -3547,6 +3574,7 @@ impl WindowTabData {
     fn hide_panel(&self, kind: PanelKind) {
         self.panel.hide_panel(&kind);
         self.common.focus.set(Focus::Workbench);
+        self.common.view_id.get_untracked().request_focus();
     }
 
     pub fn show_panel(&self, kind: PanelKind) {
@@ -3571,6 +3599,16 @@ impl WindowTabData {
             );
         }
         self.panel.show_panel(&kind);
+        if kind == PanelKind::FileExplorer
+            && self.file_explorer.select.get_untracked().is_none()
+        {
+            if let Some(path) = self.workspace.path.clone() {
+                self.file_explorer
+                    .select
+                    .set(Some(sparrow_rpc::file::FileNodeViewKind::Path(path)));
+            }
+        }
+        self.common.view_id.get_untracked().request_focus();
         if kind == PanelKind::FlutterRun {
             if let Some(id) = self.flutter_hot_reload.active_term.get_untracked() {
                 self.terminal.focus_terminal_in_panel(id, PanelKind::FlutterRun);
