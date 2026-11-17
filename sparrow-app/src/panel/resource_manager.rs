@@ -486,7 +486,11 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
             Some(children())
         };
         match node.tag_name().name() {
-            "vector" => Some(children()),
+            "vector" => Some(format!(
+                "<g opacity=\"{}\">{}</g>",
+                number(node, "alpha", 1.0).clamp(0.0, 1.0),
+                children()
+            )),
             "group" => Some(format!(
                 "<g transform=\"translate({} {}) translate({} {}) rotate({}) scale({} {}) translate({} {})\">{}</g>",
                 number(node, "translateX", 0.0),
@@ -536,8 +540,45 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
                         "<stop offset=\"0\" stop-color=\"{start}\"/>{center}<stop offset=\"1\" stop-color=\"{end}\"/>"
                     );
                     let definition = if gradient.attribute((A, "type"))
-                        == Some("radial")
+                        == Some("sweep")
                     {
+                        let middle = paint(gradient, "centerColor", path);
+                        let rgba = |s: &str| {
+                            u32::from_str_radix(s.trim_start_matches('#'), 16).ok()
+                        };
+                        let first = rgba(&start)?;
+                        let last = rgba(&end)?;
+                        let mid = middle.as_deref().and_then(rgba);
+                        let mut wedges = String::new();
+                        let cx = number(gradient, "centerX", 0.5) * 24.0;
+                        let cy = number(gradient, "centerY", 0.5) * 24.0;
+                        for i in 0..256 {
+                            let t = i as f64 / 255.0;
+                            let (a, b, t) = if let Some(mid) = mid {
+                                if t < 0.5 {
+                                    (first, mid, t * 2.0)
+                                } else {
+                                    (mid, last, (t - 0.5) * 2.0)
+                                }
+                            } else {
+                                (first, last, t)
+                            };
+                            let mut result = 0u32;
+                            for shift in [24, 16, 8, 0] {
+                                let a = ((a >> shift) & 255) as f64;
+                                let b = ((b >> shift) & 255) as f64;
+                                result |=
+                                    ((a + (b - a) * t).round() as u32) << shift;
+                            }
+                            let a = i as f64 * std::f64::consts::TAU / 256.0;
+                            let b =
+                                (i as f64 + 1.05) * std::f64::consts::TAU / 256.0;
+                            wedges.push_str(&format!("<path d=\"M{cx},{cy} L{},{} L{},{} Z\" fill=\"#{result:08X}\"/>",cx+48.0*a.cos(),cy+48.0*a.sin(),cx+48.0*b.cos(),cy+48.0*b.sin()));
+                        }
+                        format!(
+                            "<pattern id=\"{id}\" width=\"24\" height=\"24\" patternUnits=\"userSpaceOnUse\">{wedges}</pattern>"
+                        )
+                    } else if gradient.attribute((A, "type")) == Some("radial") {
                         format!(
                             "<radialGradient id=\"{id}\" cx=\"{}\" cy=\"{}\" r=\"{}\">{stops}</radialGradient>",
                             number(gradient, "centerX", 0.5),
@@ -574,8 +615,26 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
                         .find(|n| n.has_tag_name("corners"))
                         .map(|n| number(n, "radius", 0.0))
                         .unwrap_or(0.0);
+                    let corners =
+                        node.children().find(|n| n.has_tag_name("corners"));
+                    let r = |key| {
+                        corners
+                            .map(|n| number(n, key, radius))
+                            .unwrap_or(radius)
+                            .clamp(0.0, 12.0)
+                    };
+                    let (tl, tr, br, bl) = (
+                        r("topLeftRadius"),
+                        r("topRightRadius"),
+                        r("bottomRightRadius"),
+                        r("bottomLeftRadius"),
+                    );
                     Some(format!(
-                        "{defs}<rect x=\"0\" y=\"0\" width=\"24\" height=\"24\" rx=\"{radius}\" fill=\"{solid}\" stroke=\"{edge}\" stroke-width=\"{width}\"/>"
+                        "{defs}<path d=\"M{tl},0 H{} Q24,0 24,{tr} V{} Q24,24 {},24 H{bl} Q0,24 0,{} V{tl} Q0,0 {tl},0 Z\" fill=\"{solid}\" stroke=\"{edge}\" stroke-width=\"{width}\"/>",
+                        24.0 - tr,
+                        24.0 - br,
+                        24.0 - br,
+                        24.0 - bl
                     ))
                 }
             }
@@ -604,7 +663,32 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
                     content()?
                 ))
             }
-            "bitmap" => referenced(node.attribute((A, "src"))?, path, depth),
+            "bitmap" => {
+                let gravity = node.attribute((A, "gravity")).unwrap_or("center");
+                let align = if gravity.contains("fill") {
+                    "none".to_string()
+                } else {
+                    format!(
+                        "{}{} meet",
+                        if gravity.contains("left") {
+                            "xMin"
+                        } else if gravity.contains("right") {
+                            "xMax"
+                        } else {
+                            "xMid"
+                        },
+                        if gravity.contains("top") {
+                            "YMin"
+                        } else if gravity.contains("bottom") {
+                            "YMax"
+                        } else {
+                            "YMid"
+                        }
+                    )
+                };
+                referenced(node.attribute((A, "src"))?, path, depth)
+                    .map(|s| s.replace("xMidYMid meet", &align))
+            }
             _ => None,
         }
     }
@@ -854,6 +938,17 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
     let size = create_rw_signal(48.0f32);
     let selected = create_rw_signal(None::<Resource>);
     let import_open = create_rw_signal(false);
+    let rename_resource = create_rw_signal(None::<Resource>);
+    let rename_name = create_rw_signal(String::new());
+    let rename_plan = create_rw_signal(None::<super::resource_rename::Plan>);
+    let rename_busy = create_rw_signal(false);
+    let rename_error = create_rw_signal(String::new());
+    create_effect(move |_| {
+        rename_name.get();
+        rename_resource.get();
+        rename_plan.set(None);
+        rename_error.set(String::new());
+    });
     let create_kind = create_rw_signal(None::<Kind>);
     let source = create_rw_signal(String::new());
     let destination = create_rw_signal(String::from("assets/"));
@@ -1188,7 +1283,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                         let rename = variant.clone();
                         let explorer = explorer.clone();
                         let renamed = explorer.clone();
-                        let reference = reference.clone();let rename_window=reference.clone();let usages=reference.clone();let find_name=menu_resource.name.clone();
+                        let reference = reference.clone();let rename_window=reference.clone();let rename_target=menu_resource.clone();let usages=reference.clone();let find_name=menu_resource.name.clone();
                         let value = if menu_resource.kind == Kind::Asset {
                             menu_resource.name.clone()
                         } else {
@@ -1229,12 +1324,10 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                                 },
                             ))
                             .entry(
-                                MenuItem::new("Rename file…")
-                                    .enabled(!matches!(
-                                        menu_resource.kind,
-                                        Kind::String | Kind::Color
-                                    ))
+                                MenuItem::new(if menu_resource.module.starts_with("android/"){"Rename resource…"}else{"Rename file…"})
+
                                     .action(move || {
+                                        if rename_target.module.starts_with("android/") {rename_name.set(rename_target.name.clone());rename_resource.set(Some(rename_target.clone()));return;}
                                         if let Some(variant) = &rename {
                                             rename_window.show_panel(PanelKind::FileExplorer);
                                             renamed
@@ -1335,6 +1428,39 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 .border_top(1.0)
                 .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
         }),
+        stack((
+            label(||"Rename resource and usages").style(|s|s.font_bold()),
+            text_input(rename_name).disabled(move ||rename_busy.get()).placeholder("New resource name").style(move |s|s.width_full().padding(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+            scroll(label(move ||rename_plan.with(|p|p.as_ref().map(|p|p.details()).unwrap_or_default()))).style(|s|s.width_full().max_height(220.0)),
+            label(move ||rename_error.get()),
+            stack((
+                label(||"Cancel").on_click_stop(move |_|{if !rename_busy.get_untracked(){rename_resource.set(None);}}),
+                label(move ||if rename_busy.get(){"Working…"}else if rename_plan.with(|p|p.is_some()){"Apply rename"}else{"Preview usages"}).on_click_stop({let window=window.clone();move |_|{
+                    if rename_busy.get_untracked(){return;}
+                    let Some(root)=window.workspace.path.clone()else{return;};
+                    let Some(target)=rename_resource.get_untracked()else{return;};
+                    if window.main_split.docs.with_untracked(|docs|docs.iter().any(|(path,doc)|path.starts_with(root.join(&target.module))&&!doc.is_pristine())){rename_error.set("Save modified module files before renaming.".into());return;}
+                    rename_busy.set(true);let name=rename_name.get_untracked();let plan=rename_plan.get_untracked();
+                    let requested_name=name.clone();let requested_module=target.module.clone();let applied=plan.clone();let completed_window=window.clone();
+                    let send=floem::ext_event::create_ext_action(scope,move |result:Result<Option<super::resource_rename::Plan>,String>|{
+                        rename_busy.set(false);
+                        if applied.is_none() && (rename_name.get_untracked()!=requested_name || !rename_resource.with_untracked(|r|r.as_ref().is_some_and(|r|r.module==requested_module))) {return;}
+                        match result {Ok(Some(plan))=>rename_plan.set(Some(plan)),Ok(None)=>{
+                            if let Some(applied)=&applied {
+                                for (old,new) in &applied.moves {
+                                    let editors=completed_window.main_split.editors.with_editors_untracked(|items|items.values().filter(|e|e.doc().content.with_untracked(|c|c.path()==Some(old))).cloned().collect::<Vec<_>>());
+                                    if !editors.is_empty(){let (doc,_)=completed_window.main_split.get_doc(new.clone(),None);for editor in editors{editor.update_doc(doc.clone());}}
+                                    completed_window.main_split.docs.update(|docs|{docs.remove(old);});
+                                }
+                                for (path,_,text) in &applied.edits {let path=applied.moves.iter().find(|(old,_)|old==path).map(|(_,new)|new).unwrap_or(path);completed_window.main_split.docs.with_untracked(|docs|{if let Some(doc)=docs.get(path){if doc.is_pristine(){doc.reload(lapce_xi_rope::Rope::from(text.clone()),true);}}});}
+                                completed_window.file_explorer.reload();
+                            }
+                            rename_resource.set(None);selected.set(None);refresh.update(|n|*n+=1);},Err(e)=>{rename_plan.set(None);rename_error.set(e);}}
+                    });
+                    std::thread::spawn(move ||send(if let Some(plan)=plan {plan.apply().map(|_|None)}else{super::resource_rename::plan(&root,&target,&name).map(Some)}));
+                }}),
+            )).style(|s|s.gap(16.0)),
+        )).style(move |s|s.absolute().inset_left(12.0).inset_right(12.0).inset_top(100.0).padding(16.0).gap(12.0).flex_col().border(1.0).border_radius(5.0).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_color(config.get().color(SparrowColor::SPARROW_BORDER)).z_index(60).apply_if(rename_resource.with(|r|r.is_none()),|s|s.hide())),
         stack((
             label(move ||match create_kind.get(){Some(Kind::Color)=>"New color resource",Some(Kind::String)=>"New string resource",_=>"Import resource"}).style(|s| s.font_bold()),
             text_input(source).placeholder("Source file path / resource value").style(move |s|s.width_full().padding(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
@@ -1545,7 +1671,7 @@ mod drawable_tests {
         std::fs::write(&path,r##"<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item><shape><solid android:color="@color/accent"/><corners android:radius="4dp"/></shape></item></layer-list>"##).unwrap();
         let svg = vector(&path).unwrap();
         assert!(svg.contains("#FF000080"));
-        assert!(svg.contains("rx=\"4\""));
+        assert!(svg.contains("M4,0"));
         std::fs::write(&path,r##"<selector xmlns:android="http://schemas.android.com/apk/res/android"><item android:state_pressed="true"><shape><solid android:color="#FF0000"/></shape></item><item><shape android:shape="oval"><solid android:color="#00FF00"/></shape></item></selector>"##).unwrap();
         let svg = vector(&path).unwrap();
         assert!(svg.contains("ellipse"));
@@ -1594,5 +1720,22 @@ mod complex_drawable_tests {
         assert!(svg.find("M0,0L24,24").unwrap() < svg.find("clipPath").unwrap());
         assert!(svg.contains("clip-path=\"url(#clip"));
         assert!(svg.ends_with("</g></svg>"));
+    }
+}
+
+#[cfg(test)]
+mod remaining_drawable_tests {
+    use super::*;
+    #[test]
+    fn sweep_and_individual_corners_render_with_root_alpha() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sample.xml");
+        std::fs::write(&path,r##"<shape xmlns:android="http://schemas.android.com/apk/res/android"><gradient android:type="sweep" android:startColor="#FF0000" android:endColor="#0000FF"/><corners android:topLeftRadius="8dp" android:bottomRightRadius="2dp"/></shape>"##).unwrap();
+        let svg = vector(&path).unwrap();
+        assert!(svg.contains("<pattern"));
+        assert!(svg.contains("M8,0"));
+        assert!(svg.contains("Q24,24 22,24"));
+        std::fs::write(&path,r##"<vector xmlns:android="http://schemas.android.com/apk/res/android" android:alpha="0.5"><path android:pathData="M0,0L24,24" android:fillColor="#FFFFFF"/></vector>"##).unwrap();
+        assert!(vector(&path).unwrap().contains("opacity=\"0.5\""));
     }
 }

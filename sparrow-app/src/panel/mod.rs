@@ -30,5 +30,6 @@ pub mod workflow_tools;
 pub mod problems_view;
 
 pub mod resource_manager;
+mod resource_rename;
 
 pub mod git_history;
