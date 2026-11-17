@@ -407,16 +407,83 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
             svg_color(value)
         }
     }
+    fn referenced(reference: &str, path: &Path, depth: usize) -> Option<String> {
+        use base64::Engine;
+        let (kind, name) = reference.strip_prefix('@')?.split_once('/')?;
+        if !matches!(kind, "drawable" | "mipmap")
+            || name.is_empty()
+            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return None;
+        }
+        let res = path.parent()?.parent()?;
+        let mut folders = vec![res.join(kind)];
+        if path.parent()?.file_name()?.to_str()?.starts_with(kind) {
+            folders.insert(0, path.parent()?.to_path_buf());
+        }
+        for dir in std::fs::read_dir(res).ok()?.flatten() {
+            if dir
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&format!("{kind}-"))
+            {
+                folders.push(dir.path());
+            }
+        }
+        for folder in folders {
+            for ext in ["xml", "png", "webp", "jpg", "jpeg"] {
+                let file = folder.join(format!("{name}.{ext}"));
+                if !file.is_file() {
+                    continue;
+                }
+                if ext == "xml" {
+                    return drawable_svg(&file, depth + 1);
+                }
+                if std::fs::metadata(&file).ok()?.len() > 8 * 1024 * 1024 {
+                    return None;
+                }
+                let bytes = std::fs::read(file).ok()?;
+                let mime = if ext == "jpg" { "jpeg" } else { ext };
+                return Some(format!(
+                    "<image width=\"24\" height=\"24\" href=\"data:image/{mime};base64,{}\" preserveAspectRatio=\"xMidYMid meet\"/>",
+                    base64::engine::general_purpose::STANDARD.encode(bytes)
+                ));
+            }
+        }
+        None
+    }
     fn render(
         node: roxmltree::Node<'_, '_>,
         path: &Path,
         depth: usize,
     ) -> Option<String> {
         let children = || {
-            node.children()
-                .filter(|n| n.is_element())
-                .filter_map(|n| render(n, path, depth))
-                .collect::<String>()
+            let mut body = String::new();
+            let mut clips = 0;
+            for child in node.children().filter(|n| n.is_element()) {
+                if child.has_tag_name("clip-path") {
+                    let id = format!("clip{}", child.range().start);
+                    if let Some(data) = child.attribute((A, "pathData")) {
+                        body.push_str(&format!("<defs><clipPath id=\"{id}\"><path d=\"{}\"/></clipPath></defs><g clip-path=\"url(#{id})\">",xml_escape(data)));
+                        clips += 1;
+                    }
+                } else if let Some(fragment) = render(child, path, depth) {
+                    body.push_str(&fragment);
+                }
+            }
+            body.push_str(&"</g>".repeat(clips));
+            body
+        };
+        let content = || {
+            if let Some(reference) = node.attribute((A, "drawable")) {
+                if let Some(value) = paint(node, "drawable", path) {
+                    return Some(format!(
+                        "<rect width=\"24\" height=\"24\" fill=\"{value}\"/>"
+                    ));
+                }
+                return referenced(reference, path, depth);
+            }
+            Some(children())
         };
         match node.tag_name().name() {
             "vector" => Some(children()),
@@ -448,11 +515,50 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
                 }
             )),
             "shape" => {
-                let solid = node
+                let mut solid = node
                     .children()
                     .find(|n| n.has_tag_name("solid"))
                     .and_then(|n| paint(n, "color", path))
                     .unwrap_or_else(|| "none".into());
+                let mut defs = String::new();
+                if let Some(gradient) =
+                    node.children().find(|n| n.has_tag_name("gradient"))
+                {
+                    let id = format!("gradient{}", gradient.range().start);
+                    let start = paint(gradient, "startColor", path)?;
+                    let end = paint(gradient, "endColor", path)?;
+                    let center = paint(gradient, "centerColor", path)
+                        .map(|c| {
+                            format!("<stop offset=\"0.5\" stop-color=\"{c}\"/>")
+                        })
+                        .unwrap_or_default();
+                    let stops = format!(
+                        "<stop offset=\"0\" stop-color=\"{start}\"/>{center}<stop offset=\"1\" stop-color=\"{end}\"/>"
+                    );
+                    let definition = if gradient.attribute((A, "type"))
+                        == Some("radial")
+                    {
+                        format!(
+                            "<radialGradient id=\"{id}\" cx=\"{}\" cy=\"{}\" r=\"{}\">{stops}</radialGradient>",
+                            number(gradient, "centerX", 0.5),
+                            number(gradient, "centerY", 0.5),
+                            number(gradient, "gradientRadius", 12.0) / 24.0
+                        )
+                    } else {
+                        let angle = number(gradient, "angle", 0.0).to_radians();
+                        let dx = angle.cos() * 0.5;
+                        let dy = -angle.sin() * 0.5;
+                        format!(
+                            "<linearGradient id=\"{id}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">{stops}</linearGradient>",
+                            0.5 - dx,
+                            0.5 - dy,
+                            0.5 + dx,
+                            0.5 + dy
+                        )
+                    };
+                    defs = format!("<defs>{definition}</defs>");
+                    solid = format!("url(#{id})");
+                }
                 let stroke = node.children().find(|n| n.has_tag_name("stroke"));
                 let edge = stroke
                     .and_then(|n| paint(n, "color", path))
@@ -460,7 +566,7 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
                 let width = stroke.map(|n| number(n, "width", 0.0)).unwrap_or(0.0);
                 if node.attribute((A, "shape")) == Some("oval") {
                     Some(format!(
-                        "<ellipse cx=\"12\" cy=\"12\" rx=\"11\" ry=\"11\" fill=\"{solid}\" stroke=\"{edge}\" stroke-width=\"{width}\"/>"
+                        "{defs}<ellipse cx=\"12\" cy=\"12\" rx=\"11\" ry=\"11\" fill=\"{solid}\" stroke=\"{edge}\" stroke-width=\"{width}\"/>"
                     ))
                 } else {
                     let radius = node
@@ -469,7 +575,7 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
                         .map(|n| number(n, "radius", 0.0))
                         .unwrap_or(0.0);
                     Some(format!(
-                        "<rect x=\"0\" y=\"0\" width=\"24\" height=\"24\" rx=\"{radius}\" fill=\"{solid}\" stroke=\"{edge}\" stroke-width=\"{width}\"/>"
+                        "{defs}<rect x=\"0\" y=\"0\" width=\"24\" height=\"24\" rx=\"{radius}\" fill=\"{solid}\" stroke=\"{edge}\" stroke-width=\"{width}\"/>"
                     ))
                 }
             }
@@ -482,30 +588,23 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
                 })
                 .or_else(|| node.children().find(|n| n.has_tag_name("item")))
                 .and_then(|n| render(n, path, depth)),
-            "item" => {
-                if let Some(reference) = node
-                    .attribute((A, "drawable"))
-                    .and_then(|s| s.strip_prefix("@drawable/"))
-                {
-                    if !reference
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || c == '_')
-                    {
-                        return None;
-                    }
-                    let res = path.parent()?.parent()?;
-                    drawable_svg(
-                        &res.join("drawable").join(format!("{reference}.xml")),
-                        depth + 1,
-                    )
-                } else if let Some(value) = paint(node, "drawable", path) {
-                    Some(format!(
-                        "<rect width=\"24\" height=\"24\" fill=\"{value}\"/>"
-                    ))
-                } else {
-                    Some(children())
-                }
+            "item" | "inset" => {
+                let inset = node.has_tag_name("inset");
+                let all = number(node, "inset", 0.0);
+                let l = number(node, if inset { "insetLeft" } else { "left" }, all);
+                let t = number(node, if inset { "insetTop" } else { "top" }, all);
+                let r =
+                    number(node, if inset { "insetRight" } else { "right" }, all);
+                let b =
+                    number(node, if inset { "insetBottom" } else { "bottom" }, all);
+                Some(format!(
+                    "<svg x=\"{l}\" y=\"{t}\" width=\"{}\" height=\"{}\" viewBox=\"0 0 24 24\" preserveAspectRatio=\"none\">{}</svg>",
+                    (24.0 - l - r).max(0.0),
+                    (24.0 - t - b).max(0.0),
+                    content()?
+                ))
             }
+            "bitmap" => referenced(node.attribute((A, "src"))?, path, depth),
             _ => None,
         }
     }
@@ -1089,7 +1188,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                         let rename = variant.clone();
                         let explorer = explorer.clone();
                         let renamed = explorer.clone();
-                        let reference = reference.clone();let usages=reference.clone();let find_name=menu_resource.name.clone();
+                        let reference = reference.clone();let rename_window=reference.clone();let usages=reference.clone();let find_name=menu_resource.name.clone();
                         let value = if menu_resource.kind == Kind::Asset {
                             menu_resource.name.clone()
                         } else {
@@ -1099,7 +1198,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                                     .kind
                                     .title()
                                     .to_lowercase()
-                                    .replace(' ', ""),
+                                    .replace(' ', "").trim_end_matches('s'),
                                 menu_resource.name
                             )
                         };
@@ -1107,9 +1206,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             .entry(MenuItem::new("Open definition").action(
                                 move || {
                                     if let Some(variant) = &open {
-                                        internal.send(InternalCommand::OpenFile {
-                                            path: variant.path.clone(),
-                                        });
+                                        internal.send(InternalCommand::JumpToLocation {location: EditorLocation {path: variant.path.clone(),position: Some(EditorPosition::Position(lsp_types::Position::new(variant.line,0))),scroll_offset: None,ignore_unconfirmed:false,same_editor_tab:false}});
                                     }
                                 },
                             ))
@@ -1139,6 +1236,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                                     ))
                                     .action(move || {
                                         if let Some(variant) = &rename {
+                                            rename_window.show_panel(PanelKind::FileExplorer);
                                             renamed
                                                 .rename_path(variant.path.clone());
                                         }
@@ -1466,5 +1564,35 @@ mod drawable_tests {
         assert!(svg.contains("#0000FF80"));
         assert!(svg.contains("rotate(90"));
         assert!(svg.contains("stroke-width=\"2\""));
+    }
+}
+
+#[cfg(test)]
+mod complex_drawable_tests {
+    use super::*;
+    #[test]
+    fn gradient_inset_bitmap_and_ordered_clip_are_rendered() {
+        let dir = tempfile::tempdir().unwrap();
+        let drawable = dir.path().join("drawable");
+        std::fs::create_dir(&drawable).unwrap();
+        let path = drawable.join("complex.xml");
+        std::fs::write(&path,r##"<inset xmlns:android="http://schemas.android.com/apk/res/android" android:insetLeft="3dp" android:insetTop="2dp"><shape><gradient android:startColor="#FF0000" android:centerColor="#00FF00" android:endColor="#0000FF" android:angle="90"/></shape></inset>"##).unwrap();
+        let svg = vector(&path).unwrap();
+        assert!(svg.contains("width=\"21\""));
+        assert!(svg.contains("linearGradient"));
+        assert!(svg.contains("offset=\"0.5\""));
+        assert!(svg.contains("url(#gradient"));
+        std::fs::write(drawable.join("pixel.png"), [137, 80, 78, 71]).unwrap();
+        std::fs::write(&path,r##"<bitmap xmlns:android="http://schemas.android.com/apk/res/android" android:src="@drawable/pixel"/>"##).unwrap();
+        assert!(
+            vector(&path)
+                .unwrap()
+                .contains("data:image/png;base64,iVBORw==")
+        );
+        std::fs::write(&path,r##"<vector xmlns:android="http://schemas.android.com/apk/res/android"><path android:pathData="M0,0L24,24"/><clip-path android:pathData="M0,0h12v24H0z"/><path android:pathData="M0,0h24v24H0z" android:fillColor="#FFFFFF"/></vector>"##).unwrap();
+        let svg = vector(&path).unwrap();
+        assert!(svg.find("M0,0L24,24").unwrap() < svg.find("clipPath").unwrap());
+        assert!(svg.contains("clip-path=\"url(#clip"));
+        assert!(svg.ends_with("</g></svg>"));
     }
 }
