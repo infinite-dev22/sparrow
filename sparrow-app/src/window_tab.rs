@@ -205,6 +205,11 @@ pub struct WindowTabData {
     pub flutter_test: crate::dart::test_service::FlutterTestData,
     pub source_control: SourceControlData,
     pub rename: RenameData,
+    pub file_refactor: crate::file_refactor::State,
+    pub scaffold: crate::scaffold::State,
+    pub formatting: crate::formatting::State,
+    pub project_search: crate::project_search::State,
+    pub git_actions: crate::git_actions::State,
     pub global_search: GlobalSearchData,
     pub call_hierarchy_data: CallHierarchyData,
     pub about_data: AboutData,
@@ -681,6 +686,11 @@ impl WindowTabData {
             outline: outline.clone(),
             plugin,
             rename,
+            file_refactor: crate::file_refactor::State::new(cx),
+            scaffold: crate::scaffold::State::new(cx),
+            formatting: crate::formatting::State::new(cx),
+            project_search: crate::project_search::State::new(cx),
+            git_actions: crate::git_actions::State::new(cx),
             global_search,
             call_hierarchy_data: CallHierarchyData {
                 root: cx.create_rw_signal(None),
@@ -1586,6 +1596,21 @@ impl WindowTabData {
             }
 
             // ==== File Explorer ====
+            GitCommand => {let args=data.and_then(|d|serde_json::from_value::<Vec<String>>(d).ok()).unwrap_or_else(||vec!["status".into()]);self.git_actions.open("Command".into(),args);}
+            FlutterProjectTask => {
+                if let Some(root)=self.workspace.path.as_deref(){if let Some(flutter)=crate::dart::sdk::find_flutter_binary(Some(root)) {let args=data.and_then(|d|serde_json::from_value::<Vec<String>>(d).ok()).unwrap_or_else(||vec!["build".into()]);self.common.internal_command.send(InternalCommand::NewTerminal{profile:Some(sparrow_rpc::terminal::TerminalProfile{name:format!("Flutter {}",args.join(" ")),command:Some(flutter.display().to_string()),arguments:Some(args),workdir:lsp_types::Url::from_directory_path(root).ok(),..Default::default()})});self.show_panel(PanelKind::Terminal);}else{self.show_alert("Flutter SDK".into(),"Configure a Flutter SDK to run project tasks.".into(),Vec::new());}}
+            }
+            SearchEverywhere | FindInFiles | ReplaceInFiles => {self.project_search.open(cmd==ReplaceInFiles,cmd==SearchEverywhere,data.and_then(|d|serde_json::from_value(d).ok()));}
+            ReformatCodeOptions => {
+                let target=data.and_then(|d|serde_json::from_value::<PathBuf>(d.clone()).ok()).or_else(||self.main_split.active_editor.get_untracked().and_then(|editor|editor.doc().content.with_untracked(|c|c.path().cloned()))).or_else(||self.workspace.path.clone());
+                if let Some(target)=target {self.formatting.open(target);}
+            }
+            ReplaceInEditor => {
+                if let Some(editor)=self.main_split.active_editor.get_untracked(){
+                    editor.run_command(&SparrowCommand {kind: CommandKind::Focus(sparrow_core::command::FocusCommand::Search),data:None},None,Modifiers::empty());
+                    self.common.find.replace_active.set(true); self.common.find.replace_focus.set(true);
+                }
+            }
             FileExplorerRename => {
                 self.file_explorer.rename_selected();
             }
@@ -2191,20 +2216,23 @@ impl WindowTabData {
                     editor_data.jump_highlight(InlineFindDirection::Left);
                 }
             }
-            RunCurrentFile | DebugCurrentFile => {
+            RunCurrentFile | DebugCurrentFile | ProfileCurrentFile => {
                 let path = data.clone().and_then(|value| serde_json::from_value::<PathBuf>(value).ok())
                     .or_else(|| self.main_split.active_editor.get_untracked()
                         .and_then(|editor| editor.doc().content.with_untracked(|content| content.path().cloned())));
                 if let Some(path) = path {
+                    let source=self.main_split.docs.with_untracked(|docs|docs.get(&path).map(|doc|doc.buffer.with_untracked(|b|b.to_string()))).or_else(||std::fs::read_to_string(&path).ok());
+                    if !source.as_deref().is_some_and(crate::dart::regex::has_entry_point){self.show_alert("Run configuration".into(),"This Dart file has no top-level main entrypoint.".into(),Vec::new());return;}
+                    if cmd==ProfileCurrentFile&&crate::dart::test_runner::is_test_file(&path){self.show_alert("Profile".into(),"Use Run or Debug for Dart test files.".into(),Vec::new());return;}
                     if crate::dart::test_runner::is_test_file(&path)
                         && crate::dart::test_runner::project_root(&path).is_some_and(|root| crate::dart::is_flutter_project(&root)) {
                         self.prepare_flutter_tests(vec![(path, String::new())], cmd == DebugCurrentFile, false);
                         return;
                     }
                     match crate::dart::run_config::configuration_for_file(&path, self.workspace.path.as_deref()) {
-                        Ok(config) => self.common.internal_command.send(InternalCommand::RunAndDebug {
+                        Ok(mut config) => {if cmd==ProfileCurrentFile {if !crate::dart::run_config::is_flutter_target(&config){self.show_alert("Profile".into(),"Profiling requires a Flutter entrypoint.".into(),Vec::new());return;}config.args.get_or_insert_with(Vec::new).push("--profile".into());} self.common.internal_command.send(InternalCommand::RunAndDebug {
                             mode: if cmd == DebugCurrentFile { RunDebugMode::Debug } else { RunDebugMode::Run }, config,
-                        }),
+                        });},
                         Err(message) => self.show_alert("Run configuration".into(), message, Vec::new()),
                     }
                 }
@@ -2234,6 +2262,10 @@ impl WindowTabData {
                     }
                 }
             }
+            CopyActiveFile => {if let Some(path)=self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())){self.show_panel(PanelKind::FileExplorer);self.file_explorer.reveal_in_file_tree(path.clone());self.file_explorer.naming.set(sparrow_rpc::file::Naming::Duplicating(sparrow_rpc::file::Duplicating{state:sparrow_rpc::file::NamingState::Naming,path,destination:None,is_dir:false,move_on_finish:false,editor_needs_reset:true}));}}
+            RefactorExtract | RefactorInline => {if let Some(editor)=self.main_split.active_editor.get_untracked(){self.common.internal_command.send(InternalCommand::RequestCodeActions{offset:editor.cursor().with_untracked(|c|c.offset()),mouse_click:false,kind:Some(if cmd==RefactorExtract{"refactor.extract"}else{"refactor.inline"}.into())});}}
+            SafeDeleteFile => {let path=data.and_then(|d|serde_json::from_value::<PathBuf>(d).ok()).or_else(||self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())));if let Some(path)=path.filter(|p|crate::dart::is_dart_path(p)){self.file_refactor.open_delete(path);}}
+            MoveActiveFile => {let path=data.and_then(|d|serde_json::from_value::<PathBuf>(d).ok()).or_else(||self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())));if let (Some(path),Some(root))=(path,self.workspace.path.as_deref()){if crate::dart::is_dart_path(&path){self.file_refactor.open_move(path,root);}}}
             RenameActiveFile => {
                 let path = data.and_then(|value| serde_json::from_value::<PathBuf>(value).ok())
                     .or_else(|| self.main_split.active_editor.get_untracked().and_then(|editor| editor.doc().content.with_untracked(|content| content.path().cloned())));
@@ -2241,7 +2273,7 @@ impl WindowTabData {
                     self.show_panel(PanelKind::FileExplorer);
                     self.common.focus.set(Focus::Panel(PanelKind::FileExplorer));
                     self.file_explorer.reveal_in_file_tree(path.clone());
-                    self.file_explorer.rename_path(path);
+                    if crate::dart::is_dart_path(&path){self.file_refactor.open(path);}else{self.file_explorer.rename_path(path);}
                 }
             }
             ToggleBookmark => {
@@ -2527,6 +2559,8 @@ impl WindowTabData {
                 }
                 self.show_panel(crate::panel::kind::PanelKind::Terminal);
             }
+            InternalCommand::GitAction{title,args} => {self.git_actions.open(title,args);}
+            InternalCommand::NewScaffold {base,template} => {self.scaffold.open(base,template);}
             InternalCommand::FinishNewNode { is_dir, path } => {
                 let file_explorer = self.file_explorer.clone();
                 let internal_command = self.common.internal_command;
@@ -2647,6 +2681,7 @@ impl WindowTabData {
             InternalCommand::RequestCodeActions {
                 offset,
                 mouse_click,
+                kind,
             } => {
                 let Some(editor) = self.main_split.active_editor.get_untracked()
                 else {
@@ -2732,7 +2767,7 @@ impl WindowTabData {
                             actions.set(data);
                         },
                     );
-                editor.request_code_actions(move |result| send(result));
+                editor.request_code_actions_with_kind(kind,move |result| send(result));
             }
 
             InternalCommand::ShowCodeActions {
@@ -3383,6 +3418,11 @@ impl WindowTabData {
         if self.settings_modal_visible.get_untracked()
             || self.run_config_modal_visible.get_untracked()
             || self.flutter_project.active.get_untracked()
+            || self.file_refactor.active.get_untracked()
+            || self.scaffold.active.get_untracked()
+            || self.formatting.active.get_untracked()
+            || self.project_search.active.get_untracked()
+            || self.git_actions.active.get_untracked()
         {
             return false;
         }
@@ -3784,6 +3824,7 @@ impl WindowTabData {
             | PanelKind::GitHistory
             | PanelKind::Notifications
             | PanelKind::PullRequests
+            | PanelKind::MobilePreview
             | PanelKind::RunningDevices
             | PanelKind::FileExplorer => self.is_panel_focused(kind),
         };
@@ -3965,7 +4006,16 @@ impl WindowTabData {
             "flutter" => crate::dart::sdk::find_flutter_binary(root),
             _ => None,
         };
+        let resolve_task=|program:&str| match program {"dart"=>crate::dart::sdk::find_dart_binary(root),"flutter"=>crate::dart::sdk::find_flutter_binary(root),_=>None}.map(|p|p.to_string_lossy().into_owned());
+        let tasks=prepared.before_launch.iter().map(|task|resolve_task(&task.program)).collect::<Vec<_>>();
+        let legacy=prepared.prelaunch.as_ref().and_then(|task|resolve_task(&task.program));
         if let Some(binary) = binary { prepared.program = binary.to_string_lossy().into_owned(); }
+        for(task,binary)in prepared.before_launch.iter_mut().zip(tasks){if let Some(binary)=binary{task.program=binary;}}
+        if let (Some(task),Some(binary))=(&mut prepared.prelaunch,legacy){task.program=binary;}
+        let attaching=prepared.args.as_ref().and_then(|args|args.first()).is_some_and(|a|a=="attach");
+        if attaching && crate::dart::run_config::is_flutter_target(&prepared){prepared.args.get_or_insert_with(Vec::new).extend(prepared.flutter_options.attach_args.clone());}
+        let remote_dart=attaching&&std::path::Path::new(&prepared.program).file_stem().is_some_and(|p|p=="dart");
+        let mode=if remote_dart{&RunDebugMode::Debug}else{mode};
         prepared.begin_before_launch();
         let config = &prepared;
         debug!("Starting Dart/Flutter target: {}", config.name);

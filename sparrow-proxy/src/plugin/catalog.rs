@@ -248,7 +248,7 @@ impl PluginCatalog {
                                     plugin_rpc.dap_loaded(dap_rpc.clone())
                                 {
                                     tracing::error!("{:?}", err);
-                                    if config.ty.as_deref() == Some("flutter-test") {
+                                    if config.is_test() {
                                         plugin_rpc.core_rpc.flutter_test_event(config.dap_id,
                                             serde_json::json!({"type":"sparrow.launchError", "output":err.to_string()}));
                                     }
@@ -256,7 +256,7 @@ impl PluginCatalog {
 
                                 if let Err(err) = dap_rpc.launch(&config) {
                                     tracing::error!("{:?}", err);
-                                    if config.ty.as_deref() == Some("flutter-test") {
+                                    if config.is_test() {
                                         plugin_rpc.core_rpc.flutter_test_event(config.dap_id,
                                             serde_json::json!({"type":"sparrow.launchError", "output":err.to_string()}));
                                     }
@@ -264,7 +264,7 @@ impl PluginCatalog {
                             }
                             Err(err) => {
                                 tracing::error!("{:?}", err);
-                                if config.ty.as_deref() == Some("flutter-test") {
+                                if config.is_test() {
                                     plugin_rpc.core_rpc.flutter_test_event(config.dap_id,
                                         serde_json::json!({"type":"sparrow.launchError", "output":err.to_string()}));
                                 }

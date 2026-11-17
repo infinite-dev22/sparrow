@@ -248,7 +248,9 @@ impl FileExplorerData {
     pub fn rename_selected(&self) {
         if let Some(file) = self.select.get_untracked() {
             if let Some(path) = file.path() {
-                self.rename_path(path.to_path_buf());
+                if crate::dart::is_dart_path(path) {
+                    self.common.sparrow_command.send(SparrowCommand { kind: CommandKind::Workbench(crate::command::SparrowWorkbenchCommand::RenameActiveFile), data: Some(serde_json::json!(path)) });
+                } else { self.rename_path(path.to_path_buf()); }
             }
         }
     }
@@ -711,11 +713,12 @@ impl FileExplorerData {
         let base_path_a = base_path_a.as_ref().unwrap_or(workspace_path);
 
         let mut menu = Menu::new("");
+        let mut new_menu = Menu::new("New");
 
         let base_path = base_path_a.clone();
         let data = self.clone();
         let naming = self.naming;
-        menu = menu.entry(MenuItem::new("New File").action(move || {
+        new_menu = new_menu.entry(MenuItem::new("File").action(move || {
             let base_path_b = &base_path;
             let base_path = base_path.clone();
             data.read_dir_cb(base_path_b, move |was_read| {
@@ -739,7 +742,7 @@ impl FileExplorerData {
         let base_path = base_path_a.clone();
         let data = self.clone();
         let naming = self.naming;
-        menu = menu.entry(MenuItem::new("New Directory").action(move || {
+        new_menu = new_menu.entry(MenuItem::new("Directory").action(move || {
             let base_path_b = &base_path;
             let base_path = base_path.clone();
             data.read_dir_cb(base_path_b, move |was_read| {
@@ -760,11 +763,22 @@ impl FileExplorerData {
             })
         }));
 
-        if !is_dir
-            && path_a
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("dart"))
-        {
+        new_menu = new_menu.separator();
+        let mut state_menu=Menu::new("State Management");
+        for (i,template) in crate::scaffold::catalog(workspace_path).into_iter().enumerate() {
+            let base=base_path_a.clone(); let commands=common.internal_command;
+            let item=MenuItem::new(template.title.clone()).action(move ||commands.send(InternalCommand::NewScaffold{base:base.clone(),template:template.clone()}));
+            if i<3 {new_menu=new_menu.entry(item);} else {state_menu=state_menu.entry(item);}
+        }
+        menu=menu.entry(new_menu.entry(state_menu));
+        if is_workspace {menu=menu.entry(crate::git_actions::menu(common.internal_command,None));}
+        if is_workspace && crate::dart::is_flutter_project(workspace_path) {for(title,args)in[("Build Project",vec!["build"]),("Clean Project",vec!["clean"]),("Run All Tests",vec!["test"]),("Run All Tests with Coverage",vec!["test","--coverage"])]{let commands=common.sparrow_command;menu=menu.entry(MenuItem::new(title).action(move ||commands.send(SparrowCommand{kind:CommandKind::Workbench(crate::command::SparrowWorkbenchCommand::FlutterProjectTask),data:Some(serde_json::json!(args))})));}}
+
+
+        let source=if crate::dart::is_dart_path(&path_a){self.naming_editor_data.doc().editors.with_editors_untracked(|editors|editors.values().find_map(|editor|{
+            let doc=editor.doc();doc.content.with_untracked(|c|c.path().filter(|p|*p==&path_a).map(|_|doc.buffer.with_untracked(|b|b.to_string())))
+        })).or_else(|| std::fs::read_to_string(&path_a).ok())}else{None};
+        if !is_dir && crate::dart::is_dart_path(&path_a) && source.as_deref().is_some_and(crate::dart::regex::has_entry_point) {
             for (label, command) in [
                 (
                     "Run",
@@ -774,7 +788,9 @@ impl FileExplorerData {
                     "Debug",
                     crate::command::SparrowWorkbenchCommand::DebugCurrentFile,
                 ),
+                ("Profile",crate::command::SparrowWorkbenchCommand::ProfileCurrentFile),
             ] {
+                if label=="Profile" && (crate::dart::test_runner::is_test_file(&path_a)||!common.workspace.path.as_deref().is_some_and(crate::dart::is_flutter_project)){continue;}
                 let path = path_a.clone();
                 let commands = common.sparrow_command;
                 let name = path
@@ -798,6 +814,9 @@ impl FileExplorerData {
             }
         }
 
+        if is_dir {for (title,command) in [("Find in Files…",crate::command::SparrowWorkbenchCommand::FindInFiles),("Replace in Files…",crate::command::SparrowWorkbenchCommand::ReplaceInFiles)] {let path=path_a.clone();let commands=common.sparrow_command;menu=menu.entry(MenuItem::new(title).action(move ||commands.send(SparrowCommand{kind:CommandKind::Workbench(command.clone()),data:Some(serde_json::json!(path))})));}}
+        let target=path_a.clone();let commands=common.sparrow_command;
+        menu=menu.entry(MenuItem::new("Reformat Code…").action(move ||commands.send(SparrowCommand{kind:CommandKind::Workbench(crate::command::SparrowWorkbenchCommand::ReformatCodeOptions),data:Some(serde_json::json!(target))})));
         menu = menu.separator();
 
         for (label, cut) in [("Cut", true), ("Copy", false)] {
@@ -819,31 +838,32 @@ impl FileExplorerData {
             )
             .separator();
 
-        // TODO: there are situations where we can open the file explorer to remote files
         if !common.workspace.kind.is_remote() {
-            let path = path_a.clone();
-            #[cfg(not(target_os = "macos"))]
-            let title = "Reveal in system file explorer";
-            #[cfg(target_os = "macos")]
-            let title = "Reveal in Finder";
-            menu = menu.entry(MenuItem::new(title).action(move || {
-                let path = path.parent().unwrap_or(&path);
-                if !path.exists() {
-                    return;
-                }
-
-                if let Err(err) = open::that(path) {
-                    tracing::error!(
-                        "Failed to reveal file in system file explorer: {}",
-                        err
-                    );
-                }
-            }));
+            let file=path_a.clone();let folder=if is_dir{file.clone()}else{file.parent().unwrap_or(&file).to_path_buf()};let files=folder.clone();let terminal=folder.clone();let commands=common.sparrow_command;let internal=common.internal_command;
+            let mut ancestry=Menu::new("Path Popup");for ancestor in file.ancestors(){let path=ancestor.to_path_buf();let data=self.clone();let title=path.display().to_string();ancestry=ancestry.entry(MenuItem::new(title).action(move ||data.reveal_in_file_tree(path.clone())));}
+            menu=menu.entry(Menu::new("Open In")
+                .entry(MenuItem::new("Files").action(move ||{let _=open::that(&files);}))
+                .entry(MenuItem::new("Open in Associated Application").action(move ||{let _=open::that(&file);}))
+                .entry(ancestry)
+                .entry(MenuItem::new("Terminal").action(move ||{
+                    internal.send(crate::command::InternalCommand::NewTerminal{profile:Some(sparrow_rpc::terminal::TerminalProfile{name:"Terminal".into(),workdir:lsp_types::Url::from_directory_path(&terminal).ok(),..Default::default()})});
+                    commands.send(crate::command::SparrowCommand{kind:crate::command::CommandKind::Workbench(crate::command::SparrowWorkbenchCommand::ShowPanel),data:Some(serde_json::json!(crate::panel::kind::PanelKind::Terminal))});
+                })));
         }
 
+        if !is_dir && crate::dart::is_dart_path(&path_a) {
+            let mut refactor=Menu::new("Refactor");
+            let path=path_a.clone();let commands=common.internal_command;
+            refactor=refactor.entry(MenuItem::new("Available Refactorings…").action(move ||commands.send(InternalCommand::QuickFixAt{location:crate::editor::location::EditorLocation{path:path.clone(),position:None,scroll_offset:None,ignore_unconfirmed:false,same_editor_tab:false}})));
+
+            for(title,command)in[("Rename…",crate::command::SparrowWorkbenchCommand::RenameActiveFile),("Move File…",crate::command::SparrowWorkbenchCommand::MoveActiveFile),("Safe Delete…",crate::command::SparrowWorkbenchCommand::SafeDeleteFile)] {let path=path_a.clone();let commands=common.sparrow_command;refactor=refactor.entry(MenuItem::new(title).action(move ||commands.send(SparrowCommand{kind:CommandKind::Workbench(command.clone()),data:Some(serde_json::json!(path))})));}
+            let path=path_a.clone();refactor=refactor.entry(MenuItem::new("Copy File…").action(move ||naming.set(Naming::Duplicating(Duplicating{state:NamingState::Naming,path:path.clone(),destination:None,is_dir:false,move_on_finish:false,editor_needs_reset:true}))));menu=menu.entry(refactor);
+        }
         if !is_workspace {
             let path = path_a.clone();
-            menu = menu.entry(MenuItem::new("Rename").action(move || {
+            let rename_commands=common.sparrow_command;
+            menu = menu.entry(MenuItem::new("Rename…").action(move || {
+                if crate::dart::is_dart_path(&path){rename_commands.send(crate::command::SparrowCommand{kind:crate::command::CommandKind::Workbench(crate::command::SparrowWorkbenchCommand::RenameActiveFile),data:Some(serde_json::json!(path))});return;}
                 naming.set(Naming::Renaming(Renaming {
                     state: NamingState::Naming,
                     path: path.clone(),

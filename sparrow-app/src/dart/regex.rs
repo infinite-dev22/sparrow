@@ -263,7 +263,7 @@ fn is_widget_class(name: &str, classes: &HashMap<String, ClassInfo>) -> bool {
 
 // ── Skip ranges (comments and strings) ───────────────────────────────
 
-pub(super) fn skip_ranges(source: &str) -> Vec<(usize, usize)> {
+pub(crate) fn skip_ranges(source: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let bytes = source.as_bytes();
     let mut i = 0;
@@ -281,12 +281,11 @@ pub(super) fn skip_ranges(source: &str) -> Vec<(usize, usize)> {
                 b'*' => {
                     let start = i;
                     i += 2;
-                    while i + 1 < bytes.len() {
-                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                            i += 2;
-                            break;
-                        }
-                        i += 1;
+                    let mut depth = 1;
+                    while i < bytes.len() && depth > 0 {
+                        if bytes.get(i..i + 2) == Some(b"/*") { depth += 1; i += 2; }
+                        else if bytes.get(i..i + 2) == Some(b"*/") { depth -= 1; i += 2; }
+                        else { i += 1; }
                     }
                     ranges.push((start, i));
                 }
@@ -432,5 +431,23 @@ mod tests {
         // But `Text` is still a widget at depth 1 (it was inside Dummy()).
         let text = a.widgets.iter().find(|w| w.class_name == "Text").unwrap();
         assert_eq!(text.depth, 1);
+    }
+}
+/// A runnable Dart library has a top-level main declaration, not a method or text mention.
+pub fn has_entry_point(source: &str) -> bool {
+    static MAIN: Lazy<Regex> = Lazy::new(||Regex::new(r"\bmain\s*\([^)]*\)\s*(?:async\s*)?(?:\{|=>)").unwrap());
+    let mut code=source.as_bytes().to_vec();
+    for (start,end) in skip_ranges(source){for byte in &mut code[start..end]{if *byte!=b'\n'{*byte=b' ';}}}
+    let code=String::from_utf8_lossy(&code);
+    MAIN.find_iter(&code).any(|found|{
+        let mut depth=0usize;for c in code[..found.start()].chars(){match c{'{'=>depth+=1,'}'=>depth=depth.saturating_sub(1),_=>{}}}depth==0
+    })
+}
+#[cfg(test)]
+mod entry_tests {
+    #[test]
+    fn only_top_level_main_is_runnable() {
+        for text in ["void main() {}","Future<void> main(List<String> args) async {}","main() => runApp(App());"]{assert!(super::has_entry_point(text));}
+        for text in ["// void main() {}","final text = 'main() {}';","class Tool { static void main() {} }","void helper() {void main() {}}",""]{assert!(!super::has_entry_point(text));}
     }
 }

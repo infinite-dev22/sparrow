@@ -164,21 +164,16 @@ impl EditorGutterView {
                 {
                     let rect = Rect::from_origin_size(
                         (
-                            origin + lanes.colors as f64 + slot as f64 * 14.0 + 2.0,
-                            top + (line_height - 10.0) / 2.0,
+                            (origin + lanes.colors as f64 + slot as f64 * 14.0 + 1.0).round(),
+                            (top + (line_height - 12.0) / 2.0).round(),
                         ),
-                        (10.0, 10.0),
+                        (12.0, 12.0),
                     );
                     let [r, g, b, a] = swatch.rgba;
                     cx.fill(
                         &rect,
                         floem::peniko::Color::from_rgba8(r, g, b, a),
-                        1.0,
-                    );
-                    cx.stroke(
-                        &rect,
-                        config.color(SparrowColor::EDITOR_DIM),
-                        &floem::peniko::kurbo::Stroke::new(1.0),
+                        0.0,
                     );
                 }
                 for (slot, icon) in
@@ -271,6 +266,8 @@ impl View for EditorGutterView {
                 if line > last_line {
                     break;
                 }
+                let marked=self.editor.doc().content.with_untracked(|c|c.path().is_some_and(|path|self.editor.common.breakpoints.with_untracked(|all|all.get(path).is_some_and(|points|points.contains_key(&line)))));
+                if marked {continue;}
 
                 let text = if show_relative {
                     if line == current_line {
@@ -527,15 +524,15 @@ impl GutterLanes {
         run: bool,
         tests: bool,
     ) -> Self {
-        let breakpoint = 4.0;
-        let bookmark = breakpoint + 24.0;
-        let colors_x = bookmark + if bookmarks { 14.0 } else { 0.0 };
-        let icons_x = colors_x + colors as f32 * 14.0;
-        let run_x = icons_x + icons as f32 * 16.0;
+        let breakpoint = -12.0;
+        let icons_x = 4.0;
+        let colors_x = icons_x + icons as f32 * 16.0;
+        let bookmark = colors_x + colors as f32 * 14.0;
+        let run_x = bookmark + if bookmarks {14.0} else {0.0};
         let padding = run_x
             + if run { 24.0 } else { 0.0 }
             + if tests { 48.0 } else { 0.0 }
-            + 28.0;
+            + 6.0;
         Self {
             breakpoint,
             bookmark,
@@ -553,9 +550,10 @@ mod lane_tests {
     fn simultaneous_decorations_have_independent_nonoverlapping_space() {
         let minimal = GutterLanes::new(0, 0, false, false, false);
         let full = GutterLanes::new(2, 2, true, true, true);
-        assert_eq!(full.colors, full.bookmark + 14.0);
-        assert_eq!(full.icons, full.colors + 28.0);
-        assert_eq!(full.run, full.icons + 32.0);
+        assert!(full.breakpoint < 0.0);
+        assert_eq!(full.colors, full.icons + 32.0);
+        assert_eq!(full.bookmark, full.colors + 28.0);
+        assert_eq!(full.run, full.bookmark + 14.0);
         assert!(full.padding > minimal.padding + 100.0);
     }
 }

@@ -134,11 +134,21 @@ pub fn find_dart_sdk(workspace_root: Option<&Path>) -> Option<DartSdk> {
 
 /// Find the `dart` executable path for a workspace.
 pub fn find_dart_binary(workspace_root: Option<&Path>) -> Option<PathBuf> {
+    // Executing a tool does not require optional version/channel metadata.
+    if !workspace_root.is_some_and(super::is_flutter_project) {
+        if let Some(root)=configured_sdk_root(workspace_root,"dart-sdk-path") {return resolve_binary(&root.join("bin"),"dart");}
+    }
+    if let Some(root)=configured_sdk_root(workspace_root,"flutter-sdk-path") {
+        if let Some(dart)=resolve_dart_from_flutter_root(&root).or_else(||resolve_binary(&root.join("bin"),"dart")){return Some(dart);}
+    }
     find_dart_sdk(workspace_root).map(|sdk| sdk.dart_bin)
 }
 
 /// Find the `flutter` executable path for a workspace.
 pub fn find_flutter_binary(workspace_root: Option<&Path>) -> Option<PathBuf> {
+    if let Some(root)=configured_sdk_root(workspace_root,"flutter-sdk-path") {
+        if resolve_dart_from_flutter_root(&root).or_else(||resolve_binary(&root.join("bin"),"dart")).is_some(){return resolve_binary(&root.join("bin"),"flutter");}
+    }
     find_flutter_sdk(workspace_root).map(|sdk| sdk.flutter_bin)
 }
 

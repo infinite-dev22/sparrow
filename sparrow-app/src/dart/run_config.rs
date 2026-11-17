@@ -316,6 +316,7 @@ pub struct Draft {
     pub entry: String,
     pub dart_entry: bool,
     dart_prefix: Vec<String>,
+    flutter_command: String,
     pub args: String,
     pub attach: String,
     pub flavor: String,
@@ -339,6 +340,7 @@ impl Draft {
             entry: c.program.clone(),
             dart_entry: false,
             dart_prefix: Vec::new(),
+            flutter_command: "run".into(),
             args: String::new(),
             attach: join_args(&c.flutter_options.attach_args),
             flavor: String::new(),
@@ -365,10 +367,11 @@ impl Draft {
         };
         let mut args = c.args.unwrap_or_default();
         if d.flutter() {
-            if args.first().is_some_and(|a| a == "run" || a == "attach") {
-                args.remove(0);
+            if args.first().is_some_and(|a| matches!(a.as_str(),"run"|"attach"|"test")) {
+                d.flutter_command = args.remove(0);
             }
-            d.entry = "lib/main.dart".into();
+            d.entry = if d.flutter_command=="test" {"test"}else{"lib/main.dart"}.into();
+            if d.flutter_command=="test" {if let Some(index)=args.iter().position(|a|!a.starts_with('-')&&(a.is_empty()||a.ends_with(".dart")||a=="test")){d.entry=args.remove(index);}}
             let mut rest = Vec::new();
             let mut iter = args.into_iter();
             while let Some(a) = iter.next() {
@@ -461,8 +464,7 @@ impl Draft {
                     "Set entrypoint and flavor in their dedicated fields.".into()
                 );
             }
-            let mut args =
-                vec!["run".into(), "--target".into(), self.entry.trim().into()];
+            let mut args = if self.flutter_command=="test" {vec!["test".into(),self.entry.trim().into()]}else{vec![self.flutter_command.clone(), "--target".into(), self.entry.trim().into()]};
             if !self.flavor.trim().is_empty() {
                 args.extend(["--flavor".into(), self.flavor.trim().into()]);
             }
@@ -530,7 +532,10 @@ pub fn build_drafts(
                     directory.display()
                 ));
             }
-            if draft.flutter() || draft.dart_entry {
+            if draft.flutter() && draft.flutter_command=="test" {
+                let target=directory.join(draft.entry.trim());
+                if !target.exists(){return Err(format!("{}: choose an existing test file or directory.",draft.name));}
+            } else if draft.flutter() || draft.dart_entry {
                 let target = directory.join(draft.entry.trim());
                 if !target.is_file()
                     || !target.extension().is_some_and(|extension| {
@@ -680,28 +685,16 @@ fn load_from(project: &Path, local: Option<&Path>) -> Option<Vec<RunDebugConfig>
 pub fn templates_file(root: &Path) -> Option<PathBuf> {
     local_file(root).map(|path| path.with_extension("templates.toml"))
 }
+pub const TEMPLATE_NAMES:&[&str]=&["Flutter","Dart Command Line App","Flutter Test","Dart Test","Flutter Web","Flutter Profile","Flutter Release","Flutter Attach","Dart Remote Debug"];
 pub fn default_templates(root: &Path) -> Vec<RunDebugConfig> {
-    [true, false]
-        .into_iter()
-        .map(|flutter| {
-            let mut config = new_configuration(Some(root));
-            config.name = if flutter {
-                "Flutter"
-            } else {
-                "Dart Command Line App"
-            }
-            .into();
-            config.ty = Some(if flutter { "flutter" } else { "dart" }.into());
-            config.program = if flutter { "flutter" } else { "dart" }.into();
-            config.args = Some(if flutter {
-                vec!["run".into(), "--target".into(), "lib/main.dart".into()]
-            } else {
-                vec!["run".into(), "bin/main.dart".into()]
-            });
-            config.cwd = None;
-            config
-        })
-        .collect()
+    TEMPLATE_NAMES.iter().enumerate().map(|(i,name)| {
+        let mut config=new_configuration(Some(root));config.name=(*name).into();
+        config.ty=Some(if matches!(i,1|3|8){if i==3{"dart-test"}else{"dart"}}else if i==2{"flutter-test"}else{"flutter"}.into());
+        config.program=if matches!(i,1|3|8){"dart"}else{"flutter"}.into();
+        config.args=Some(match i {
+            1=>vec!["run","bin/main.dart"],2=>vec!["test","test"],3=>vec!["test"],4=>vec!["run","--target","lib/main.dart","-d","chrome"],5=>vec!["run","--target","lib/main.dart","--profile"],6=>vec!["run","--target","lib/main.dart","--release"],7=>vec!["attach","--target","lib/main.dart"],8=>vec!["attach","http://127.0.0.1:8181/"],_=>vec!["run","--target","lib/main.dart"]
+        }.into_iter().map(str::to_string).collect());config.cwd=None;config
+    }).collect()
 }
 pub fn load_templates(root: &Path) -> Vec<RunDebugConfig> {
     let saved = templates_file(root)
@@ -712,7 +705,7 @@ pub fn load_templates(root: &Path) -> Vec<RunDebugConfig> {
         .map(|default| {
             saved
                 .iter()
-                .find(|config| config.ty == default.ty && config.is_dart_flutter())
+                .find(|config| config.ty == default.ty && config.name == default.name && config.is_dart_flutter())
                 .cloned()
                 .unwrap_or(default)
         })
@@ -1169,7 +1162,7 @@ mod independent_storage_tests {
     #[test]
     fn templates_allow_blank_entrypoints_but_launch_configurations_require_them() {
         let root = tempfile::tempdir().unwrap();
-        for template in default_templates(root.path()) {
+        for template in default_templates(root.path()).into_iter().take(2) {
             let mut draft = Draft::from_config(template);
             draft.entry.clear();
             let saved = draft.build_template().unwrap();
@@ -1334,4 +1327,54 @@ mod independent_storage_tests {
         draft.tasks.push(TaskDraft::new());
         assert!(draft.build().is_err());
     }
+}
+
+#[cfg(test)] mod preset_tests {use super::*;
+ #[test]fn expanded_presets_round_trip_without_changing_the_sdk_command(){let root=tempfile::tempdir().unwrap();for c in default_templates(root.path()){let restored=Draft::from_config(c.clone()).build().unwrap();assert_eq!(restored.args,c.args,"{}",c.name);assert_eq!(restored.program,c.program);assert!(restored.is_dart_flutter());}}
+}
+
+/// Execute a captured configuration as an ordered before-launch task, without a GUI.
+/// A snapshot retains its working directory, environment and own prerequisites.
+pub fn execute_task_snapshot(json:&str)->Result<i32,String>{
+    let mut config:RunDebugConfig=serde_json::from_str(json).map_err(|e|e.to_string())?;
+    if !config.is_dart_flutter(){return Err("Configuration tasks require a Dart or Flutter target.".into());}
+    if std::path::Path::new(&config.program).file_stem().is_some_and(|p|p=="dart")&&config.args.as_ref().and_then(|a|a.first()).is_some_and(|a|a=="attach"){return Err("Remote debugging configurations cannot run as before-launch commands.".into());}
+    let cwd=config.cwd.as_deref().map(PathBuf::from).unwrap_or(std::env::current_dir().map_err(|e|e.to_string())?);
+    let execute=|program:&str,args:Option<&Vec<String>>|->Result<i32,String>{
+        let binary=match program {"dart"=>super::sdk::find_dart_binary(Some(&cwd)),"flutter"=>super::sdk::find_flutter_binary(Some(&cwd)),"${sparrow}"=>std::env::current_exe().ok(),_=>None}.unwrap_or_else(||PathBuf::from(program));
+        let mut command=std::process::Command::new(binary);command.current_dir(&cwd);if let Some(args)=args{command.args(args);}if let Some(env)=&config.env{command.envs(env);}
+        command.status().map(|s|s.code().unwrap_or(1)).map_err(|e|e.to_string())
+    };
+    if let Some(before)=&config.prelaunch {let code=execute(&before.program,before.args.as_ref())?;if code!=0{return Ok(code);}}
+    for before in &config.before_launch {if before.enabled{let code=execute(&before.program,before.args.as_ref())?;if code!=0{return Ok(code);}}}
+    // Apply user-supplied SDK paths exactly as ordinary run configurations do.
+    config.debug_command=None;
+    execute(&config.program,config.args.as_ref())
+}
+
+pub fn task_title(program:&str,args:&str)->String {
+    if program=="${sparrow}" {if let Ok(args)=split_args(args){if args.first().is_some_and(|a|a=="--run-config-task"){if let Some(config)=args.get(1).and_then(|json|serde_json::from_str::<RunDebugConfig>(json).ok()){return format!("Run configuration: {}",config.name);}}}}
+    format!("{program} {args}")
+}
+
+/// Keep exact entrypoint arguments aligned with a file move; similarly named files
+/// in other directories are left intact.
+pub(crate) fn rebind_file(config:&mut RunDebugConfig,root:&Path,old:&Path,new:&Path)->bool{
+    let cwd=launch_directory(root,config.cwd.as_deref());let mut changed=false;
+    let map=|value:&str|->Option<String>{let (prefix,path)=value.strip_prefix("--target=").map(|p|("--target=",p)).unwrap_or(("",value));let candidate=PathBuf::from(path);let candidate=if candidate.is_absolute(){candidate}else{cwd.join(candidate)};if candidate==old{Some(format!("{prefix}{}",new.strip_prefix(&cwd).unwrap_or(new).to_string_lossy().replace('\\',"/")))}else{None}};
+    if let Some(value)=map(&config.program){config.program=value;changed=true;}
+    if let Some(args)=&mut config.args{for arg in args{if let Some(value)=map(arg){*arg=value;changed=true;}}}
+    changed
+}
+/// Configuration files are refactoring inputs even when comment searching is off.
+pub(crate) fn refactored_configuration_files(root:&Path,old:&Path,new:&Path)->Result<Vec<(PathBuf,String,String)>,String>{
+    let mut paths=project_files(root);paths.push(root.join(".sparrow/run.toml"));if let Some(path)=local_file(root){paths.push(path);}let mut result=Vec::new();
+    for path in paths{if !path.is_file(){continue;}if path.is_symlink(){return Err(format!("Refusing to refactor linked configuration {}",path.display()));}let text=std::fs::read_to_string(&path).map_err(|e|e.to_string())?;let Ok(parsed)=toml::from_str::<RunDebugConfigs>(&text)else{continue;};let Ok(mut document)=text.parse::<toml_edit::Document>()else{continue;};let Some(configs)=document.get_mut("configs")else{continue;};let mut changed=false;
+    for(index,mut config)in parsed.configs.into_iter().enumerate(){let Some(table)=configs.get_mut(index)else{continue;};if rebind_file(&mut config,root,old,new){table["program"]=toml_edit::value(config.program);if let Some(args)=config.args{let mut array=toml_edit::Array::new();for arg in args{array.push(arg);}table["args"]=toml_edit::value(array);}changed=true;}}
+    if changed{result.push((path,text,document.to_string()));}}
+    Ok(result)
+}
+
+#[cfg(test)]mod refactoring_tests {use super::*;
+ #[test]fn moves_only_the_exact_configuration_target_and_preserves_toml_comments(){let root=tempfile::tempdir().unwrap();let old=root.path().join("lib/old.dart");let new=root.path().join("lib/new.dart");let mut config=new_configuration(Some(root.path()));config.program="dart".into();config.ty=Some("dart".into());config.args=Some(vec!["run".into(),"lib/old.dart".into(),"other/old.dart".into()]);assert!(rebind_file(&mut config,root.path(),&old,&new));assert_eq!(config.args.as_ref().unwrap()[1],"lib/new.dart");assert_eq!(config.args.as_ref().unwrap()[2],"other/old.dart");config.args.as_mut().unwrap()[1]="lib/old.dart".into();std::fs::create_dir(root.path().join(".run")).unwrap();let path=root.path().join(".run/check.sparrow.run.toml");let body=format!("# Keep this comment\n{}",toml_edit::ser::to_string(&RunDebugConfigs{configs:vec![config]}).unwrap());std::fs::write(&path,&body).unwrap();let files=refactored_configuration_files(root.path(),&old,&new).unwrap();assert_eq!(files.len(),1);assert!(files[0].2.starts_with("# Keep this comment"));assert!(files[0].2.contains("lib/new.dart"));assert!(files[0].2.contains("other/old.dart"));assert_eq!(std::fs::read_to_string(path).unwrap(),body);}
 }

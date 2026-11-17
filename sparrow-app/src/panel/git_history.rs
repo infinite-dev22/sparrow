@@ -89,7 +89,9 @@ fn graph(commits: &mut [Commit]) {
                 lanes.insert((index + offset).min(lanes.len()), parent.clone());
             }
         }
-        let x = |lane: usize| 8 + lane * 12;
+        let x = |lane: usize| 9 + lane * 16;
+        let colors=["#8C78E8","#42B5A4","#E6AB5D","#5E9FE6","#D97CB0","#A3BD66"];
+        let color=|lane:usize|colors[lane%colors.len()];
         let mut paths = String::new();
         for (lane, hash) in before.iter().enumerate() {
             if hash == &commit.hash {
@@ -97,28 +99,26 @@ fn graph(commits: &mut [Commit]) {
             }
             if let Some(next) = lanes.iter().position(|item| item == hash) {
                 paths.push_str(&format!(
-                    "<path d='M{} 0 L{} 24'/>",
-                    x(lane),
-                    x(next)
+                    "<path stroke='{}' d='M{} 0 C{} 12 {} 12 {} 24'/>",
+                    color(lane),x(lane),x(lane),x(next),x(next)
                 ));
             }
         }
         if old.is_some() {
-            paths.push_str(&format!("<path d='M{} 0 V12'/>", x(index)));
+            paths.push_str(&format!("<path stroke='{}' d='M{} 0 V12'/>",color(index), x(index)));
         }
         for parent in &commit.parents {
             if let Some(next) = lanes.iter().position(|item| item == parent) {
                 paths.push_str(&format!(
-                    "<path d='M{} 12 L{} 24'/>",
-                    x(index),
-                    x(next)
+                    "<path stroke='{}' d='M{} 12 C{} 20 {} 18 {} 24'/>",
+                    color(next),x(index),x(index),x(next),x(next)
                 ));
             }
         }
+        let width=(before.len().max(lanes.len()).max(1))*16+6;
         commit.graph = format!(
-            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {} 24'><g stroke='#8062BE' fill='none' stroke-width='1.5'>{paths}</g><circle cx='{}' cy='12' r='3' fill='#8062BE'/></svg>",
-            (before.len().max(lanes.len()).max(1)) * 12 + 4,
-            x(index)
+            "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} 24'><g fill='none' stroke-width='2' stroke-linecap='round'>{paths}</g><circle cx='{}' cy='12' r='{}' fill='{}' stroke='{}' stroke-width='1.5'/></svg>",
+            x(index),if commit.parents.len()>1{4.0}else{3.0},if commit.parents.len()>1{"#1E1F22"}else{color(index)},color(index)
         );
     }
 }
@@ -142,6 +142,7 @@ fn load(
     since: &str,
     path: &str,
     query: &str,
+    limit: usize,
 ) -> Log {
     let real_root = match output(
         Path::new("git"),
@@ -158,7 +159,7 @@ fn load(
     };
     let mut args = vec![
         "log".to_string(),
-        "-500".into(),
+        format!("-{}",limit),
         "--topo-order".into(),
         "--date=format:%d/%m/%Y, %H:%M".into(),
         "--format=%H%x1f%P%x1f%s%x1f%an%x1f%ad%x1f%D".into(),
@@ -217,6 +218,7 @@ fn load(
             "--format=%(refname)%1f%(refname:short)%1f%(HEAD)",
             "refs/heads",
             "refs/remotes",
+            "refs/tags",
         ],
         Some(&real_root),
     )
@@ -320,8 +322,10 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         .path
         .clone()
         .filter(|_| window.workspace.kind.is_local());
+    let git_commands=window.common.internal_command;
     let state = create_rw_signal(Log::default());
     let refresh = create_rw_signal(0u64);
+    let limit=create_rw_signal(500usize);
     let epoch = create_rw_signal(0u64);
     let query = create_rw_signal(String::new());
     let branch = create_rw_signal(String::new());
@@ -339,6 +343,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
     let remote_open = create_rw_signal(true);
     create_effect(move |_| {
         refresh.get();
+        let limit=limit.get();
         git_updates.get();
         current_branch.get();
         let query = query.get();
@@ -357,7 +362,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             });
         std::thread::spawn(move || {
             send(match root {
-                Some(root) => load(&root, &branch, &user, &since, &path, &query),
+                Some(root) => load(&root, &branch, &user, &since, &path, &query,limit),
                 None => Log {
                     error: "Open a local Git project to view history.".into(),
                     ..Default::default()
@@ -558,7 +563,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 let message = commit.subject.clone();
                 stack((
                     svg(move || commit.graph.clone())
-                        .style(|s| s.width(40.0).height(24.0).flex_shrink(0.0_f32)),
+                        .style(|s| s.width(70.0).height(24.0).flex_shrink(0.0_f32)),
                     label(move || commit.subject.clone()).style(|s| {
                         s.flex_basis(0.0)
                             .flex_grow(1.0_f32)
@@ -580,6 +585,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     let hash = copy.clone();
                     let message = message.clone();
                     Menu::new("")
+                        .entry(crate::git_actions::menu(git_commands,Some(copy.clone())))
                         .entry(
                             MenuItem::new("Copy Revision Number")
                                 .action(move || crate::menus::copy_text(&hash)),
@@ -650,6 +656,8 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     let mut menu=Menu::new("");for (label,value) in [("All time",""),("Last 24 hours","24 hours ago"),("Last 7 days","7 days ago"),("Last 30 days","30 days ago")]{menu=menu.entry(MenuItem::new(label).action(move ||since.set(value.into())));}menu
                 }).style(|s|s.max_width(130.0).text_ellipsis()),
                 text_input(path).placeholder("Paths").style(move |s|s.height(26.0).width(95.0).padding_horiz(6.0).border(1.0).border_radius(3.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+                label(||"Load more").on_click_stop(move |_|limit.update(|n|*n+=500)).style(|s|s.padding_horiz(5.0)),
+                label(||"Git Actions ▾").ide_popout_menu(move ||crate::git_actions::menu(git_commands,None)),
                 clickable_icon(||SparrowIcons::IMAGE_LOADING,move ||refresh.update(|n|*n+=1),||false,||false,||"Refresh Git Log",config)
             )).style(|s|s.height(30.0).width_full().gap(6.0).padding_horiz(6.0).items_center()),
                 label(move ||state.with(|s|s.error.clone())).style(move |s|s.width_full().padding(12.0).apply_if(state.with(|s|s.error.is_empty()),|s|s.hide())),

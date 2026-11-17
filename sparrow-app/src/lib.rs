@@ -65,3 +65,13 @@ pub mod popup_menu;
 pub mod project_session;
 
 pub mod markdown_preview;
+
+pub mod file_refactor;
+
+pub mod scaffold;
+
+pub mod formatting;
+
+pub mod project_search;
+
+pub mod git_actions;

@@ -25,6 +25,7 @@ pub(crate) fn external_dialog_active() -> bool {
     FILE_PICKERS.with(|count| count.get() > 0)
 }
 /// A popup Escape must not also dismiss its containing dialog on key-up.
+pub(crate) fn note_popup_escape(){POPUP_ESCAPE.with(|handled|handled.set(true));}
 pub(crate) fn consume_popup_escape() -> bool {
     POPUP_ESCAPE.with(|handled| handled.replace(false))
 }
@@ -533,4 +534,9 @@ mod tests {
         }
         assert_eq!(list_destination(&Key::Named(NamedKey::Enter), 0, 3), None);
     }
+}
+
+/// Return keyboard input to the workbench when a native dialog closes.
+pub(crate) fn restore_workbench_on_close(active:RwSignal<bool>,common:Rc<crate::window_tab::CommonData>){
+    floem::reactive::create_effect(move |previous:Option<bool>|{let open=active.get();if previous==Some(true)&&!open{common.keyboard_focus.set(None);common.view_id.get_untracked().request_focus();}open});
 }

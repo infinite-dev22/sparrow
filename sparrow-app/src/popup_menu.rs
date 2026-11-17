@@ -257,7 +257,7 @@ fn show(menu: Menu, position: Option<Point>, anchor: Option<ViewId>) {
                 let selected = selections
                     .with_untracked(|s| s.get(depth).copied().unwrap_or(0));
                 match &key.key.logical_key {
-                    Key::Named(NamedKey::Escape) => dismiss(overlay, restore),
+                    Key::Named(NamedKey::Escape) => {crate::modal_focus::note_popup_escape();dismiss(overlay, restore)},
                     Key::Named(NamedKey::ArrowLeft) if depth > 0 => {
                         levels.update(|menus| {
                             menus.pop();

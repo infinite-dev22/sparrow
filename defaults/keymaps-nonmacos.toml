@@ -259,7 +259,7 @@ command = "toggle_file_explorer_focus"
 
 [[keymaps]]
 key = "ctrl+shift+f"
-command = "toggle_search_focus"
+command = "find_in_files"
 
 [[keymaps]]
 key = "ctrl+shift+x"
@@ -348,3 +348,7 @@ command = "toggle_all_tool_windows"
 key = "esc"
 command = "focus_editor"
 when = "panel_focus && !modal_focus && !search_active && !search_focus"
+
+[[keymaps]]
+key = "ctrl+shift+r"
+command = "replace_in_files"

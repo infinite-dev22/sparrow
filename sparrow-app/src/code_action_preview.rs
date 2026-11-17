@@ -51,7 +51,7 @@ pub enum Preview {
 #[derive(Clone)]
 pub(crate) struct EditFile {
     pub(crate) path: PathBuf,
-    edits: Vec<TextEdit>,
+    pub(crate) edits: Vec<TextEdit>,
     version: Option<i32>,
 }
 pub(crate) fn edit_files(edit: &WorkspaceEdit) -> Result<Vec<EditFile>, String> {
@@ -144,7 +144,7 @@ fn byte_offset(source: &str, position: Position) -> Result<usize, String> {
         Err("The fix refers to a column outside the current document.".into())
     }
 }
-fn edited(source: &str, edits: &[TextEdit]) -> Result<String, String> {
+pub(crate) fn edited(source: &str, edits: &[TextEdit]) -> Result<String, String> {
     let mut ranges = edits
         .iter()
         .map(|e| {

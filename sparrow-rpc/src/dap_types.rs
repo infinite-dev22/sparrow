@@ -120,7 +120,7 @@ impl RunDebugConfig {
         if self
             .ty
             .as_deref()
-            .is_some_and(|ty| !matches!(ty, "dart" | "flutter" | "flutter-test"))
+            .is_some_and(|ty| !matches!(ty, "dart" | "flutter" | "flutter-test" | "dart-test"))
         {
             return false;
         }
@@ -132,12 +132,13 @@ impl RunDebugConfig {
             return false;
         }
         sdk(&self.program)
-            || (self.ty.as_deref() == Some("flutter-test")
+            || (self.is_test()
                 && std::path::Path::new(&self.program)
                     .extension()
                     .is_some_and(|e| e == "dart")
                 && self.debug_adapter.is_some())
     }
+    pub fn is_test(&self)->bool{matches!(self.ty.as_deref(),Some("flutter-test"|"dart-test"))}
     pub fn dart_debug_adapter(&self) -> Option<RunDebugProgram> {
         if !self.is_dart_flutter() {
             return None;
@@ -145,7 +146,7 @@ impl RunDebugConfig {
         self.debug_adapter.clone().or_else(|| {
             Some(RunDebugProgram {
                 program: self.program.clone(),
-                args: Some(vec!["debug_adapter".into()]),
+                args: Some({let mut args=vec![if std::path::Path::new(&self.program).file_stem().is_some_and(|p|p=="flutter"){"debug-adapter"}else{"debug_adapter"}.into()];if self.is_test(){args.push("--test".into());}args}),
             })
         })
     }
@@ -613,6 +614,8 @@ impl Request for FlutterHotRestart {
     const COMMAND: &'static str = "hotRestart";
 }
 
+pub enum Attach {}
+impl Request for Attach {type Arguments=Value;type Result=Value;const COMMAND:&'static str="attach";}
 pub enum Launch {}
 
 impl Request for Launch {
@@ -1095,3 +1098,5 @@ mod ordered_task_tests {
         assert!(!launch.begin_before_launch());
     }
 }
+
+#[cfg(test)]mod preset_adapter_tests {use super::*;#[test]fn test_adapters_use_the_sdk_test_mode(){for (kind,program,command)in[("flutter-test","flutter","debug-adapter"),("dart-test","dart","debug_adapter")]{let config:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":kind,"name":"Tests","program":program,"args":["test"]})).unwrap();assert!(config.is_dart_flutter());assert_eq!(config.dart_debug_adapter().unwrap().args.unwrap(),vec![command.to_string(),"--test".to_string()]);}}}

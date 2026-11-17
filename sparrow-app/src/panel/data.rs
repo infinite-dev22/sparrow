@@ -59,6 +59,7 @@ pub fn default_panel_order() -> PanelOrder {
             PanelKind::DeviceManager,
             PanelKind::WidgetTree,
             PanelKind::DartOutline,
+            PanelKind::MobilePreview,
         ],
     );
 

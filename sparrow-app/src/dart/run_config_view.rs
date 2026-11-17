@@ -301,9 +301,8 @@ impl Dialog {
             self.focus_name();
         }
     }
-    fn add(&self, flutter: bool) {
+    fn add(&self, index: usize) {
         self.capture();
-        let index = if flutter { 0 } else { 1 };
         let config = match self
             .templates
             .with_untracked(|templates| templates[index].build_template())
@@ -562,15 +561,11 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         });
     let template_link = d.clone();
     let d_selected = d.selected;
-    let template_rows = [0usize, 1].map(|index| {
+    let template_rows = (0..run_config::TEMPLATE_NAMES.len()).map(|index| {
         let choose = d.clone();
         keyboard.control(
             label(move || {
-                if index == 0 {
-                    "    Flutter"
-                } else {
-                    "    Dart Command Line App"
-                }
+                format!("    {}",run_config::TEMPLATE_NAMES[index])
             })
             .on_click_stop(move |_| choose.choose_template(index))
             .style(move |s| {
@@ -596,14 +591,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         .cursor(CursorStyle::Pointer)
                 }),
                 move || {
-                    let flutter = add.clone();
-                    let dart = add.clone();
-                    vec![
-                        ModalChoice::new("Flutter", move || flutter.add(true)),
-                        ModalChoice::new("Dart Command Line App", move || {
-                            dart.add(false)
-                        }),
-                    ]
+                    run_config::TEMPLATE_NAMES.iter().enumerate().map(|(i,name)|{let add=add.clone();ModalChoice::new(*name,move ||add.add(i))}).collect()
                 },
             ),
             keyboard.icon(
@@ -654,10 +642,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         .color(config.get().color(SparrowColor::EDITOR_LINK))
                 }),
         ),
-        stack({
-            let [flutter, dart] = template_rows;
-            (flutter, dart)
-        })
+        floem::views::stack_from_iter(template_rows.collect::<Vec<_>>())
         .style(move |s| {
             s.flex_col()
                 .width_full()
@@ -813,8 +798,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                                 format!(
                                     "{}. {} {}",
                                     index + 1,
-                                    before.get(),
-                                    before_args.get()
+                                    run_config::task_title(&before.get(),&before_args.get()),
+                                    ""
                                 )
                             } else {
                                 format!(
@@ -825,10 +810,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                                             .get(program_state.selected.get())
                                             .and_then(|draft| draft.tasks.get(index))
                                             .map(|task| {
-                                                format!(
-                                                    "{} {}",
-                                                    task.program, task.args
-                                                )
+                                                run_config::task_title(&task.program,&task.args)
                                             })
                                             .unwrap_or_default()
                                     })
@@ -1054,6 +1036,13 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             stack((
                 stack((
                     keyboard.icon(||SparrowIcons::ADD,move ||{add_task.edit_task(0);floem::action::exec_after(std::time::Duration::from_millis(30),move |_|{if visible.get_untracked(){if let Some(id)=task_program_focus.get_untracked(){id.request_focus();}}});},||false,||false,||"Add before-launch task",config),
+                    keyboard.menu(label(||"Task type ▾"),{let presets=d.clone();move ||{
+                        let browser=if cfg!(target_os="macos"){("open", "https://localhost:7357")}else if cfg!(windows){("rundll32", "url.dll,FileProtocolHandler https://localhost:7357")}else{("xdg-open", "http://localhost:7357")};
+                        let mut choices=[("Launch Web Browser",browser.0,browser.1),("External Tool","",""),("Run Gradle Task",if cfg!(windows){"android\\gradlew.bat"}else{"./android/gradlew"},"assembleDebug"),("Build APK Artifact","flutter","build apk"),("Dart Code Generation","dart","run build_runner build --delete-conflicting-outputs")].into_iter().map(|(title,program,args)|{let d=presets.clone();ModalChoice::new(title,move ||{d.edit_task(0);d.fields[6].set(program.into());d.fields[7].set(args.into());d.capture();})}).collect::<Vec<_>>();
+                        presets.capture();
+                        for draft in presets.drafts.get_untracked(){if let Ok(mut config)=draft.build(){if let Some(root)=presets.window.workspace.path.as_deref(){config.cwd=Some(run_config::launch_directory(root,config.cwd.as_deref()).display().to_string());}let name=config.name.clone();let args=run_config::join_args(&["--run-config-task".into(),serde_json::to_string(&config).unwrap()]);let d=presets.clone();choices.push(ModalChoice::new(format!("Run configuration: {name}"),move ||{d.edit_task(0);d.fields[6].set("${sparrow}".into());d.fields[7].set(args.clone());d.capture();}));}}
+                        choices
+                    }}),
                     keyboard.icon(||SparrowIcons::REMOVE,move ||remove_task.edit_task(1),||false,move ||!editing_task.get(),||"Remove selected task",config),
                     keyboard.icon(||SparrowIcons::FILE_PICKER_UP,move ||up_task.edit_task(-1),||false,move ||selected_task.get()==0 || !editing_task.get(),||"Move task up",config),
                     keyboard.icon(||SparrowIcons::FOLD_DOWN,move ||down_task.edit_task(2),||false,move ||selected_task.get()+1>=task_count.get(),||"Move task down",config),

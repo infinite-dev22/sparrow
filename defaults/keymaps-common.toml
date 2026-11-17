@@ -796,3 +796,28 @@ when = "editor_focus"
 key = "F11"
 command = "toggle_bookmark"
 when = "editor_focus"
+
+[[keymaps]]
+key = "ctrl+alt+l"
+command = "format_document"
+when = "editor_focus"
+
+[[keymaps]]
+key = "ctrl+shift+alt+l"
+command = "reformat_code_options"
+
+[[keymaps]]
+key = "ctrl+r"
+command = "replace_in_editor"
+when = "editor_focus"
+mode = "i"
+
+[[keymaps]]
+key = "shift+f6"
+command = "rename_symbol"
+when = "editor_focus"
+
+[[keymaps]]
+key = "shift+f6"
+command = "file_explorer.rename"
+when = "file_explorer_focus"

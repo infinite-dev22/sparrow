@@ -124,6 +124,8 @@ mod logging;
 #[clap(version=meta::VERSION)]
 #[derive(Debug)]
 struct Cli {
+    #[clap(long,hide=true)]
+    run_config_task: Option<String>,
     /// Launch new window even if sparrow is already running
     #[clap(short, long, action)]
     new: bool,
@@ -654,9 +656,15 @@ impl AppData {
                                 && !tab.flutter_project.is_busy()
                             {
                                 Some(tab.flutter_project.active)
+                            } else if tab.file_refactor.active.get_untracked()&&!tab.file_refactor.is_busy(){Some(tab.file_refactor.active)
+                            } else if tab.scaffold.active.get_untracked(){Some(tab.scaffold.active)
+                            } else if tab.formatting.active.get_untracked()&&!tab.formatting.is_busy(){Some(tab.formatting.active)
+                            } else if tab.project_search.active.get_untracked()&&!tab.project_search.is_busy(){Some(tab.project_search.active)
+                            } else if tab.git_actions.active.get_untracked()&&!tab.git_actions.is_busy(){Some(tab.git_actions.active)
                             } else {
                                 None
                             };
+                            if modal.is_none()&&tab.git_actions.active.get_untracked(){tab.git_actions.cancel_command();return EventPropagation::Stop;}
                             if let Some(modal) = modal {
                                 modal.set(false);
                                 view_id.request_focus();
@@ -3504,7 +3512,7 @@ fn rename(window_tab_data: Rc<WindowTabData>) -> impl View {
     let preview = data.clone();
     let cancel = data.clone();
     stack((
-        label(|| "Rename symbol")
+        label(|| "Rename")
             .style(|s| s.font_bold().height(24.0).items_center()),
         container(
             TextInputBuilder::new()
@@ -3563,7 +3571,7 @@ fn rename(window_tab_data: Rc<WindowTabData>) -> impl View {
             label(|| "Cancel")
                 .on_click_stop(move |_| cancel.cancel())
                 .style(|s| s.padding_horiz(8.0).height(26.0).items_center()),
-            label(|| "Rename  ↵")
+            label(|| "Refactor  ↵")
                 .on_click_stop(move |_| apply.confirm(false))
                 .style(move |s| {
                     s.padding_horiz(8.0).height(26.0).items_center().color(
@@ -3581,7 +3589,9 @@ fn rename(window_tab_data: Rc<WindowTabData>) -> impl View {
     .on_event_stop(EventListener::PointerMove, |_| {})
     .on_event_stop(EventListener::PointerDown, |_| {})
     .style(move |s| {
-        let origin = window_tab_data.rename_origin();
+        let bounds = window_tab_data.common.workbench_size.get();
+        let height=layout_rect.get().height().max(180.0);
+        let origin=Point::new(((bounds.width-360.0)/2.0).max(0.0),((bounds.height-height)/2.0).max(0.0));
         s.absolute()
             .margin_left(origin.x as f32)
             .margin_top(origin.y as f32)
@@ -3615,8 +3625,15 @@ fn window_tab(
     let settings_modal = window_tab_data.settings_modal_visible;
     let run_modal = window_tab_data.run_config_modal_visible;
     let project_modal = window_tab_data.flutter_project.active;
+    let file_modal=window_tab_data.file_refactor.active;
+    let scaffold_modal=window_tab_data.scaffold.active;
+    let formatting_modal=window_tab_data.formatting.active;
+    let search_modal=window_tab_data.project_search.active;
+    let git_modal=window_tab_data.git_actions.active;
+    let symbol_modal=window_tab_data.rename.active;
+    let interaction_layer_open=move ||symbol_modal.get()||file_modal.get()||scaffold_modal.get()||formatting_modal.get()||search_modal.get()||git_modal.get();
     let modal_open =
-        move || settings_modal.get() || run_modal.get() || project_modal.get();
+        move || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || git_modal.get();
 
     let view = stack((
         stack((
@@ -3653,7 +3670,8 @@ fn window_tab(
         signature_help(window_tab_data.clone()).disabled(modal_open),
         hover(window_tab_data.clone()).disabled(modal_open),
         code_action(window_tab_data.clone()).disabled(modal_open),
-        rename(window_tab_data.clone()).disabled(modal_open),
+        stack((rename(window_tab_data.clone()).disabled(modal_open),crate::file_refactor::view(window_tab_data.clone()),crate::scaffold::view(window_tab_data.clone()),crate::formatting::view(window_tab_data.clone()),crate::project_search::view(window_tab_data.clone()),crate::git_actions::view(window_tab_data.clone()))).style(move |s|s.absolute().size_full().apply_if(!interaction_layer_open(),|s|s.hide())),
+
         palette(window_tab_data.clone()).disabled(modal_open),
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
@@ -4058,6 +4076,7 @@ fn window(window_data: WindowData) -> impl View {
 
 pub fn launch() {
     let cli = Cli::parse();
+    if let Some(json)=cli.run_config_task.as_deref(){let code=match crate::dart::run_config::execute_task_snapshot(json){Ok(code)=>code,Err(error)=>{eprintln!("{error}");1}};std::process::exit(code);}
 
     if !cli.wait {
         logging::panic_hook();
@@ -4694,25 +4713,11 @@ pub fn window_menu(
     menu = menu.entry(
         Menu::new("View")
             .entry(
-                Menu::new("Tool Windows")
-                    .entry(MenuItem::new("Project").action(move || {
-                        workbench_command.send(ToggleFileExplorerVisual);
-                    }))
-                    .entry(MenuItem::new("Terminal").action(move || {
-                        workbench_command.send(ToggleTerminalVisual);
-                    }))
-                    .entry(MenuItem::new("Version Control").action(move || {
-                        workbench_command.send(ToggleSourceControlVisual);
-                    }))
-                    .entry(MenuItem::new("Problems").action(move || {
-                        workbench_command.send(ToggleProblemVisual);
-                    }))
-                    .entry(MenuItem::new("Debug").action(move || {
-                        workbench_command.send(ToggleDebugVisual);
-                    }))
-                    .entry(MenuItem::new("Extensions").action(move || {
-                        workbench_command.send(TogglePluginVisual);
-                    })),
+                {
+                    use strum::IntoEnumIterator;
+                    let mut tools=Menu::new("Tool Windows");
+                    for kind in crate::panel::kind::PanelKind::iter().filter(|k|*k!=crate::panel::kind::PanelKind::DocumentSymbol){tools=tools.entry(MenuItem::new(kind.title()).action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(ShowPanel),data:serde_json::to_value(kind).ok()})));}tools
+                }
             )
             .entry(
                 Menu::new("Appearance")
@@ -4750,7 +4755,7 @@ pub fn window_menu(
             }))
             .separator()
             .entry(MenuItem::new("Search Everywhere").action(move || {
-                workbench_command.send(PaletteHelpAndFile);
+                workbench_command.send(SearchEverywhere);
             }))
             .entry(MenuItem::new("Class...").action(move || {
                 workbench_command.send(PaletteWorkspaceSymbol);
@@ -4830,6 +4835,7 @@ pub fn window_menu(
                     data: None,
                 });
             }))
+            .entry(MenuItem::new("Reformat Code Options…").action(move ||workbench_command.send(ReformatCodeOptions)))
             .entry(
                 MenuItem::new("Optimize Imports")
                     .enabled(context.dart_editor)
@@ -4866,19 +4872,19 @@ pub fn window_menu(
                     .action(move || workbench_command.send(RenameActiveFile)),
             )
             .separator()
-            .entry(MenuItem::new("Extract/Introduce...").enabled(false))
-            .entry(MenuItem::new("Inline...").enabled(false))
-            .entry(MenuItem::new("Move File...").enabled(false))
-            .entry(MenuItem::new("Copy File...").enabled(false))
-            .entry(MenuItem::new("Safe Delete...").enabled(false)),
+            .entry(MenuItem::new("Extract/Introduce...").enabled(context.dart_editor).action(move ||workbench_command.send(RefactorExtract)))
+            .entry(MenuItem::new("Inline...").enabled(context.dart_editor).action(move ||workbench_command.send(RefactorInline)))
+            .entry(MenuItem::new("Move File...").enabled(context.dart_editor).action(move ||workbench_command.send(MoveActiveFile)))
+            .entry(MenuItem::new("Copy File...").action(move ||workbench_command.send(CopyActiveFile)))
+            .entry(MenuItem::new("Safe Delete...").enabled(context.dart_editor).action(move ||workbench_command.send(SafeDeleteFile))),
     );
 
     // ── BUILD ───────────────────────────────────────────────────────
     menu = menu.entry(
         Menu::new("Build")
-            .entry(MenuItem::new("Build Project").enabled(false))
-            .entry(MenuItem::new("Rebuild Project").enabled(false))
-            .entry(MenuItem::new("Generate App Bundles or APKs").enabled(false))
+            .entry(MenuItem::new("Build Project").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(FlutterProjectTask),data:Some(serde_json::json!(["build"]))})))
+            .entry(MenuItem::new("Rebuild Project").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(FlutterProjectTask),data:Some(serde_json::json!(["clean"]))})))
+            .entry(MenuItem::new("Generate App Bundles or APKs").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(FlutterProjectTask),data:Some(serde_json::json!(["build", "apk"]))})))
             .entry(MenuItem::new("Analyze APK...").enabled(false)),
     );
 
@@ -4999,17 +5005,17 @@ pub fn window_menu(
                     .ok(),
                 });
             }))
-            .entry(MenuItem::new("Push...").enabled(false))
-            .entry(MenuItem::new("Update Project...").enabled(false))
-            .entry(MenuItem::new("Pull...").enabled(false))
-            .entry(MenuItem::new("Fetch...").enabled(false))
+            .entry(MenuItem::new("Push...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["push"]))})))
+            .entry(MenuItem::new("Update Project...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["pull", "--ff-only"]))})))
+            .entry(MenuItem::new("Pull...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["pull", "--ff-only"]))})))
+            .entry(MenuItem::new("Fetch...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["fetch", "--all", "--prune"]))})))
             .separator()
-            .entry(MenuItem::new("Merge...").enabled(false))
-            .entry(MenuItem::new("Rebase...").enabled(false))
+            .entry(MenuItem::new("Merge...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["merge", "--no-edit", "HEAD"]))})))
+            .entry(MenuItem::new("Rebase...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["rebase", "HEAD"]))})))
             .entry(MenuItem::new("Branches...").action(move || {
                 workbench_command.send(PaletteSCMReferences);
             }))
-            .entry(MenuItem::new("Reset HEAD...").enabled(false))
+            .entry(MenuItem::new("Reset HEAD...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["reset", "--soft", "HEAD"]))})))
             .separator()
             .entry(MenuItem::new("Show Git Log").action(move || {
                 sparrow_command.send(SparrowCommand {
@@ -5020,8 +5026,8 @@ pub fn window_menu(
                     .ok(),
                 });
             }))
-            .entry(MenuItem::new("Manage Remotes...").enabled(false))
-            .entry(MenuItem::new("Clone...").enabled(false)),
+            .entry(MenuItem::new("Manage Remotes...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["remote", "-v"]))})))
+            .entry(MenuItem::new("Clone...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["clone"]))}))),
     );
 
     // ── WINDOW ──────────────────────────────────────────────────────

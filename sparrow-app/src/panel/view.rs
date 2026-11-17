@@ -519,6 +519,7 @@ fn panel_view(
             let view = match kind {
                 PanelKind::Notifications => super::workflow_tools::notifications(window_tab_data.clone()).into_any(),
                 PanelKind::PullRequests => super::workflow_tools::pull_requests(window_tab_data.clone()).into_any(),
+                PanelKind::MobilePreview => super::mobile_preview::panel(window_tab_data.clone()).into_any(),
                 PanelKind::RunningDevices => super::workflow_tools::running_devices(window_tab_data.clone()).into_any(),
                 PanelKind::Problems => super::reference_tools::problems(window_tab_data.clone()).into_any(),
                 PanelKind::Logcat => super::reference_tools::logcat(window_tab_data.clone()).into_any(),

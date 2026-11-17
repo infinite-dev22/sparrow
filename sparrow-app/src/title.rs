@@ -720,7 +720,7 @@ fn right(
         clickable_icon(
             || SparrowIcons::SEARCH,
             move || {
-                workbench_command.send(SparrowWorkbenchCommand::PaletteHelpAndFile);
+                workbench_command.send(SparrowWorkbenchCommand::SearchEverywhere);
             },
             || false,
             || false,
@@ -1477,9 +1477,7 @@ pub fn branch_switcher(
                         simple_menu_item(
                             "Update Project...",
                             move || {
-                                workbench_command.send(
-                                    SparrowWorkbenchCommand::PaletteSCMReferences,
-                                );
+                                sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(SparrowWorkbenchCommand::GitCommand),data:Some(serde_json::json!(["pull","--ff-only"]))});
                                 close_menu();
                             },
                             config,
@@ -1494,15 +1492,15 @@ pub fn branch_switcher(
                             },
                             config,
                         ),
-                        simple_menu_item("Push...", move || {}, config),
+                        simple_menu_item("Push...", move || {sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(SparrowWorkbenchCommand::GitCommand),data:Some(serde_json::json!(["push"]))});}, config),
                     ))
                     .style(|s| s.flex_col().width_full()),
                     divider(6.0),
                     // Branch Actions
-                    simple_menu_item("New Branch...", move || {}, config),
+                    simple_menu_item("New Branch...", move || {sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(SparrowWorkbenchCommand::GitCommand),data:Some(serde_json::json!(["switch","-c","new-branch"]))});close_menu();}, config),
                     simple_menu_item(
                         "Checkout Tag or Revision...",
-                        move || {},
+                        move || {workbench_command.send(SparrowWorkbenchCommand::PaletteSCMReferences);close_menu();},
                         config,
                     ),
                     divider(6.0),

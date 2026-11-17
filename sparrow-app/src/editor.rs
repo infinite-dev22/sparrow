@@ -2713,8 +2713,10 @@ impl EditorData {
     }
 
     /// Fetch once for a particular buffer location; results are delivered on the UI thread.
-    pub fn request_code_actions(
+    pub fn request_code_actions(&self,callback:impl FnOnce(Result<(PluginId,Vec<lsp_types::CodeActionOrCommand>),String>)+'static){self.request_code_actions_with_kind(None,callback);}
+    pub fn request_code_actions_with_kind(
         &self,
+        kind:Option<String>,
         callback: impl FnOnce(
             Result<(PluginId, Vec<lsp_types::CodeActionOrCommand>), String>,
         ) + 'static,
@@ -2746,6 +2748,9 @@ impl EditorData {
                 return;
             }
             let content = doc.buffer.with_untracked(|b| b.to_string());
+            let request_kind=kind.clone();
+            let selection=self.cursor().with_untracked(|cursor|doc.buffer.with_untracked(|b|cursor.edit_selection(b)));
+            let range=doc.buffer.with_untracked(|b|lsp_types::Range::new(b.offset_to_position(selection.min_offset()),b.offset_to_position(selection.max_offset())));
             let local = crate::dart::generate_flutter_code_actions(
                 &path,
                 &content,
@@ -2777,16 +2782,16 @@ impl EditorData {
                                 combined.push(action);
                             }
                         }
+                        if let Some(kind)=&kind{combined.retain(|action|match action{lsp_types::CodeActionOrCommand::CodeAction(a)=>a.kind.as_ref().is_some_and(|k|k.as_str().starts_with(kind))||a.title.to_lowercase().contains(kind.rsplit('.').next().unwrap_or(kind)),lsp_types::CodeActionOrCommand::Command(a)=>a.title.to_lowercase().contains(kind.rsplit('.').next().unwrap_or(kind))});}
                         (PluginId(0), combined)
                     }));
                 },
             );
-            self.common.dart_lsp.code_actions_result(
+            self.common.dart_lsp.code_actions_range_result(
                 &path,
-                position.line,
-                position.character,
+                range,
                 &diagnostics,
-                None,
+                request_kind.as_deref(),
                 move |result| send(result),
             );
         } else {
@@ -2846,6 +2851,7 @@ impl EditorData {
                 .send(InternalCommand::RequestCodeActions {
                     offset: self.cursor().with_untracked(|c| c.offset()),
                     mouse_click,
+                    kind:None,
                 });
         }
     }
@@ -3462,6 +3468,7 @@ impl EditorData {
                     Some(CommandKind::Focus(FocusCommand::Rename)),
                     Some(CommandKind::Workbench(SparrowWorkbenchCommand::RunCurrentFile)),
                     Some(CommandKind::Workbench(SparrowWorkbenchCommand::DebugCurrentFile)),
+                    Some(CommandKind::Workbench(SparrowWorkbenchCommand::ProfileCurrentFile)),
                     None,
                     Some(CommandKind::Workbench(
                         SparrowWorkbenchCommand::RevealInPanel,
@@ -3499,26 +3506,17 @@ impl EditorData {
             )));
         }
         let sparrow_command = self.common.sparrow_command;
+        let executable=path.as_deref().is_some_and(crate::dart::is_dart_path)&&doc.buffer.with_untracked(|b|crate::dart::regex::has_entry_point(&b.to_string()));
         for cmd in cmds {
             if let Some(cmd) = cmd {
-                if matches!(
-                    &cmd,
-                    CommandKind::Workbench(
-                        SparrowWorkbenchCommand::RunCurrentFile
-                            | SparrowWorkbenchCommand::DebugCurrentFile
-                    )
-                ) && !path
-                    .as_deref()
-                    .and_then(std::path::Path::extension)
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("dart"))
-                {
-                    continue;
-                }
+                if matches!(&cmd,CommandKind::Workbench(SparrowWorkbenchCommand::RunCurrentFile|SparrowWorkbenchCommand::DebugCurrentFile|SparrowWorkbenchCommand::ProfileCurrentFile))&&!executable{continue;}
+                if matches!(&cmd,CommandKind::Workbench(SparrowWorkbenchCommand::ProfileCurrentFile))&&path.as_deref().is_none_or(|p|crate::dart::test_runner::is_test_file(p)||!crate::dart::test_runner::project_root(p).as_deref().is_some_and(crate::dart::is_flutter_project)){continue;}
                 let file_command = matches!(
                     &cmd,
                     CommandKind::Workbench(
                         SparrowWorkbenchCommand::RunCurrentFile
                             | SparrowWorkbenchCommand::DebugCurrentFile
+                            | SparrowWorkbenchCommand::ProfileCurrentFile
                     )
                 );
                 let target = if file_command {

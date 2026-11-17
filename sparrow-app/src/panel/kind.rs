@@ -12,6 +12,7 @@ pub enum PanelKind {
     Notifications,
     PullRequests,
     RunningDevices,
+    MobilePreview,
     Problems,
     Logcat,
     GitHistory,
@@ -60,6 +61,7 @@ impl PanelKind {
             Self::Notifications => "Notifications",
             Self::PullRequests => "Pull Requests",
             Self::RunningDevices => "Running Devices",
+            Self::MobilePreview => "Mobile Preview",
             Self::CallHierarchy => "Call Hierarchy",
             Self::References => "Find Usages",
             Self::Implementation => "Implementations",
@@ -92,6 +94,7 @@ impl PanelKind {
             PanelKind::Notifications => "notifications",
             PanelKind::PullRequests => "pull_requests",
             PanelKind::RunningDevices => "running_devices",
+            PanelKind::MobilePreview => "mobile_preview",
             PanelKind::Problems => SparrowIcons::ERROR,
             PanelKind::Logcat => "logcat",
             PanelKind::GitHistory => SparrowIcons::SCM,
@@ -132,7 +135,7 @@ impl PanelKind {
             PanelKind::Problems | PanelKind::Logcat | PanelKind::GitHistory => {
                 PanelPosition::BottomLeft
             }
-            PanelKind::Notifications | PanelKind::RunningDevices => {
+            PanelKind::Notifications | PanelKind::RunningDevices | PanelKind::MobilePreview => {
                 PanelPosition::RightTop
             }
             PanelKind::PullRequests => PanelPosition::LeftTop,

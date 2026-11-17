@@ -150,6 +150,7 @@ name = "sparrow Modern"
 "notifications" = "bell.svg"
 "pull_requests" = "git-pull-request.svg"
 "running_devices" = "monitor-smartphone.svg"
+"mobile_preview" = "sparrow_mobile_preview.svg"
 
 [icon-theme.filename]
 "Dockerfile" = "filetype-docker.svg"

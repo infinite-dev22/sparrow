@@ -33,3 +33,5 @@ pub mod resource_manager;
 mod resource_rename;
 
 pub mod git_history;
+
+pub mod mobile_preview;

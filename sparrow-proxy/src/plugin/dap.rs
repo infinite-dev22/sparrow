@@ -308,7 +308,7 @@ impl DapClient {
                 self.plugin_rpc.core_rpc.dap_continued(self.dap_rpc.dap_id);
             }
             DapEvent::Exited(exited) => {
-                if self.config.ty.as_deref() == Some("flutter-test") {
+                if self.config.is_test() {
                     self.plugin_rpc.core_rpc.flutter_test_event(self.config.dap_id,
                         serde_json::json!({"type": "sparrow.exit", "success": exited.exit_code == 0}));
                 }
@@ -316,7 +316,7 @@ impl DapClient {
             DapEvent::Terminated(_) => {
                 self.plugin_rpc.core_rpc.dap_session_event(self.config.dap_id, serde_json::json!({"type":"terminated"}));
                 self.terminated = true;
-                if self.config.ty.as_deref() == Some("flutter-test") {
+                if self.config.is_test() {
                     self.plugin_rpc.core_rpc.flutter_test_event(
                         self.config.dap_id,
                         serde_json::json!({"type": "sparrow.terminated"}),
@@ -338,7 +338,7 @@ impl DapClient {
             }
             DapEvent::Output(output) => {
                 self.plugin_rpc.core_rpc.dap_session_event(self.config.dap_id, serde_json::json!({"type":"output", "output":output.output}));
-                if self.config.ty.as_deref() == Some("flutter-test") {
+                if self.config.is_test() {
                     self.plugin_rpc.core_rpc.flutter_test_event(self.config.dap_id,
                         serde_json::json!({"type": "sparrow.output", "output": output.output}));
                 }
@@ -528,7 +528,7 @@ impl DapRpcHandler {
                 }
                 DapRpc::Disconnected => {
                     dap_client.disconnected = true;
-                    if dap_client.config.ty.as_deref() == Some("flutter-test") {
+                    if dap_client.config.is_test() {
                         dap_client.plugin_rpc.core_rpc.flutter_test_event(
                             dap_client.config.dap_id,
                             serde_json::json!({"type": "sparrow.terminated"}),
@@ -656,9 +656,8 @@ impl DapRpcHandler {
 
     pub fn launch(&self, config: &RunDebugConfig) -> Result<()> {
         let params = dart_launch_arguments(config)?;
-        let _resp = self
-            .request::<Launch>(params)
-            .map_err(|e| anyhow!(e.message))?;
+        let attaching=config.args.as_ref().and_then(|args|args.first()).is_some_and(|a|a=="attach");
+        if attaching{self.request::<dap_types::Attach>(params).map_err(|e|anyhow!(e.message))?;}else{self.request::<Launch>(params).map_err(|e|anyhow!(e.message))?;}
         Ok(())
     }
 
@@ -876,11 +875,14 @@ fn dart_launch_arguments(config: &RunDebugConfig) -> Result<Value> {
     let mut program = config.program.clone();
     let mut args = config.args.clone().unwrap_or_default();
     let mut tool_args = Vec::new();
-    if config.ty.as_deref() != Some("flutter-test") {
+    if config.is_test() && std::path::Path::new(&program).file_stem().is_some_and(|p|p=="flutter"||p=="dart") {
+        if args.first().is_some_and(|a|a=="test"){args.remove(0);}program=if args.first().is_some_and(|a|!a.starts_with('-')){args.remove(0)}else{"test".into()};
+    } else if !config.is_test() {
         let flutter = std::path::Path::new(&program)
             .file_stem()
             .is_some_and(|s| s == "flutter");
-        if args.first().is_some_and(|s| s == "run") {
+        if !flutter&&args.first().is_some_and(|s|s=="attach") {let uri=args.get(1).ok_or_else(||anyhow!("Set a VM service URI for remote debugging"))?;return Ok(serde_json::json!({"vmServiceUri":uri,"cwd":config.cwd,"env":config.env.clone().unwrap_or_default()}));}
+        if args.first().is_some_and(|s| s == "run" || s=="attach") {
             args.remove(0);
         }
         if flutter {
@@ -909,7 +911,7 @@ fn dart_launch_arguments(config: &RunDebugConfig) -> Result<Value> {
         }
     }
     Ok(
-        serde_json::json!({"console":if config.ty.as_deref()==Some("flutter-test"){"debugConsole"}else{"terminal"},"program":program,"args":args,"toolArgs":tool_args,"cwd":config.cwd,"runInTerminal":config.ty.as_deref()!=Some("flutter-test"),"env":config.env.clone().unwrap_or_default()}),
+        serde_json::json!({"console":if config.is_test(){"debugConsole"}else{"terminal"},"program":program,"args":args,"toolArgs":tool_args,"cwd":config.cwd,"runInTerminal":!config.is_test(),"env":config.env.clone().unwrap_or_default()}),
     )
 }
 #[cfg(test)]
@@ -936,4 +938,9 @@ mod scope_tests {
         assert_eq!(p["program"], "tool/main.dart");
         assert_eq!(p["args"], serde_json::json!(["hello world"]));
     }
+}
+
+#[cfg(test)]mod preset_argument_tests {use super::*;
+ #[test]fn sdk_test_configurations_launch_test_paths_instead_of_the_sdk(){for (kind,program)in[("flutter-test","flutter"),("dart-test","dart")]{let config:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":kind,"name":"Tests","program":program,"args":["test","test","--plain-name","counter"]})).unwrap();let args=dart_launch_arguments(&config).unwrap();assert_eq!(args["program"],"test");assert_eq!(args["args"],serde_json::json!(["--plain-name","counter"]));assert_eq!(args["runInTerminal"],false);}}
+ #[test]fn attach_arguments_strip_the_cli_command(){let dart:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":"dart","name":"Attach","program":"dart","args":["attach","http://127.0.0.1:8181/abc/"]})).unwrap();assert_eq!(dart_launch_arguments(&dart).unwrap()["vmServiceUri"],"http://127.0.0.1:8181/abc/");let flutter:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":"flutter","name":"Attach","program":"flutter","args":["attach","--target","lib/main.dart","-d","linux"]})).unwrap();let args=dart_launch_arguments(&flutter).unwrap();assert_eq!(args["program"],"lib/main.dart");assert_eq!(args["toolArgs"],serde_json::json!(["-d","linux"]));}
 }

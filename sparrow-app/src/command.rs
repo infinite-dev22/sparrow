@@ -356,6 +356,27 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "New File")]
     #[strum(serialize = "new_file")]
     NewFile,
+    #[strum(message = "Reformat Code…")]
+    #[strum(serialize = "reformat_code_options")]
+    ReformatCodeOptions,
+    #[strum(message = "Replace in Editor")]
+    #[strum(serialize = "replace_in_editor")]
+    ReplaceInEditor,
+    #[strum(message = "Search Everywhere")]
+    #[strum(serialize = "search_everywhere")]
+    SearchEverywhere,
+    #[strum(message = "Find in Files…")]
+    #[strum(serialize = "find_in_files")]
+    FindInFiles,
+    #[strum(message = "Replace in Files…")]
+    #[strum(serialize = "replace_in_files")]
+    ReplaceInFiles,
+    #[strum(message = "Git Command…")]
+    #[strum(serialize = "git_command")]
+    GitCommand,
+    #[strum(message = "Flutter Project Task")]
+    #[strum(serialize = "flutter_project_task")]
+    FlutterProjectTask,
 
     #[strum(serialize = "connect_ssh_host")]
     #[strum(message = "Connect to SSH Host")]
@@ -393,6 +414,8 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "debug_current_file")]
     #[strum(message = "Debug Current Dart File")]
     DebugCurrentFile,
+    #[strum(message = "Profile Current Flutter File")]
+    ProfileCurrentFile,
 
     #[strum(serialize = "optimize_imports")]
     #[strum(message = "Optimize Dart Imports")]
@@ -401,6 +424,21 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "rename_active_file")]
     #[strum(message = "Rename Active File")]
     RenameActiveFile,
+    #[strum(message = "Move File…")]
+    #[strum(serialize = "move_active_file")]
+    MoveActiveFile,
+    #[strum(message = "Safe Delete File…")]
+    #[strum(serialize = "safe_delete_file")]
+    SafeDeleteFile,
+    #[strum(message = "Copy File…")]
+    #[strum(serialize = "copy_active_file")]
+    CopyActiveFile,
+    #[strum(message = "Extract / Introduce…")]
+    #[strum(serialize = "refactor_extract")]
+    RefactorExtract,
+    #[strum(message = "Inline…")]
+    #[strum(serialize = "refactor_inline")]
+    RefactorInline,
 
     #[strum(serialize = "toggle_breakpoint")]
     #[strum(message = "Toggle Breakpoint")]
@@ -741,6 +779,8 @@ pub enum SparrowWorkbenchCommand {
 
 #[derive(Clone, Debug)]
 pub enum InternalCommand {
+    GitAction {title:String,args:Vec<String>},
+    NewScaffold { base: PathBuf, template: crate::scaffold::Template },
     ReloadConfig,
     ApplyCodeActionPreview { prepared: crate::code_action_preview::Prepared },
     QuickFixAt { location: EditorLocation },
@@ -838,6 +878,7 @@ pub enum InternalCommand {
     RequestCodeActions {
         offset: usize,
         mouse_click: bool,
+        kind:Option<String>,
     },
     ShowCodeActions {
         offset: usize,

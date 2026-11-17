@@ -758,6 +758,10 @@ impl DartLspService {
             + Send
             + 'static,
     {
+        self.code_actions_range_result(path,lsp_types::Range::new(lsp_types::Position::new(line,character),lsp_types::Position::new(line,character)),diagnostics,kind,cb)
+    }
+    pub fn code_actions_range_result<F>(&self,path:&Path,range:lsp_types::Range,diagnostics:&[lsp_types::Diagnostic],kind:Option<&str>,cb:F)->i64
+    where F:FnOnce(Result<Vec<lsp_types::CodeActionOrCommand>,String>)+Send+'static {
         let uri = path_to_uri(path);
         let mut context = json!({ "diagnostics": diagnostics, "triggerKind": 1 });
         if let Some(kind) = kind {
@@ -767,10 +771,7 @@ impl DartLspService {
             "textDocument/codeAction",
             json!({
                 "textDocument": { "uri": uri },
-                "range": {
-                    "start": { "line": line, "character": character },
-                    "end": { "line": line, "character": character }
-                },
+                "range": range,
                 "context": context
             }),
             move |resp| {
@@ -1217,7 +1218,7 @@ fn initialize(
                     "multilineTokenSupport": false
                 }
             },
-            "workspace": { "workspaceFolders": true, "configuration": false, "applyEdit": true, "workspaceEdit": { "documentChanges": true } },
+            "workspace": {"fileOperations":{"willRename":true}, "workspaceFolders": true, "configuration": false, "applyEdit": true, "workspaceEdit": { "documentChanges": true } },
             "window": { "workDoneProgress": true }
         }
     });
