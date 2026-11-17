@@ -16,6 +16,7 @@ pub enum PanelKind {
     Logcat,
     GitHistory,
     FileExplorer,
+    ResourceManager,
     SourceControl,
     Plugin,
     Search,
@@ -46,6 +47,7 @@ impl PanelKind {
     pub fn title(self) -> &'static str {
         match self.canonical() {
             Self::FileExplorer => "Project",
+            Self::ResourceManager => "Resource Manager",
             Self::SourceControl => "Commit",
             Self::Plugin => "Themes",
             Self::Search => "Find",
@@ -95,6 +97,7 @@ impl PanelKind {
             PanelKind::GitHistory => SparrowIcons::SCM,
             PanelKind::Terminal => SparrowIcons::TERMINAL,
             PanelKind::FileExplorer => SparrowIcons::FILE_EXPLORER,
+            PanelKind::ResourceManager => "resource_manager",
             PanelKind::SourceControl => "commit",
             PanelKind::Plugin => SparrowIcons::SETTINGS,
             PanelKind::Search => SparrowIcons::SEARCH,
@@ -134,7 +137,7 @@ impl PanelKind {
             }
             PanelKind::PullRequests => PanelPosition::LeftTop,
             PanelKind::Terminal => PanelPosition::BottomLeft,
-            PanelKind::FileExplorer => PanelPosition::LeftTop,
+            PanelKind::FileExplorer | PanelKind::ResourceManager => PanelPosition::LeftTop,
             PanelKind::SourceControl => PanelPosition::LeftTop,
             PanelKind::Plugin => PanelPosition::LeftTop,
             PanelKind::Search => PanelPosition::BottomLeft,

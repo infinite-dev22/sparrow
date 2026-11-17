@@ -28,3 +28,7 @@ pub mod reference_tools;
 pub mod workflow_tools;
 
 pub mod problems_view;
+
+pub mod resource_manager;
+
+pub mod git_history;

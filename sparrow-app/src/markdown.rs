@@ -12,7 +12,14 @@ use crate::config::{SparrowConfig, color::SparrowColor};
 #[derive(Clone)]
 pub enum MarkdownContent {
     Text(TextLayout),
-    Image { url: String, title: String },
+    LinkedText {
+        layout: TextLayout,
+        links: Vec<(std::ops::Range<usize>, String)>,
+    },
+    Image {
+        url: String,
+        title: String,
+    },
     Separator,
 }
 
@@ -21,6 +28,18 @@ pub fn parse_markdown(
     line_height: f64,
     config: &SparrowConfig,
 ) -> Vec<MarkdownContent> {
+    parse_markdown_inner(text, line_height, config, false)
+}
+pub fn parse_document(text: &str, config: &SparrowConfig) -> Vec<MarkdownContent> {
+    parse_markdown_inner(text, 1.5, config, true)
+}
+fn parse_markdown_inner(
+    text: &str,
+    line_height: f64,
+    config: &SparrowConfig,
+    document: bool,
+) -> Vec<MarkdownContent> {
+    let mut links = Vec::new();
     let mut res = Vec::new();
 
     let mut current_text = String::new();
@@ -64,6 +83,11 @@ pub fn parse_markdown(
 
         match event {
             Event::Start(tag) => {
+                if document && matches!(tag, Tag::Item) {
+                    current_text.push_str("• ");
+                    pos += 4;
+                    builder_dirty = true;
+                }
                 tag_stack.push((pos, tag));
             }
             Event::End(end_tag) => {
@@ -73,21 +97,78 @@ pub fn parse_markdown(
                         continue;
                     }
 
-                    if let Some(attrs) = attribute_for_tag(
+                    if let Some(mut attrs) = attribute_for_tag(
                         default_attrs.clone(),
                         &tag,
                         &code_font_family,
                         config,
                     ) {
+                        if document {
+                            if let Tag::Heading { level, .. } = &tag {
+                                attrs = attrs.font_size(
+                                    config.ui.font_size() as f32
+                                        * match level {
+                                            pulldown_cmark::HeadingLevel::H1 => 2.3,
+                                            pulldown_cmark::HeadingLevel::H2 => 1.85,
+                                            _ => 1.5,
+                                        },
+                                );
+                            }
+                        }
                         attr_list
                             .add_span(start_offset..pos.max(start_offset), attrs);
                     }
 
                     if should_add_newline_after_tag(&tag) {
-                        add_newline = true;
+                        if document {
+                            match &tag {
+                                Tag::Paragraph
+                                | Tag::Heading { .. }
+                                | Tag::CodeBlock(_) => {
+                                    current_text.push_str("\n\n");
+                                    pos += 2;
+                                }
+                                Tag::Item | Tag::TableRow => {
+                                    if !current_text.ends_with('\n') {
+                                        current_text.push('\n');
+                                        pos += 1;
+                                    }
+                                }
+                                Tag::TableCell => {
+                                    current_text.push_str("  │  ");
+                                    pos += 7;
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            add_newline = true;
+                        }
                     }
 
                     match &tag {
+                        Tag::Link { dest_url, .. } => {
+                            links.push((start_offset..pos, dest_url.to_string()))
+                        }
+                        Tag::Heading { .. } if document => {
+                            let slug = current_text[start_offset..pos]
+                                .trim()
+                                .to_lowercase()
+                                .chars()
+                                .filter_map(|c| {
+                                    if c.is_alphanumeric() || c == '-' || c == '_' {
+                                        Some(c)
+                                    } else if c.is_whitespace() {
+                                        Some('-')
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<String>();
+                            links.push((
+                                start_offset..start_offset,
+                                format!("#{slug}"),
+                            ));
+                        }
                         Tag::CodeBlock(kind) => {
                             let language =
                                 if let CodeBlockKind::Fenced(language) = kind {
@@ -118,7 +199,14 @@ pub fn parse_markdown(
                             if builder_dirty {
                                 let mut text_layout = TextLayout::new();
                                 text_layout.set_text(&current_text, attr_list, None);
-                                res.push(MarkdownContent::Text(text_layout));
+                                res.push(if document {
+                                    MarkdownContent::LinkedText {
+                                        layout: text_layout,
+                                        links: std::mem::take(&mut links),
+                                    }
+                                } else {
+                                    MarkdownContent::Text(text_layout)
+                                });
                                 attr_list = AttrsList::new(default_attrs.clone());
                                 current_text.clear();
                                 pos = 0;
@@ -183,9 +271,22 @@ pub fn parse_markdown(
                 pos += 1;
                 builder_dirty = true;
             }
-            Event::Rule => {}
+            Event::Rule => {
+                if document {
+                    current_text.push_str("────────────────────\n");
+                    pos += "────────────────────\n".len();
+                    builder_dirty = true;
+                }
+            }
             Event::FootnoteReference(_text) => {}
-            Event::TaskListMarker(_text) => {}
+            Event::TaskListMarker(checked) => {
+                if document {
+                    let marker = if checked { "☑ " } else { "☐ " };
+                    current_text.push_str(marker);
+                    pos += marker.len();
+                    builder_dirty = true;
+                }
+            }
             Event::InlineHtml(_) => {} // TODO(panekj): Implement
             Event::InlineMath(_) => {} // TODO(panekj): Implement
             Event::DisplayMath(_) => {} // TODO(panekj): Implement
@@ -195,7 +296,14 @@ pub fn parse_markdown(
     if builder_dirty {
         let mut text_layout = TextLayout::new();
         text_layout.set_text(&current_text, attr_list, None);
-        res.push(MarkdownContent::Text(text_layout));
+        res.push(if document {
+            MarkdownContent::LinkedText {
+                layout: text_layout,
+                links: std::mem::take(&mut links),
+            }
+        } else {
+            MarkdownContent::Text(text_layout)
+        });
     }
 
     res
@@ -229,7 +337,7 @@ fn attribute_for_tag<'a>(
             Some(
                 default_attrs
                     .font_size(font_size as f32)
-                    .weight(Weight::BOLD),
+                    .weight(Weight::SEMIBOLD),
             )
         }
         Tag::BlockQuote(_block_quote) => Some(
@@ -239,7 +347,7 @@ fn attribute_for_tag<'a>(
         ),
         Tag::CodeBlock(_) => Some(default_attrs.family(code_font_family)),
         Tag::Emphasis => Some(default_attrs.style(Style::Italic)),
-        Tag::Strong => Some(default_attrs.weight(Weight::BOLD)),
+        Tag::Strong => Some(default_attrs.weight(Weight::SEMIBOLD)),
         // TODO: Strikethrough support
         Tag::Link {
             link_type: _,
@@ -346,4 +454,38 @@ pub fn from_plaintext(
         None,
     );
     vec![MarkdownContent::Text(text_layout)]
+}
+
+#[cfg(test)]
+mod document_preview_tests {
+    use super::*;
+    #[test]
+    fn rendered_links_keep_byte_offsets_after_unicode_bullets_and_emphasis() {
+        let config = SparrowConfig::load(
+            &crate::workspace::SparrowWorkspace::default(),
+            &[],
+            &[],
+        );
+        let blocks = parse_document(
+            "# Heading\n\n- [héllo](lib/main.dart)\n\n**Live** text",
+            &config,
+        );
+        let MarkdownContent::LinkedText { layout, links } = blocks.first().unwrap()
+        else {
+            panic!("No rendered document")
+        };
+        let text = layout
+            .lines()
+            .iter()
+            .map(|line| line.text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("• héllo"));
+        let (range, target) = links
+            .iter()
+            .find(|(_, target)| target == "lib/main.dart")
+            .unwrap();
+        assert_eq!(&text[range.clone()], "héllo");
+        assert_eq!(target, "lib/main.dart");
+    }
 }

@@ -263,7 +263,7 @@ fn is_widget_class(name: &str, classes: &HashMap<String, ClassInfo>) -> bool {
 
 // ── Skip ranges (comments and strings) ───────────────────────────────
 
-fn skip_ranges(source: &str) -> Vec<(usize, usize)> {
+pub(super) fn skip_ranges(source: &str) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let bytes = source.as_bytes();
     let mut i = 0;

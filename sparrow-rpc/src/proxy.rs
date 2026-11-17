@@ -237,6 +237,7 @@ pub enum ProxyRequest {
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "method", content = "params")]
 pub enum ProxyNotification {
+    GitRefresh {},
     Initialize {
         workspace: Option<PathBuf>,
         disabled_volts: Vec<VoltID>,

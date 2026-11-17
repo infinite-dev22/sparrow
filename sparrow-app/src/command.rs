@@ -405,6 +405,9 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "toggle_breakpoint")]
     #[strum(message = "Toggle Breakpoint")]
     ToggleBreakpoint,
+    #[strum(serialize = "toggle_bookmark")]
+    #[strum(message = "Toggle Bookmark")]
+    ToggleBookmark,
 
     #[strum(message = "Debug Selected Configuration")]
     #[strum(serialize = "debug_selected_configuration")]

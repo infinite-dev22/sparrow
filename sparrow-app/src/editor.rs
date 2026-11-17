@@ -1,10 +1,11 @@
+use crate::popup_menu::show_context_menu;
+use crate::popup_menu::{Menu, MenuItem};
 use floem::{
     ViewId,
-    action::{TimerToken, exec_after, show_context_menu},
+    action::{TimerToken, exec_after},
     ext_event::create_ext_action,
     keyboard::Modifiers,
     kurbo::{Point, Rect, Vec2},
-    menu::{Menu, MenuItem},
     pointer::{MouseButton, PointerInputEvent, PointerMoveEvent},
     prelude::SignalTrack,
     reactive::{

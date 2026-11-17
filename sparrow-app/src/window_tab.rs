@@ -142,6 +142,8 @@ pub struct WorkProgress {
 
 #[derive(Clone)]
 pub struct CommonData {
+    pub document_views: RwSignal<BTreeMap<PathBuf, String>>,
+    pub bookmarks: RwSignal<BTreeMap<PathBuf, std::collections::BTreeSet<usize>>>,
     pub workspace_undo: crate::workspace_undo::SharedHistory,
     pub workspace: Arc<SparrowWorkspace>,
     pub scope: Scope,
@@ -419,6 +421,8 @@ impl WindowTabData {
             cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
 
         let common = Rc::new(CommonData {
+            document_views: cx.create_rw_signal(workspace_info.as_ref().map(|info|info.document_views.clone()).unwrap_or_default()),
+            bookmarks: cx.create_rw_signal(workspace_info.as_ref().map(|info|info.bookmarks.clone()).unwrap_or_default()),
             workspace_undo: Default::default(),
             workspace: workspace.clone(),
             scope: cx,
@@ -450,12 +454,17 @@ impl WindowTabData {
             window_common: window_common.clone(),
         });
 
+        crate::popup_menu::register(common.clone());
         let flutter_inspector = FlutterInspectorData::new(cx, common.clone());
         let main_split = MainSplitData::new(cx, common.clone());
         let code_action =
             cx.create_rw_signal(CodeActionData::new(cx, common.clone()));
         let source_control =
             SourceControlData::new(cx, main_split.editors, common.clone());
+        if let Some(info)=workspace_info.as_ref() {
+            if !info.commit_message.is_empty(){source_control.editor.doc().reload(lapce_xi_rope::Rope::from(info.commit_message.clone()),false);}
+            source_control.amend.set(info.amend_commit);
+        }
         let widget_tree = WidgetTreeData::new(cx, common.clone());
         let outline = OutlineData::new(cx, common.clone());
         let file_explorer =
@@ -632,6 +641,9 @@ impl WindowTabData {
         let loaded_configs = workspace.path.as_deref().map(|root| {
             crate::dart::run_config::load(root).unwrap_or_else(|| crate::dart::run_config::discover_defaults(root))
         }).unwrap_or_default();
+        if let Some(name)=workspace_info.as_ref().and_then(|info|info.selected_run_configuration.as_ref()) {
+            if let Some(index)=loaded_configs.iter().position(|config|&config.name==name){active_run_config_idx.set(index);}
+        }
         run_configs.set(loaded_configs);
 
         let window_tab_data = Self {
@@ -695,6 +707,28 @@ impl WindowTabData {
             active_run_config_idx,
             run_config_modal_visible,
         };
+
+        {
+            let data=window_tab_data.clone();let database=db.clone();
+            let revision=Rc::new(std::cell::Cell::new(0u64));
+            cx.create_effect(move |_|{
+                if let Some(editor)=data.main_split.active_editor.get() {editor.cursor().get();editor.viewport().get();}
+                data.main_split.editor_tabs.with(|tabs|{for tab in tabs.values(){tab.get();}});
+                data.main_split.docs.with(|docs|{for doc in docs.values(){doc.buffer.with(|buffer|buffer.rev());}});
+                data.panel.styles.get();data.panel.size.get();data.common.breakpoints.get();data.common.bookmarks.get();data.common.document_views.get();
+                data.source_control.editor.doc().buffer.with(|buffer|buffer.rev());data.source_control.amend.get();data.active_run_config_idx.get();data.run_configs.get();
+                let next=revision.get()+1;revision.set(next);
+                let revision=revision.clone();let database=database.clone();let workspace=(*data.workspace).clone();
+                let data=data.clone();
+                floem::action::exec_after(std::time::Duration::from_millis(800),move |_|{
+                    // Editor/tab removal updates several signals in sequence. Take
+                    // the snapshot after the transition, never inside its effects.
+                    if revision.get()==next && data.main_split.splits.try_get_untracked().is_some() {
+                        database.save_workspace_info(workspace,data.workspace_info());
+                    }
+                });
+            });
+        }
 
         {
             let settings = window_tab_data.settings_modal_visible;
@@ -2210,6 +2244,16 @@ impl WindowTabData {
                     self.file_explorer.rename_path(path);
                 }
             }
+            ToggleBookmark => {
+                if let Some(editor)=self.main_split.active_editor.get_untracked() {
+                    let doc=editor.doc();
+                    if let Some(path)=doc.content.with_untracked(|content|content.path().cloned()) {
+                        let offset=editor.cursor().with_untracked(|cursor|cursor.offset());
+                        let line=doc.buffer.with_untracked(|buffer|buffer.line_of_offset(offset));
+                        self.common.bookmarks.update(|items|{let lines=items.entry(path).or_default();if !lines.remove(&line){lines.insert(line);}});
+                    }
+                }
+            }
             ToggleBreakpoint => {
                 if let Some(editor) = self.main_split.active_editor.get_untracked() {
                     let doc = editor.doc();
@@ -3076,6 +3120,7 @@ impl WindowTabData {
                 self.common.proxy_status.set(Some(status.to_owned()));
             }
             CoreNotification::DiffInfo { diff } => {
+                self.source_control.untracked.set(diff.untracked.iter().cloned().collect());
                 self.source_control.branch.set(diff.head.clone());
                 self.source_control
                     .branches
@@ -3418,6 +3463,11 @@ impl WindowTabData {
             .cloned()
             .unwrap();
         WorkspaceInfo {
+            commit_message: self.source_control.editor.doc().buffer.with_untracked(|buffer|buffer.to_string()),
+            amend_commit: self.source_control.amend.get_untracked(),
+            selected_run_configuration: self.run_configs.with_untracked(|configs|configs.get(self.active_run_config_idx.get_untracked()).map(|config|config.name.clone())),
+            document_views: self.common.document_views.get_untracked(),
+            bookmarks: self.common.bookmarks.get_untracked(),
             split: main_split_data.get_untracked().split_info(self),
             panel: self.panel.panel_info(),
             breakpoints: self
@@ -3730,6 +3780,7 @@ impl WindowTabData {
             | PanelKind::FlutterPerformance
             | PanelKind::Problems
             | PanelKind::Logcat
+            | PanelKind::ResourceManager
             | PanelKind::GitHistory
             | PanelKind::Notifications
             | PanelKind::PullRequests

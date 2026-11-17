@@ -9,6 +9,8 @@ edition      = { workspace = true }
 rust-version = { workspace = true }
 
 [dependencies]
+serde_yaml = "0.9.34"
+roxmltree = "0.20"
 alacritty_terminal = { workspace = true }
 anyhow             = { workspace = true }
 backtrace          = { workspace = true }

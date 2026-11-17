@@ -1,3 +1,5 @@
+use crate::popup_menu::show_context_menu;
+use crate::popup_menu::{Menu, MenuItem};
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -8,11 +10,9 @@ use std::{
 };
 
 use floem::{
-    action::show_context_menu,
     event::EventPropagation,
     ext_event::create_ext_action,
     keyboard::{Key, KeyEvent, Modifiers, NamedKey},
-    menu::{Menu, MenuItem},
     reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
 };
 use globset::Glob;

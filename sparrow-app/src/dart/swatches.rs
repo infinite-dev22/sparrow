@@ -44,8 +44,10 @@ static HEX_COLOR_RE: Lazy<Regex> = Lazy::new(|| {
 });
 
 static FROM_ARGB_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\bColor\.fromARGB\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)")
-        .expect("fromARGB regex")
+    Regex::new(
+        r"\bColor\.fromARGB\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)",
+    )
+    .expect("fromARGB regex")
 });
 
 static FROM_RGBO_RE: Lazy<Regex> = Lazy::new(|| {
@@ -58,10 +60,8 @@ static MATERIAL_COLORS_RE: Lazy<Regex> = Lazy::new(|| {
         .expect("material colors regex")
 });
 
-static ICONS_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\bIcons\.([a-zA-Z0-9_]+)\b")
-        .expect("icons regex")
-});
+static ICONS_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\bIcons\.([a-zA-Z0-9_]+)\b").expect("icons regex"));
 
 static CUPERTINO_ICONS_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\bCupertinoIcons\.([a-zA-Z0-9_]+)\b")
@@ -144,51 +144,30 @@ fn adjust_shade(rgb: [u8; 3], shade: u32) -> [u8; 3] {
 
 // ── Icon Codepoints ───────────────────────────────────────────────────
 
-/// Resolve a Material Icon name to its standard Material Symbols codepoint.
+/// Resolve Flutter MaterialIcons names using the definitions matching the bundled font.
 pub fn resolve_material_icon_codepoint(name: &str) -> Option<u32> {
-    match name {
-        "home" => Some(0xe88a),
-        "settings" => Some(0xe8b8),
-        "favorite" | "favorite_border" => Some(0xe87d),
-        "star" | "star_border" => Some(0xe838),
-        "search" => Some(0xe8b6),
-        "add" => Some(0xe145),
-        "remove" => Some(0xe15b),
-        "delete" => Some(0xe872),
-        "edit" => Some(0xe3c9),
-        "check" => Some(0xe5ca),
-        "close" => Some(0xe5cd),
-        "arrow_back" => Some(0xe5c4),
-        "arrow_forward" => Some(0xe5c8),
-        "refresh" => Some(0xe5d5),
-        "menu" => Some(0xe5d2),
-        "more_vert" => Some(0xe5d4),
-        "share" => Some(0xe80d),
-        "person" => Some(0xe7fd),
-        "email" | "mail" => Some(0xe0be),
-        "phone" => Some(0xe0cd),
-        "camera" | "camera_alt" => Some(0xe3b0),
-        "image" => Some(0xe3f4),
-        "play_arrow" => Some(0xe037),
-        "pause" => Some(0xe034),
-        "stop" => Some(0xe047),
-        "lock" => Some(0xe897),
-        "visibility" => Some(0xe8f4),
-        "notifications" => Some(0xe7f4),
-        "folder" => Some(0xe2c7),
-        "code" => Some(0xe86f),
-        "build" => Some(0xe869),
-        "info" => Some(0xe88e),
-        "warning" => Some(0xe002),
-        "error" => Some(0xe000),
-        _ => Some(0xe88a), // fallback to general icon glyph
-    }
+    static CODES: Lazy<std::collections::HashMap<String, u32>> = Lazy::new(|| {
+        serde_json::from_str(include_str!(
+            "../../../extra/fonts/MaterialIcons/codepoints.json"
+        ))
+        .expect("bundled Flutter icon definitions")
+    });
+    CODES.get(name).copied()
 }
 
-// ── Extraction Pipeline ───────────────────────────────────────────────
+pub fn resolve_cupertino_icon_codepoint(name: &str) -> Option<u32> {
+    static CODES: Lazy<std::collections::HashMap<String, u32>> = Lazy::new(|| {
+        serde_json::from_str(include_str!(
+            "../../../extra/fonts/CupertinoIcons/codepoints.json"
+        ))
+        .expect("bundled Cupertino glyph definitions")
+    });
+    CODES.get(name).copied()
+}
 
 /// Extract all inline color and icon swatches from source text.
 pub fn extract_swatches(source: &str) -> (Vec<ColorSwatch>, Vec<IconSwatch>) {
+    let skipped = super::regex::skip_ranges(source);
     let mut colors = Vec::new();
     let mut icons = Vec::new();
 
@@ -209,6 +188,7 @@ pub fn extract_swatches(source: &str) -> (Vec<ColorSwatch>, Vec<IconSwatch>) {
     // 1. Color(0xAARRGGBB) or Color(0xRRGGBB)
     for cap in HEX_COLOR_RE.captures_iter(source) {
         let m = cap.get(0).unwrap();
+        if skipped.iter().any(|(start, end)| *start <= m.start() && m.start() < *end) { continue; }
         let (line, col) = offset_to_line_col(m.start());
 
         let rgba = if let Some(hex8) = cap.get(1) {
@@ -247,6 +227,7 @@ pub fn extract_swatches(source: &str) -> (Vec<ColorSwatch>, Vec<IconSwatch>) {
     // 2. Color.fromARGB(a, r, g, b)
     for cap in FROM_ARGB_RE.captures_iter(source) {
         let m = cap.get(0).unwrap();
+        if skipped.iter().any(|(start, end)| *start <= m.start() && m.start() < *end) { continue; }
         let (line, col) = offset_to_line_col(m.start());
         let a = cap[1].parse::<u8>().unwrap_or(255);
         let r = cap[2].parse::<u8>().unwrap_or(0);
@@ -267,6 +248,7 @@ pub fn extract_swatches(source: &str) -> (Vec<ColorSwatch>, Vec<IconSwatch>) {
     // 3. Color.fromRGBO(r, g, b, opacity)
     for cap in FROM_RGBO_RE.captures_iter(source) {
         let m = cap.get(0).unwrap();
+        if skipped.iter().any(|(start, end)| *start <= m.start() && m.start() < *end) { continue; }
         let (line, col) = offset_to_line_col(m.start());
         let r = cap[1].parse::<u8>().unwrap_or(0);
         let g = cap[2].parse::<u8>().unwrap_or(0);
@@ -288,6 +270,7 @@ pub fn extract_swatches(source: &str) -> (Vec<ColorSwatch>, Vec<IconSwatch>) {
     // 4. Colors.blue / Colors.red.shade500
     for cap in MATERIAL_COLORS_RE.captures_iter(source) {
         let m = cap.get(0).unwrap();
+        if skipped.iter().any(|(start, end)| *start <= m.start() && m.start() < *end) { continue; }
         let name = &cap[1];
         let shade = cap
             .get(2)
@@ -310,6 +293,7 @@ pub fn extract_swatches(source: &str) -> (Vec<ColorSwatch>, Vec<IconSwatch>) {
     // 5. Icons.home
     for cap in ICONS_RE.captures_iter(source) {
         let m = cap.get(0).unwrap();
+        if skipped.iter().any(|(start, end)| *start <= m.start() && m.start() < *end) { continue; }
         let icon_name = cap[1].to_string();
         let (line, col) = offset_to_line_col(m.start());
         let codepoint = resolve_material_icon_codepoint(&icon_name);
@@ -326,14 +310,15 @@ pub fn extract_swatches(source: &str) -> (Vec<ColorSwatch>, Vec<IconSwatch>) {
     // 6. CupertinoIcons.heart
     for cap in CUPERTINO_ICONS_RE.captures_iter(source) {
         let m = cap.get(0).unwrap();
+        if skipped.iter().any(|(start, end)| *start <= m.start() && m.start() < *end) { continue; }
         let icon_name = cap[1].to_string();
         let (line, col) = offset_to_line_col(m.start());
 
         icons.push(IconSwatch {
             line,
             col,
+            codepoint: resolve_cupertino_icon_codepoint(&icon_name),
             icon_name,
-            codepoint: None,
             is_cupertino: true,
         });
     }
@@ -385,5 +370,31 @@ mod tests {
         assert!(!icons[0].is_cupertino);
         assert_eq!(icons[1].icon_name, "heart");
         assert!(icons[1].is_cupertino);
+    }
+}
+
+#[cfg(test)]
+mod bundled_glyph_tests {
+    use super::*;
+    #[test]
+    fn flutter_glyphs_use_the_bundled_font_instead_of_material_symbols() {
+        assert_eq!(resolve_material_icon_codepoint("add"), Some(0xe047));
+        assert!(resolve_material_icon_codepoint("add_circle_outline").is_some());
+        assert!(
+            resolve_material_icon_codepoint("not_a_real_flutter_icon").is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod code_only_tests {
+    #[test]
+    fn comments_and_strings_do_not_create_decorations() {
+        let source = "// Colors.amber Icons.add\n/* Colors.red */\nfinal text = 'Colors.blue Icons.home';\nfinal icon = Icon(Icons.add, color: Colors.amber);";
+        let (colors, icons) = super::extract_swatches(source);
+        assert_eq!(colors.len(), 1);
+        assert_eq!(icons.len(), 1);
+        assert_eq!(colors[0].line, 3);
+        assert_eq!(icons[0].line, 3);
     }
 }

@@ -1,3 +1,4 @@
+mod lexical;
 /*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -745,9 +746,8 @@ impl SyntaxLayers {
                                         injections.push((config, ranges));
                                     }
                                 }
-                                Err(err) => {
-                                    tracing::error!("{:?}", err);
-                                }
+                                Err(highlight::HighlightIssue::NotAvailable) => {},
+                                Err(err) => tracing::debug!("Optional injected grammar unavailable: {:?}",err),
                             }
                         }
                     }
@@ -959,7 +959,15 @@ impl Syntax {
     ) {
         let layers = match &mut self.layers {
             Some(layers) => layers,
-            None => return,
+            None => {
+                self.styles = lexical::highlight(self.language, &new_text.to_string());
+                self.rev = new_rev;
+                self.lens = Self::lens_from_normal_lines(
+                    new_text.line_of_offset(new_text.len()) + 1,
+                    self.line_height, self.lens_height, &[]);
+                self.text = new_text;
+                return;
+            }
         };
         let edits = edits.filter(|edits| new_rev == self.rev + edits.len() as u64);
         if let Err(err) =

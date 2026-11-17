@@ -792,3 +792,7 @@ mode = "n"
 key = "ctrl+t"
 command = "flutter_run_test_at_cursor"
 when = "editor_focus"
+[[keymaps]]
+key = "F11"
+command = "toggle_bookmark"
+when = "editor_focus"

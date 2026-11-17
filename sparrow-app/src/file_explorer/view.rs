@@ -148,10 +148,7 @@ fn file_node_text_color(
         };
 
         if node.is_dir {
-            file_diffs
-                .keys()
-                .find(|p| p.as_path().starts_with(path))
-                .map(|_| FileDiffKind::Modified)
+            None
         } else {
             file_diffs.get(path).map(|(diff, _)| diff.kind())
         }
@@ -190,6 +187,8 @@ fn file_node_text_view(
                     })
                     .style(move |s| {
                         s.height(ui_line_height.get())
+                            .items_center()
+                            .font_weight(floem::text::Weight(600))
                             .color(file_node_text_color(
                                 config,
                                 node.clone(),
@@ -219,6 +218,7 @@ fn file_node_text_view(
                     }),
                 ))
             } else {
+                let platform = node.is_dir && super::project::role(&path, data.common.workspace.path.as_deref()) == Some("platform");
                 container(
                     label(move || {
                         project_info
@@ -226,6 +226,8 @@ fn file_node_text_view(
                     })
                     .style(move |s| {
                         s.height(ui_line_height.get())
+                            .items_center()
+                            .apply_if(platform, |s|s.font_weight(floem::text::Weight(600)))
                             .color(file_node_text_color(
                                 config,
                                 node.clone(),
@@ -422,6 +424,10 @@ fn file_explorer_view(
                                                     None
                                                 } else if role == Some("source") {
                                                     Some(config.color(SparrowColor::EDITOR_LINK))
+                                                } else if role == Some("test") {
+                                                    Some(Color::from_rgb8(109, 161, 107))
+                                                } else if role == Some("excluded") {
+                                                    Some(Color::from_rgb8(184, 133, 88))
                                                 } else if is_dir {
                                                     config.folder_svg(path).1
                                                 } else {

@@ -1,4 +1,6 @@
 //! Shared tool-window title bar, used by the reference layout.
+use crate::popup_menu::PopupMenuExt;
+use crate::popup_menu::{Menu, MenuItem};
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
     app::clickable_icon,
@@ -7,7 +9,6 @@ use crate::{
 };
 use floem::{
     View,
-    menu::{Menu, MenuItem},
     reactive::SignalGet,
     views::{Decorators, empty, label, stack},
 };
@@ -33,7 +34,7 @@ pub fn header(
         empty().style(|s| s.flex_grow(1.0_f32)),
         label(|| "⋮")
             .style(|s| s.padding_horiz(8.0))
-            .popout_menu(move || {
+            .ide_popout_menu(move || {
                 let left = menu_panel.clone();
                 let right = menu_panel.clone();
                 let bottom = menu_panel.clone();

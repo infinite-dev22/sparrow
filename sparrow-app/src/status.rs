@@ -1,3 +1,4 @@
+use crate::popup_menu::PopupMenuExt;
 use std::{
     rc::Rc,
     sync::{Arc, atomic::AtomicU64},
@@ -235,9 +236,9 @@ pub fn status(
                     })
                     .unwrap_or_default()
             })
-            .popout_menu(move || {
-                floem::menu::Menu::new("").entry(
-                    floem::menu::MenuItem::new("Editor Settings...").action(
+            .ide_popout_menu(move || {
+                crate::popup_menu::Menu::new("").entry(
+                    crate::popup_menu::MenuItem::new("Editor Settings...").action(
                         move || {
                             workbench_command
                                 .send(SparrowWorkbenchCommand::OpenSettings)

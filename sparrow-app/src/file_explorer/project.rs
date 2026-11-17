@@ -133,9 +133,10 @@ pub fn node_label(path: &Path, info: &ProjectInfo) -> String {
 pub fn role(path: &Path, root: Option<&Path>) -> Option<&'static str> {
     let relative = path.strip_prefix(root?).ok()?;
     match relative.to_str()? {
-        ".dart_tool" | "build" => Some("excluded"),
+        ".dart_tool" | "build" | "target" | ".gradle" | "out" => Some("excluded"),
         "lib" => Some("source"),
         "test" | "integration_test" => Some("test"),
+        "android" | "ios" | "macos" | "linux" | "windows" | "web" => Some("platform"),
         _ => None,
     }
 }

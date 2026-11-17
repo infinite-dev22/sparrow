@@ -1,11 +1,11 @@
+use crate::popup_menu::show_context_menu;
+use crate::popup_menu::{Menu, MenuItem};
 use std::rc::Rc;
 
 use floem::{
     View, ViewId,
-    action::show_context_menu,
     event::{Event, EventListener, EventPropagation},
     kurbo::Size,
-    menu::{Menu, MenuItem},
     reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal},
     style::CursorStyle,
     views::{

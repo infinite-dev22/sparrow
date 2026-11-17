@@ -934,6 +934,7 @@ impl Doc {
             } else {
                 return;
             };
+        if !crate::dart::is_dart_path(&path) || !self.common.dart_lsp.is_available() { return; }
         let (atomic_rev, rev, len) = self
             .buffer
             .with_untracked(|b| (b.atomic_rev(), b.rev(), b.len()));
@@ -1028,6 +1029,7 @@ impl Doc {
     }
 
     pub fn get_code_lens(&self) {
+        if !self.loaded() || !self.content.with_untracked(|c|c.path().is_some_and(|path|crate::dart::is_dart_path(path))) {return;}
         let cx = self.scope;
         let doc = self.clone();
         self.code_lens.update(|code_lens| {
@@ -1086,6 +1088,7 @@ impl Doc {
             } else {
                 return;
             };
+        if !crate::dart::is_dart_path(&path) || !self.common.dart_lsp.is_available() { return; }
 
         let (buffer, rev, len) = self
             .buffer
@@ -1222,6 +1225,28 @@ impl Doc {
     }
 
     fn update_breakpoints(&self, delta: &RopeDelta, path: &Path, old_text: &Rope) {
+        // Each delta has its own old text. The buffer already contains the final
+        // edit batch, so consulting it here moves markers twice in multi-edits.
+        let new_text = delta.apply(old_text);
+        let (range, _) = delta.summary();
+        let reload_delta;
+        let delta = if range.start() == 0 && range.end() == old_text.len() {
+            // Reload represents the entire buffer as one replacement. Preserve
+            // markers outside the actual changed text instead of collapsing them.
+            reload_delta = minimal_marker_delta(old_text, &new_text);
+            &reload_delta
+        } else { delta };
+        if self.common.bookmarks.with_untracked(|items| items.contains_key(path)) {
+            self.common.bookmarks.update(|items| {
+                if let Some(lines) = items.get_mut(path) {
+                    let mut transform = Transformer::new(delta);
+                    *lines = lines.iter().map(|line| {
+                        let offset = transform.transform(old_text.offset_of_line(*line), false);
+                        new_text.line_of_offset(offset)
+                    }).collect();
+                }
+            });
+        }
         if self
             .common
             .breakpoints
@@ -1230,20 +1255,20 @@ impl Doc {
             self.common.breakpoints.update(|breakpoints| {
                 if let Some(path_breakpoints) = breakpoints.get_mut(path) {
                     let mut transformer = Transformer::new(delta);
-                    self.buffer.with_untracked(|buffer| {
+                    {
                         *path_breakpoints = path_breakpoints
                             .clone()
                             .into_values()
                             .map(|mut b| {
                                 let offset = old_text.offset_of_line(b.line);
                                 let offset = transformer.transform(offset, false);
-                                let line = buffer.line_of_offset(offset);
+                                let line = new_text.line_of_offset(offset);
                                 b.line = line;
                                 b.offset = offset;
                                 (b.line, b)
                             })
                             .collect();
-                    });
+                    }
                 }
             });
         }
@@ -2535,5 +2560,30 @@ mod save_result_tests {
             }),
         );
         assert_eq!(result.unwrap_err(), "Permission denied");
+    }
+}
+
+
+fn minimal_marker_delta(old: &Rope, new: &Rope) -> RopeDelta {
+    let old_text=old.to_string(); let new_text=new.to_string();
+    let prefix=old_text.chars().zip(new_text.chars()).take_while(|(a,b)|a==b).map(|(c,_)|c.len_utf8()).sum::<usize>();
+    let suffix=old_text[prefix..].chars().rev().zip(new_text[prefix..].chars().rev()).take_while(|(a,b)|a==b).map(|(c,_)|c.len_utf8()).sum::<usize>();
+    RopeDelta::simple_edit(Interval::new(prefix, old.len()-suffix), Rope::from(&new_text[prefix..new.len()-suffix]),old.len())
+}
+#[cfg(test)]
+mod gutter_reload_tests {
+    use super::*;
+    #[test]
+    fn reload_preserves_markers_and_tracks_inserted_lines_with_unicode() {
+        let old=Rope::from("// café\nfirst\nsecond\nlast\n");
+        let same_line_edit=Rope::from("// café\nfirst changed\nsecond\nlast\n");
+        let delta=minimal_marker_delta(&old,&same_line_edit);
+        let offset=Transformer::new(&delta).transform(old.offset_of_line(2),false);
+        assert_eq!(same_line_edit.line_of_offset(offset),2);
+        let inserted=Rope::from("// café\ninserted\nfirst\nsecond\nlast\n");
+        let delta=minimal_marker_delta(&old,&inserted);
+        let offset=Transformer::new(&delta).transform(old.offset_of_line(2),false);
+        assert_eq!(inserted.line_of_offset(offset),3);
+        assert_eq!(delta.apply(&old).to_string(),inserted.to_string());
     }
 }

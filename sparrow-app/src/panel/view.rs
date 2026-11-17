@@ -1,10 +1,11 @@
+use crate::popup_menu::PopupMenuExt;
+use crate::popup_menu::{Menu, MenuItem};
 use std::{rc::Rc, sync::Arc};
 
 use floem::{
     AnyView, IntoView, View,
     event::{Event, EventListener, EventPropagation},
     kurbo::{Point, Size},
-    menu::{Menu, MenuItem},
     reactive::{
         ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal,
     },
@@ -521,6 +522,7 @@ fn panel_view(
                 PanelKind::RunningDevices => super::workflow_tools::running_devices(window_tab_data.clone()).into_any(),
                 PanelKind::Problems => super::reference_tools::problems(window_tab_data.clone()).into_any(),
                 PanelKind::Logcat => super::reference_tools::logcat(window_tab_data.clone()).into_any(),
+                PanelKind::ResourceManager => super::resource_manager::panel(window_tab_data.clone()).into_any(),
                 PanelKind::GitHistory => super::reference_tools::history(window_tab_data.clone()).into_any(),
                 PanelKind::Terminal => {
                     terminal_panel(window_tab_data.clone()).into_any()
@@ -673,7 +675,7 @@ pub fn tool_window_stripe(
                         .border_radius(6.0)
                     })
             })
-            .popout_menu(move || {
+            .ide_popout_menu(move || {
                 use strum::IntoEnumIterator;
                 let mut menu = Menu::new("Tool Windows");
                 let mut kinds: Vec<_> = PanelKind::iter()

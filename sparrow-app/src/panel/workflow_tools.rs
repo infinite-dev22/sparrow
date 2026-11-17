@@ -1,4 +1,6 @@
 //! Dart/Flutter workflow surfaces. All cards and rows represent observed data.
+use crate::popup_menu::PopupMenuExt;
+use crate::popup_menu::{Menu, MenuItem};
 use super::{kind::PanelKind, reference_tools::output};
 use crate::{
     app::clickable_icon,
@@ -8,7 +10,6 @@ use crate::{
 };
 use floem::{
     View,
-    menu::{Menu, MenuItem},
     reactive::{
         RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_effect,
         create_memo, create_rw_signal,
@@ -55,103 +56,60 @@ pub fn record_pub_get_result(notices:RwSignal<Vec<Notice>>,id:u64,result:Result<
     });
 }
 pub fn notifications(window: Rc<WindowTabData>) -> impl View {
-    let config = window.common.config;
-    let notices = window.notifications;
-    let message = window.flutter_hot_reload.message;
-    create_effect(move |last: Option<Option<String>>| {
-        let current = message.get();
-        if current.is_some() && last.as_ref() != Some(&current) {
-            record(notices, "Flutter", current.as_deref().unwrap());
-        }
-        current
+    let config=window.common.config;
+    let notices=window.notifications;
+    let expanded=create_rw_signal(std::collections::HashSet::<u64>::new());
+    let open_groups=create_rw_signal(std::collections::HashSet::<String>::new());
+    let message=window.flutter_hot_reload.message;
+    create_effect(move |last:Option<Option<String>>|{
+        let current=message.get();
+        if current.is_some()&&last.as_ref()!=Some(&current){record(notices,"Flutter",current.as_deref().unwrap());} current
+    });
+    let groups=create_memo(move |_|{
+        let mut groups=Vec::<String>::new();
+        for notice in notices.get().iter().rev(){if !groups.contains(&notice.title){groups.push(notice.title.clone());}}
+        groups
     });
     stack((
-        super::chrome::header(
-            window,
-            PanelKind::Notifications,
-            "Notifications",
-            empty(),
-        ),
-        stack((
-            label(|| "Timeline").style(move |s| {
-                s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
-            }),
-            empty().style(|s| s.flex_grow(1.0_f32)),
-            label(|| "Clear all")
-                .on_click_stop(move |_| notices.set(Vec::new()))
-                .style(move |s| {
-                    s.color(config.get().color(SparrowColor::EDITOR_LINK))
-                }),
-        ))
-        .style(|s| {
-            s.height(32.0)
-                .items_center()
-                .padding_horiz(20.0)
-                .width_full()
-        }),
-        label(|| "No notifications").style(move |s| {
-            s.width_full()
-                .padding(28.0)
-                .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
-                .apply_if(!notices.with(|n| n.is_empty()), |s| s.hide())
-        }),
-        scroll(
-            dyn_stack(
-                move || notices.get().into_iter().rev().collect::<Vec<_>>(),
-                |n| n.id,
-                move |n| {
-                    let id = n.id;
+        super::chrome::header(window,PanelKind::Notifications,"Notifications",empty()),
+        stack((label(||"Timeline").style(move |s|s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))),
+            empty().style(|s|s.flex_grow(1.0_f32)),
+            label(||"Clear all").on_click_stop(move |_|{notices.set(Vec::new());expanded.set(Default::default());open_groups.set(Default::default());})
+                .style(move |s|s.color(config.get().color(SparrowColor::EDITOR_LINK)))
+        )).style(|s|s.height(30.0).items_center().padding_horiz(16.0).width_full()),
+        label(||"No notifications").style(move |s|s.padding(24.0).apply_if(!notices.with(|n|n.is_empty()),|s|s.hide())),
+        scroll(dyn_stack(move ||groups.get(),|title|title.clone(),move |title|{
+            let count_title=title.clone();let toggle_title=title.clone();let dismiss_title=title.clone();let rows_title=title.clone();
+            stack((
+                stack((label(move ||{
+                    let count=notices.with(|items|items.iter().filter(|n|n.title==count_title).count());
+                    format!("{} {}  ({count})",if open_groups.with(|g|g.contains(&count_title)){"⌄"}else{"›"},count_title)
+                }).style(|s|s.flex_grow(1.0_f32).font_weight(floem::text::Weight(600))),
+                    clickable_icon(||SparrowIcons::CLOSE,move ||notices.update(|items|items.retain(|n|n.title!=dismiss_title)),||false,||false,||"Dismiss group",config)
+                )).on_click_stop(move |_|open_groups.update(|groups|{if !groups.remove(&toggle_title){groups.insert(toggle_title.clone());}}))
+                  .style(|s|s.height(28.0).width_full().items_center().padding_horiz(6.0)),
+                dyn_stack(move ||{
+                    let all=open_groups.with(|groups|groups.contains(&rows_title));
+                    notices.with(|items|items.iter().rev().filter(|n|n.title==rows_title).take(if all{usize::MAX}else{1}).cloned().collect::<Vec<_>>())
+                },|notice|notice.id,move |notice|{
+                    let id=notice.id;let body=notice.body.clone();let long=body.chars().count()>360||body.lines().count()>5;
                     stack((
-                        stack((
-                            label(move || n.title.clone()).style(|s| {
-                                s.flex_grow(1.0_f32)
-                                    .min_width(0.0)
-                                    .font_bold()
-                                    .text_ellipsis()
-                            }),
-                            label(move || n.time.clone()).style(move |s| {
-                                s.font_size(11.0).color(
-                                    config
-                                        .get()
-                                        .color(SparrowColor::PANEL_FOREGROUND_DIM),
-                                )
-                            }),
-                            clickable_icon(
-                                || SparrowIcons::CLOSE,
-                                move || {
-                                    notices
-                                        .update(|items| items.retain(|n| n.id != id))
-                                },
-                                || false,
-                                || false,
-                                || "Dismiss notification",
-                                config,
-                            ),
-                        ))
-                        .style(|s| s.width_full().items_center()),
-                        label(move || n.body.clone())
-                            .style(|s| s.width_full().margin_top(6.0)),
-                    ))
-                    .style(move |s| {
-                        s.flex_col()
-                            .width_full()
-                            .padding(12.0)
-                            .margin_bottom(10.0)
-                            .border_radius(6.0)
-                            .background(
-                                config
-                                    .get()
-                                    .color(SparrowColor::PANEL_HOVERED_BACKGROUND)
-                                    .multiply_alpha(0.45),
-                            )
-                    })
-                },
-            )
-            .style(|s| s.flex_col().width_full().padding_horiz(10.0)),
-        )
-        .style(|s| s.flex_grow(1.0_f32).width_full().min_height(0.0)),
-    ))
-    .style(|s| s.absolute().size_full().flex_col().font_size(13.0))
+                        stack((label(move ||notice.time.clone()).style(move |s|s.flex_grow(1.0_f32).font_size(11.0).color(config.get().color(SparrowColor::EDITOR_DIM))),
+                            clickable_icon(||SparrowIcons::CLOSE,move ||notices.update(|items|items.retain(|n|n.id!=id)),||false,||false,||"Dismiss notification",config)
+                        )).style(|s|s.items_center().width_full()),
+                        label(move ||if long&&!expanded.with(|ids|ids.contains(&id)){
+                            let text=body.lines().take(5).collect::<Vec<_>>().join("\n");
+                            format!("{}…",text.chars().take(360).collect::<String>())
+                        }else{body.clone()}).style(|s|s.width_full().min_width(0.0).margin_top(4.0)),
+                        label(move ||if expanded.with(|ids|ids.contains(&id)){"Show less"}else{"Show more"})
+                            .on_click_stop(move |_|expanded.update(|ids|{if !ids.remove(&id){ids.insert(id);}}))
+                            .style(move |s|s.margin_top(6.0).color(config.get().color(SparrowColor::EDITOR_LINK)).apply_if(!long,|s|s.hide()))
+                    )).style(move |s|s.flex_col().width_full().padding(10.0).margin_bottom(6.0).border_radius(5.0)
+                        .background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND).with_alpha(0.35)))
+                }).style(|s|s.flex_col().width_full()),
+            )).style(|s|s.flex_col().width_full().margin_bottom(10.0))
+        }).style(|s|s.flex_col().width_full().padding_horiz(10.0))).style(|s|s.flex_grow(1.0_f32).min_height(0.0).width_full())
+    )).style(|s|s.absolute().size_full().flex_col().font_size(13.0))
 }
 
 fn github_repository(remote: &str) -> Option<String> {
@@ -368,7 +326,7 @@ pub fn pull_requests(window: Rc<WindowTabData>) -> impl View {
                     )
             }),
         stack((
-            label(move || format!("{} ⌄", state.get())).popout_menu(move || {
+            label(move || format!("{} ⌄", state.get())).ide_popout_menu(move || {
                 let mut m = Menu::new("");
                 for value in ["open", "closed", "all"] {
                     m = m.entry(
@@ -386,7 +344,7 @@ pub fn pull_requests(window: Rc<WindowTabData>) -> impl View {
                     }
                 })
             })
-            .popout_menu(move || {
+            .ide_popout_menu(move || {
                 let mut m = Menu::new("").entry(
                     MenuItem::new("All authors")
                         .action(move || author.set(String::new())),
@@ -416,7 +374,7 @@ pub fn pull_requests(window: Rc<WindowTabData>) -> impl View {
                     }
                 })
             })
-            .popout_menu(move || {
+            .ide_popout_menu(move || {
                 let mut m = Menu::new("").entry(
                     MenuItem::new("All labels")
                         .action(move || tag.set(String::new())),
@@ -603,7 +561,7 @@ pub fn running_devices(window: Rc<WindowTabData>) -> impl View {
             .collect::<Vec<_>>()
     });
     stack((super::chrome::header(window,PanelKind::RunningDevices,"Running Devices",empty()),
- stack((clickable_icon(||SparrowIcons::ADD,move ||{},||false,||false,||"Select device or launch emulator",config).popout_menu(move ||{let mut m=Menu::new("");for d in add.devices.get_untracked(){let choice=d.clone();m=m.entry(MenuItem::new(&d.name).action(move ||selected.set(Some(choice.clone()))));}for e in add.emulators.get_untracked(){let hr=add.clone();m=m.entry(MenuItem::new(format!("Launch {}",e.name)).action(move ||hr.launch_emulator(&e.id)));}m}),label(||"Device Manager").on_click_stop(move |_|manager.show_panel(PanelKind::DeviceManager)).style(move |s|s.color(config.get().color(SparrowColor::EDITOR_LINK))),clickable_icon(||SparrowIcons::IMAGE_LOADING,move ||refresh.fetch_devices(),||false,||false,||"Refresh Flutter devices",config))).style(|s|s.height(30.0).gap(8.0).items_center().padding_horiz(12.0)),
+ stack((clickable_icon(||SparrowIcons::ADD,move ||{},||false,||false,||"Select device or launch emulator",config).ide_popout_menu(move ||{let mut m=Menu::new("");for d in add.devices.get_untracked(){let choice=d.clone();m=m.entry(MenuItem::new(&d.name).action(move ||selected.set(Some(choice.clone()))));}for e in add.emulators.get_untracked(){let hr=add.clone();m=m.entry(MenuItem::new(format!("Launch {}",e.name)).action(move ||hr.launch_emulator(&e.id)));}m}),label(||"Device Manager").on_click_stop(move |_|manager.show_panel(PanelKind::DeviceManager)).style(move |s|s.color(config.get().color(SparrowColor::EDITOR_LINK))),clickable_icon(||SparrowIcons::IMAGE_LOADING,move ||refresh.fetch_devices(),||false,||false,||"Refresh Flutter devices",config))).style(|s|s.height(30.0).gap(8.0).items_center().padding_horiz(12.0)),
  stack((svg(||DEVICES_ART.to_string()).style(|s|s.size(180.0,112.0).margin_bottom(20.0)),label(||"Connect an Android device via USB or Wi-Fi to mirror it. Use + to select a Flutter target or launch an installed emulator.").style(|s|s.width(346.0).max_width_full()),label(||"Android mirroring opens in a separate scrcpy window. Start a Flutter session to display its active target here.").style(|s|s.width(346.0).max_width_full().margin_top(18.0)))).style(move |s|s.flex_col().flex_grow(1.0_f32).width_full().items_center().justify_center().padding(18.0).padding_bottom(116.0).line_height(1.4).color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM)).apply_if(!rows.with(|r|r.is_empty()),|s|s.hide())),
  scroll(dyn_stack(move ||rows.get(),|d|d.id.clone(),move |d|{let select=d.clone();let is_android=d.target_platform.as_deref().is_some_and(|p|p.contains("android"));let mirror=mirror.clone();let mirror_alive=mirror_alive.clone();let id=d.id.clone();stack((label(move ||d.name.clone()).style(|s|s.font_bold()),label(move ||d.target_platform.clone().unwrap_or_default()).style(|s|s.margin_top(6.0)),label(||"Select Flutter target").on_click_stop(move |_|selected.set(Some(select.clone()))).style(move |s|s.margin_top(10.0).color(config.get().color(SparrowColor::EDITOR_LINK))),label(||"Mirror Android device").on_click_stop(move |_|{if let Some(mut old)=mirror.borrow_mut().take(){let _=old.kill();let _=old.wait();}match Command::new("scrcpy").args(["-s",&id,"--window-title","Sparrow · Flutter device"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn(){Ok(child)=>{mirror.borrow_mut().replace(child);mirror_status.set("Mirroring opened in scrcpy".into());watch_mirror(mirror.clone(),mirror_status,notices,mirror_alive.clone());},Err(e)=>record(notices,"Running Devices",&format!("Unable to start scrcpy: {e}"))}}).style(move |s|s.margin_top(10.0).color(config.get().color(SparrowColor::EDITOR_LINK)).apply_if(!is_android,|s|s.hide())))).style(move |s|s.flex_col().width_full().padding(16.0).border_bottom(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER)))}).style(|s|s.flex_col().width_full())).style(move |s|s.width_full().flex_grow(1.0_f32).min_height(0.0).apply_if(rows.with(|r|r.is_empty()),|s|s.hide())),
  label(move ||mirror_status.get()).style(move |s|s.padding_horiz(12.0).apply_if(mirror_status.with(|s|s.is_empty()),|s|s.hide())),label(||"Stop mirroring").on_click_stop(move |_|{if let Some(mut child)=stop.borrow_mut().take(){let _=child.kill();let _=child.wait();}mirror_status.set(String::new());}).style(move |s|s.height(28.0).padding_horiz(12.0).color(config.get().color(SparrowColor::EDITOR_LINK)).apply_if(mirror_status.with(|s|s.is_empty()),|s|s.hide())),

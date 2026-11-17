@@ -1,5 +1,6 @@
 //! Flat, navigable diagnostic table matching the Dart Analysis tool window.
 use super::kind::PanelKind;
+use crate::popup_menu::{Menu, MenuItem, PopupMenuExt};
 use crate::{
     app::clickable_icon,
     command::InternalCommand,
@@ -10,7 +11,7 @@ use crate::{
 use floem::{
     View,
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
-    views::{Decorators, VirtualVector, label, scroll, stack, virtual_stack},
+    views::{Decorators, VirtualVector, label, scroll, stack, svg, virtual_stack},
 };
 use lsp_types::{Diagnostic, DiagnosticSeverity};
 use std::{path::PathBuf, rc::Rc};
@@ -42,6 +43,14 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
     let internal = window.common.internal_command;
     let root = window.workspace.path.clone();
     let filter = create_rw_signal(None::<u8>);
+    let sort_location = create_rw_signal(true);
+    let ascending = create_rw_signal(true);
+    let selected = create_rw_signal(None::<(PathBuf, lsp_types::Position)>);
+    let detail_window = window.clone();
+    let reanalyze = window.common.dart_lsp.clone();
+    let notifications = window.notifications;
+    let scope = window.scope;
+    let settings = window.settings_modal_visible;
     let rows = create_memo(move |_| {
         let mut rows = Vec::new();
         for (path, data) in diagnostics.get() {
@@ -62,13 +71,26 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 ));
             }
         }
-        rows.sort_by_key(|r| {
-            (
-                rank(r.diagnostic.severity),
-                r.path.clone(),
-                r.diagnostic.range.start.line,
-                r.diagnostic.range.start.character,
-            )
+        rows.sort_by(|left, right| {
+            let order = if sort_location.get() {
+                (
+                    left.path.clone(),
+                    left.diagnostic.range.start.line,
+                    left.diagnostic.range.start.character,
+                )
+                    .cmp(&(
+                        right.path.clone(),
+                        right.diagnostic.range.start.line,
+                        right.diagnostic.range.start.character,
+                    ))
+            } else {
+                left.diagnostic.message.cmp(&right.diagnostic.message)
+            };
+            if ascending.get() {
+                order
+            } else {
+                order.reverse()
+            }
         });
         rows
     });
@@ -130,9 +152,16 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
     });
     let height = 24.0;
     stack((
-        super::chrome::header(window, PanelKind::Problem, "Dart Analysis", summary),
+        super::chrome::header(window.clone(), PanelKind::Problem, "Dart Analysis", summary),
         stack((
             stack((
+                clickable_icon(||SparrowIcons::IMAGE_LOADING,move ||{
+                    let send=floem::ext_event::create_ext_action(scope,move |result:serde_json::Value|{
+                        if let Some(error)=result.get("error"){super::workflow_tools::record(notifications,"Dart analysis",&error.to_string());}
+                    });
+                    reanalyze.request_async("dart/reanalyze",serde_json::Value::Null,move |result|send(result));
+                },||false,||false,||"Reanalyze project",config),
+                clickable_icon(||SparrowIcons::SETTINGS,move ||settings.set(true),||false,||false,||"Analysis settings",config),
                 clickable_icon(
                     || SparrowIcons::PROBLEM,
                     move || filter.set(None),
@@ -176,8 +205,10 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             }),
             stack((
                 stack((
-                    label(|| "Description").style(|s| s.padding_left(6.0).width_pct(50.0)),
-                    label(|| "Location")
+                    label(move ||if !sort_location.get(){if ascending.get(){"Description ↑"}else{"Description ↓"}}else{"Description"})
+                        .on_click_stop(move |_|{if !sort_location.get_untracked(){ascending.update(|v|*v=!*v);}else{sort_location.set(false);ascending.set(true);}}).style(|s| s.padding_left(6.0).width_pct(50.0)),
+                    label(move ||if sort_location.get(){if ascending.get(){"Location ↑"}else{"Location ↓"}}else{"Location"})
+                        .on_click_stop(move |_|{if sort_location.get_untracked(){ascending.update(|v|*v=!*v);}else{sort_location.set(true);ascending.set(true);}})
                         .style(move |s| s.padding_left(8.0).width_pct(50.0).border_left(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
                 ))
                 .style(move |s| {
@@ -212,6 +243,9 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             )
                         },
                         move |row| {
+                            let details=detail_window.clone();let diagnostic=row.diagnostic.clone();let full_text=format!("{}:{}:{}\n{}\n{}",row.path.display(),row.diagnostic.range.start.line+1,row.diagnostic.range.start.character+1,row.diagnostic.message,row.diagnostic.code.as_ref().map(|code|format!("{code:?}")).unwrap_or_default());
+                            let selection=(row.path.clone(),row.diagnostic.range.start);
+                            let check=selection.clone();
                             let location_text = format!(
                                 "{}:{}",
                                 root.as_ref()
@@ -240,15 +274,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             };
                             stack((
                                 stack((
-                                    label(move || if severity == 2 { "i" } else { "!" }).style(move |s| {
-                                        s.size(14.0,14.0).flex_shrink(0.0_f32).items_center().justify_center().font_bold().font_size(11.0).border_radius(7.0).margin_left(6.0).margin_right(6.0).color(floem::peniko::Color::WHITE).background(
-                                            config.get().color(match severity {
-                                                0 => SparrowColor::SPARROW_ERROR,
-                                                1 => SparrowColor::SPARROW_WARN,
-                                                _ => SparrowColor::EDITOR_LINK,
-                                            }),
-                                        )
-                                    }),
+                                    svg(move ||config.get().ui_svg(match severity{0=>SparrowIcons::ERROR,1=>SparrowIcons::WARNING,_=>SparrowIcons::PROBLEM})).style(move |s|s.size(14.0,14.0).flex_shrink(0.0_f32).margin_horiz(6.0).color(config.get().color(match severity{0=>SparrowColor::SPARROW_ERROR,1=>SparrowColor::SPARROW_WARN,_=>SparrowColor::EDITOR_LINK}))),
                                     label(move || message.clone())
                                         .style(|s| s.min_width(0.0).text_ellipsis()),
                                 ))
@@ -270,12 +296,19 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                                 ),
                             ))
                             .on_click_stop(move |_| {
+                                selected.set(Some(selection.clone()));
                                 internal.send(InternalCommand::JumpToLocation {
                                     location: location.clone(),
                                 })
                             })
+                            .ide_context_menu(move ||{
+                                let show=full_text.clone();let copy=full_text.clone();let details=details.clone();
+                                let mut menu=Menu::new("").entry(MenuItem::new("Show diagnostic details").action(move ||details.show_alert("Dart diagnostic".into(),show.clone(),Vec::new())))
+                                    .entry(MenuItem::new("Copy diagnostic").action(move ||crate::menus::copy_text(&copy)));
+                                if let Some(description)=diagnostic.code_description.as_ref(){let url=description.href.to_string();menu=menu.entry(MenuItem::new("Open documentation").action(move ||{let _=open::that(&url);}));}menu
+                            })
                             .style(move |s| {
-                                s.height(height)
+                                s.height(height).apply_if(selected.with(|selected|selected.as_ref()==Some(&check)),|s|s.background(config.get().color(SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND)))
                                     .width_full()
                                     .items_center()
                                     .hover(|s| {

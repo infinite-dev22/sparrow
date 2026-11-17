@@ -1,8 +1,9 @@
+use crate::popup_menu::PopupMenuExt;
+use crate::popup_menu::{Menu, MenuItem};
 use floem::reactive::Scope;
 use floem::{
     View,
     kurbo::Point,
-    menu::{Menu, MenuItem},
     peniko::Color,
     prelude::create_rw_signal,
     reactive::{
@@ -72,7 +73,7 @@ fn left(
             || "Menu",
             config,
         )
-        .popout_menu(move || {
+        .ide_popout_menu(move || {
             window_menu(
                 sparrow_command,
                 workbench_command,
@@ -106,7 +107,7 @@ fn left(
             ),
             || "Connect to Remote",
         )
-        .popout_menu(move || {
+        .ide_popout_menu(move || {
             #[allow(unused_mut)]
             let mut menu = Menu::new("").entry(
                 MenuItem::new("Connect to SSH Host").action(move || {
@@ -395,7 +396,7 @@ fn right(
             ))
             .style(|s| s.items_center()),
         )
-        .popout_menu({
+        .ide_popout_menu({
             let wt_data = window_tab_data.clone();
             move || {
                 let mut menu = Menu::new("");
@@ -529,7 +530,7 @@ fn right(
                     .border_radius(4.0)
                 })
         })
-        .popout_menu(move || {
+        .ide_popout_menu(move || {
             Menu::new("")
                 .entry(MenuItem::new("Run Selected Configuration").action(
                     move || {
@@ -570,7 +571,9 @@ fn right(
             )
             .disabled(move || !is_running())
             .on_click_stop(move |_| {
-                hr.common.workbench_command.send(SparrowWorkbenchCommand::FlutterHotReload);
+                hr.common
+                    .workbench_command
+                    .send(SparrowWorkbenchCommand::FlutterHotReload);
             })
             .style(move |s| {
                 let config = config.get();
@@ -606,7 +609,9 @@ fn right(
             )
             .disabled(move || !is_running())
             .on_click_stop(move |_| {
-                hr.common.workbench_command.send(SparrowWorkbenchCommand::FlutterHotRestart);
+                hr.common
+                    .workbench_command
+                    .send(SparrowWorkbenchCommand::FlutterHotRestart);
             })
             .style(move |s| {
                 let config = config.get();
@@ -730,7 +735,7 @@ fn right(
                 || "Settings",
                 config,
             )
-            .popout_menu(move || {
+            .ide_popout_menu(move || {
                 Menu::new("")
                     .entry(MenuItem::new("Command Palette").action(move || {
                         workbench_command
@@ -871,15 +876,13 @@ pub fn title(
             .flex_shrink(0.0_f32)
             .items_center()
             .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
-            .apply_if(config.color_theme.name == "Islands Dark", |s| {
-                s.background(
-                    floem::peniko::Gradient::new_linear((0.0, 0.0), (620.0, 32.0))
-                        .with_stops([
-                            Color::from_rgb8(0x41, 0x4D, 0x68),
-                            Color::from_rgb8(0x26, 0x28, 0x2C),
-                        ]),
-                )
-            })
+            .background(
+                floem::peniko::Gradient::new_linear((0.0, 0.0), (620.0, 32.0))
+                    .with_stops([
+                        Color::from_rgb8(0x41, 0x4D, 0x68),
+                        config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
+                    ]),
+            )
     })
     .debug_name("Title / Top Bar")
 }

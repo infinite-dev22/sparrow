@@ -223,6 +223,9 @@ impl SparrowDb {
         Ok(())
     }
 
+    pub fn save_workspace_info(&self, workspace:SparrowWorkspace, info:WorkspaceInfo) {
+        let _=self.save_tx.send(SaveEvent::Workspace(workspace,info));
+    }
     pub fn save_window_tab(&self, data: Rc<WindowTabData>) -> Result<()> {
         let workspace = (*data.workspace).clone();
         let workspace_info = data.workspace_info();
@@ -238,6 +241,15 @@ impl SparrowDb {
         &self,
         workspace: &SparrowWorkspace,
     ) -> Result<WorkspaceInfo> {
+        if workspace.kind.is_local() {
+            if let Some(root)=workspace.path.as_deref() {
+                match crate::project_session::read(root) {
+                    Ok(Some(info))=>return Ok(info),
+                    Ok(None)=>{},
+                    Err(error)=>tracing::warn!("Project session could not be restored: {error}"),
+                }
+            }
+        }
         let info = std::fs::read_to_string(
             self.workspace_folder
                 .join(workspace_folder_name(workspace))
@@ -258,6 +270,11 @@ impl SparrowDb {
         }
         let workspace_info = serde_json::to_string_pretty(info)?;
         std::fs::write(folder.join(WORKSPACE_INFO), workspace_info)?;
+        if workspace.kind.is_local() {
+            if let Some(root)=workspace.path.as_deref() {
+                if let Err(error)=crate::project_session::write(root,info){tracing::warn!("Could not save project-local workspace: {error}");}
+            }
+        }
         Ok(())
     }
 

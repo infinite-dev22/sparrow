@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct DiffInfo {
+    #[serde(default)]
+    pub untracked: Vec<PathBuf>,
     pub head: String,
     pub branches: Vec<String>,
     pub tags: Vec<String>,

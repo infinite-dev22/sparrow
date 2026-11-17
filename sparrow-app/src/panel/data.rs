@@ -26,6 +26,7 @@ pub fn default_panel_order() -> PanelOrder {
         PanelPosition::LeftTop,
         im::vector![
             PanelKind::FileExplorer,
+            PanelKind::ResourceManager,
             PanelKind::Plugin,
             PanelKind::SourceControl,
             PanelKind::PullRequests,

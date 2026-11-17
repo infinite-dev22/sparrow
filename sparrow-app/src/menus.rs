@@ -1,6 +1,6 @@
 //! Shared context-menu behavior for file, editor and tab surfaces.
+use crate::popup_menu::{Menu, MenuItem};
 use floem::{
-    menu::{Menu, MenuItem},
     views::editor::{core::register::Clipboard, text::SystemClipboard},
 };
 use std::path::{Path, PathBuf};
@@ -131,3 +131,5 @@ mod tests {
         assert!(!refs.iter().any(|(name, _)| name.contains("Content") || name.contains("Source")));
     }
 }
+
+pub fn copy_text(value:&str) {SystemClipboard::new().put_string(value.to_string());}

@@ -229,6 +229,8 @@ pub enum SparrowLanguage {
     Ini,
     #[strum(message = "Java")]
     Java,
+    #[strum(message = "JavaScript")]
+    JavaScript,
     #[strum(message = "JSON")]
     Json,
     #[strum(message = "JSON5")]
@@ -245,12 +247,16 @@ pub enum SparrowLanguage {
     Markdown,
     #[strum(serialize = "markdown.inline")]
     MarkdownInline,
+    #[strum(message = "Objective-C")]
+    ObjectiveC,
     #[strum(message = "Shell Script (POSIX)")]
     ShellScript,
     #[strum(message = "Swift")]
     Swift,
     #[strum(message = "TOML")]
     Toml,
+    #[strum(message = "TypeScript")]
+    TypeScript,
     #[strum(message = "XML")]
     Xml,
     #[strum(message = "YAML")]
@@ -370,7 +376,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: SparrowLanguage::Gitattributes,
         indent: Indent::tab(),
-        files: &[],
+        files: &[".gitattributes", ".gitignore", ".dockerignore"],
         extensions: &[],
         comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
@@ -435,7 +441,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
         indent: Indent::tab(),
         files: &[".env"],
         extensions: &["ini", "properties", "xcconfig", "desktop", "env"],
-        comment: comment_properties!(),
+        comment: comment_properties!("#"),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
@@ -443,6 +449,14 @@ const LANGUAGES: &[SyntaxProperties] = &[
         indent: Indent::space(4),
         files: &[],
         extensions: &["java"],
+        comment: comment_properties!("//"),
+        tree_sitter: TreeSitterProperties::DEFAULT,
+    },
+    SyntaxProperties {
+        id: SparrowLanguage::JavaScript,
+        indent: Indent::space(2),
+        files: &[],
+        extensions: &["js", "mjs", "cjs", "jsx"],
         comment: comment_properties!("//"),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
@@ -503,16 +517,16 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: SparrowLanguage::Make,
         indent: Indent::tab(),
-        files: &[],
-        extensions: &[],
-        comment: comment_properties!(),
+        files: &["Makefile", "makefile", "GNUmakefile"],
+        extensions: &["mk", "mak"],
+        comment: comment_properties!("#"),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
         id: SparrowLanguage::Markdown,
         indent: Indent::space(4),
         files: &[],
-        extensions: &["md"],
+        extensions: &["md", "markdown", "mdown"],
         comment: comment_properties!(),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
@@ -530,6 +544,14 @@ const LANGUAGES: &[SyntaxProperties] = &[
             code_glance: (DEFAULT_CODE_GLANCE_LIST, DEFAULT_CODE_GLANCE_IGNORE_LIST),
             sticky_headers: &[],
         },
+    },
+    SyntaxProperties {
+        id: SparrowLanguage::ObjectiveC,
+        indent: Indent::space(2),
+        files: &[],
+        extensions: &["m", "mm"],
+        comment: comment_properties!("//"),
+        tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
         id: SparrowLanguage::ShellScript,
@@ -553,6 +575,14 @@ const LANGUAGES: &[SyntaxProperties] = &[
         files: &["Cargo.lock"],
         extensions: &["toml"],
         comment: comment_properties!("#"),
+        tree_sitter: TreeSitterProperties::DEFAULT,
+    },
+    SyntaxProperties {
+        id: SparrowLanguage::TypeScript,
+        indent: Indent::space(2),
+        files: &[],
+        extensions: &["ts", "tsx"],
+        comment: comment_properties!("//"),
         tree_sitter: TreeSitterProperties::DEFAULT,
     },
     SyntaxProperties {
@@ -583,6 +613,7 @@ impl SparrowLanguage {
 
     pub fn from_path_raw(path: &Path) -> Option<SparrowLanguage> {
         let filename = path.file_name().and_then(|s| s.to_str());
+        if filename.is_some_and(|name| name.starts_with(".env.")) { return Some(SparrowLanguage::Ini); }
         let extension = path
             .extension()
             .and_then(|s| s.to_str().map(|s| s.to_lowercase()));
@@ -684,7 +715,7 @@ impl SparrowLanguage {
                 }
                 Err(err) => {
                     if self != &SparrowLanguage::PlainText {
-                        tracing::error!("{:?} {:?}", self, err);
+                        tracing::debug!("Using bundled highlighting for {:?}: {:?}", self, err);
                     }
                 }
             }
@@ -967,7 +998,7 @@ mod tests {
             assert_eq!(p.id as usize, i);
             let _ = p.id.properties();
         }
-        for file in ["main.rs", "app.py", "index.ts", "main.go"] {
+        for file in ["main.rs", "app.py", "main.go"] {
             assert_eq!(
                 SparrowLanguage::from_path(std::path::Path::new(file)),
                 SparrowLanguage::PlainText

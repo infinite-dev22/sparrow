@@ -658,7 +658,17 @@ impl MainSplitData {
                                 }
                             });
                         } else if let Some(unsaved) = unsaved {
+                            // Saved marker lines already refer to the unsaved text.
+                            let path=local_doc.content.with_untracked(|c|c.path().cloned());
+                            let markers=path.as_ref().map(|path| (
+                                local_doc.common.breakpoints.with_untracked(|all|all.get(path).cloned()),
+                                local_doc.common.bookmarks.with_untracked(|all|all.get(path).cloned()),
+                            ));
                             local_doc.reload(Rope::from(unsaved), false);
+                            if let (Some(path),Some((points,marks)))=(path,markers) {
+                                if let Some(points)=points {local_doc.common.breakpoints.update(|all|{all.insert(path.clone(),points);});}
+                                if let Some(marks)=marks {local_doc.common.bookmarks.update(|all|{all.insert(path,marks);});}
+                            }
                         }
                     }
                 });
@@ -729,6 +739,22 @@ impl MainSplitData {
             false,
             false,
         );
+    }
+
+    pub fn open_revision_diff(&self,path:PathBuf,revision:String,root:PathBuf) {
+        let revision_for_read=revision.clone();
+        let data=self.clone();let relative=path.strip_prefix(&root).unwrap_or(&path).to_string_lossy().replace('\\',"/");
+        let send=create_ext_action(self.scope,move |(before,after):(String,String)|{
+            let left=Rc::new(Doc::new_history(data.scope,DocContent::History(DocHistory{path:path.clone(),version:format!("{revision}^")}),data.editors,data.common.clone()));
+            let right=Rc::new(Doc::new_history(data.scope,DocContent::History(DocHistory{path:path.clone(),version:revision.clone()}),data.editors,data.common.clone()));
+            left.init_content(Rope::from(before));right.init_content(Rope::from(after));
+            data.get_editor_tab_child(EditorTabChildSource::DiffEditor{left,right},false,false);
+        });
+        let parent=format!("{revision_for_read}^:{relative}");let current=format!("{revision_for_read}:{relative}");
+        std::thread::spawn(move ||{
+            let read=|object:&str|std::process::Command::new("git").current_dir(&root).args(["show",object]).output().ok().filter(|out|out.status.success()).map(|out|String::from_utf8_lossy(&out.stdout).to_string()).unwrap_or_default();
+            send((read(&parent),read(&current)));
+        });
     }
 
     pub fn open_diff_files(&self, left_path: PathBuf, right_path: PathBuf) {

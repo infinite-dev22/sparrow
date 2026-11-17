@@ -1,3 +1,5 @@
+use crate::popup_menu::show_context_menu;
+use crate::popup_menu::{Menu, MenuItem};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::{
@@ -66,10 +68,8 @@ use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 pub(crate) use floem::{
     IntoView, View,
-    action::show_context_menu,
     event::{Event, EventListener, EventPropagation},
     ext_event::{create_ext_action, create_signal_from_channel},
-    menu::{Menu, MenuItem},
     peniko::{
         Color,
         kurbo::{Point, Rect, Size},
@@ -635,7 +635,11 @@ impl AppData {
                             floem::keyboard::NamedKey::Escape,
                         )
                     {
-                        if crate::modal_focus::consume_popup_escape() || crate::modal_focus::external_dialog_active() { return EventPropagation::Stop; }
+                        if crate::modal_focus::consume_popup_escape()
+                            || crate::modal_focus::external_dialog_active()
+                        {
+                            return EventPropagation::Stop;
+                        }
                         let active = key_up_window_data.active.get_untracked();
                         if let Some((_, tab)) = key_up_window_data
                             .window_tabs
@@ -647,7 +651,8 @@ impl AppData {
                             } else if tab.run_config_modal_visible.get_untracked() {
                                 Some(tab.run_config_modal_visible)
                             } else if tab.flutter_project.active.get_untracked()
-                                && !tab.flutter_project.is_busy() {
+                                && !tab.flutter_project.is_busy()
+                            {
                                 Some(tab.flutter_project.active)
                             } else {
                                 None
@@ -1218,22 +1223,25 @@ fn editor_tab_header(
                             s.hide()
                         })
                 }),
-                stack((clickable_icon(
-                    || SparrowIcons::SPLIT_HORIZONTAL,
-                    move || {
-                        let editor_tab_id =
-                            editor_tab.with_untracked(|t| t.editor_tab_id);
-                        internal_command.send(InternalCommand::Split {
-                            direction: SplitDirection::Vertical,
-                            editor_tab_id,
-                        });
-                    },
-                    || false,
-                    || false,
-                    || "Split Horizontally",
-                    config,
-                )
-                .style(|s| s.margin_left(6.0)),))
+                stack((
+                    crate::markdown_preview::toolbar(window_tab_data.clone()),
+                    clickable_icon(
+                        || SparrowIcons::SPLIT_HORIZONTAL,
+                        move || {
+                            let editor_tab_id =
+                                editor_tab.with_untracked(|t| t.editor_tab_id);
+                            internal_command.send(InternalCommand::Split {
+                                direction: SplitDirection::Vertical,
+                                editor_tab_id,
+                            });
+                        },
+                        || false,
+                        || false,
+                        || "Split Horizontally",
+                        config,
+                    )
+                    .style(|s| s.margin_left(6.0)),
+                ))
                 .on_resize(move |rect| {
                     size.set(rect.size());
                 })
@@ -3187,7 +3195,11 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
             move || hover_data.content.get(),
             move |_| id.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             move |content| match content {
-                MarkdownContent::Text(text_layout) => container(
+                MarkdownContent::Text(text_layout)
+                | MarkdownContent::LinkedText {
+                    layout: text_layout,
+                    ..
+                } => container(
                     rich_text(move || text_layout.clone())
                         .style(|s| s.max_width(600.0)),
                 )
@@ -3603,7 +3615,8 @@ fn window_tab(
     let settings_modal = window_tab_data.settings_modal_visible;
     let run_modal = window_tab_data.run_config_modal_visible;
     let project_modal = window_tab_data.flutter_project.active;
-    let modal_open = move || settings_modal.get() || run_modal.get() || project_modal.get();
+    let modal_open =
+        move || settings_modal.get() || run_modal.get() || project_modal.get();
 
     let view = stack((
         stack((
@@ -3655,7 +3668,10 @@ fn window_tab(
     .on_cleanup(move || {
         window_tab_scope.dispose();
     })
-    .on_event_cont(EventListener::PointerMove, move |_| {
+    .on_event_cont(EventListener::PointerMove, move |event| {
+        if let Event::PointerMove(pointer) = event {
+            crate::popup_menu::pointer(pointer.pos);
+        }
         if hover_active.get_untracked() {
             hover_active.set(false);
         }
@@ -4031,8 +4047,9 @@ fn window(window_data: WindowData) -> impl View {
                 workbench_command,
                 crate::menus::MenuContext::from_window(window_tab),
             )
+            .into_native()
         } else {
-            Menu::new("Sparrow")
+            Menu::new("Sparrow").into_native()
         }
     })
     .style(|s| s.size_full())
@@ -4054,6 +4071,11 @@ pub fn launch() {
         use floem::text::{FONT_SYSTEM, fontdb::Source};
 
         for bytes in [
+            include_bytes!("../../extra/fonts/CupertinoIcons/CupertinoIcons.ttf").as_slice(),
+            include_bytes!(
+                "../../extra/fonts/MaterialIcons/MaterialIcons-Regular.otf"
+            )
+            .as_slice(),
             include_bytes!("../../extra/fonts/Inter/Inter-Regular.otf").as_slice(),
             include_bytes!("../../extra/fonts/Inter/Inter-SemiBold.otf").as_slice(),
             include_bytes!(
@@ -4971,7 +4993,10 @@ pub fn window_menu(
             .entry(MenuItem::new("Commit...").action(move || {
                 sparrow_command.send(SparrowCommand {
                     kind: CommandKind::Workbench(ShowPanel),
-                    data: serde_json::to_value(crate::panel::kind::PanelKind::SourceControl).ok(),
+                    data: serde_json::to_value(
+                        crate::panel::kind::PanelKind::SourceControl,
+                    )
+                    .ok(),
                 });
             }))
             .entry(MenuItem::new("Push...").enabled(false))
@@ -4989,7 +5014,10 @@ pub fn window_menu(
             .entry(MenuItem::new("Show Git Log").action(move || {
                 sparrow_command.send(SparrowCommand {
                     kind: CommandKind::Workbench(ShowPanel),
-                    data: serde_json::to_value(crate::panel::kind::PanelKind::GitHistory).ok(),
+                    data: serde_json::to_value(
+                        crate::panel::kind::PanelKind::GitHistory,
+                    )
+                    .ok(),
                 });
             }))
             .entry(MenuItem::new("Manage Remotes...").enabled(false))
@@ -5111,11 +5139,15 @@ fn tab_secondary_click(
                     });
                 }),
         );
-    menu = menu.entry(MenuItem::new("Close Unmodified Tabs").action(move || {
-        internal_command.send(InternalCommand::EditorTabCloseByKind {
-            editor_tab_id, child: child_unmodified.clone(), kind: TabCloseKind::CloseUnmodified,
-        });
-    })).separator();
+    menu = menu
+        .entry(MenuItem::new("Close Unmodified Tabs").action(move || {
+            internal_command.send(InternalCommand::EditorTabCloseByKind {
+                editor_tab_id,
+                child: child_unmodified.clone(),
+                kind: TabCloseKind::CloseUnmodified,
+            });
+        }))
+        .separator();
     if let Some(path) = path {
         let copy_path = path.clone();
         menu = menu
@@ -5175,10 +5207,18 @@ fn tab_secondary_click(
                 })
             }));
     }
-    menu = menu.entry(MenuItem::new("Split Right").action(move || {
-        internal_command.send(InternalCommand::Split { direction: SplitDirection::Vertical, editor_tab_id });
-    })).entry(MenuItem::new("Split Down").action(move || {
-        internal_command.send(InternalCommand::Split { direction: SplitDirection::Horizontal, editor_tab_id });
-    }));
+    menu = menu
+        .entry(MenuItem::new("Split Right").action(move || {
+            internal_command.send(InternalCommand::Split {
+                direction: SplitDirection::Vertical,
+                editor_tab_id,
+            });
+        }))
+        .entry(MenuItem::new("Split Down").action(move || {
+            internal_command.send(InternalCommand::Split {
+                direction: SplitDirection::Horizontal,
+                editor_tab_id,
+            });
+        }));
     show_context_menu(menu, None);
 }
