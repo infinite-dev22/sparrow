@@ -1,5 +1,5 @@
 //! Deterministic, declarative scaffold plans. No template hooks are executed.
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -42,6 +42,13 @@ pub struct Context {
     pub layout: String,
     pub feature_root: String,
     pub signals: String,
+    pub registration: RegistrationSettings,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistrationSettings {
+    pub router: Option<String>,
+    pub providers: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub struct Change {
@@ -156,6 +163,8 @@ pub fn context(workspace: &Path, selected: &Path) -> Result<Context, String> {
     #[serde(deny_unknown_fields)]
     struct Conventions {
         layout: Option<String>,
+        #[serde(default)]
+        registration: RegistrationSettings,
     }
     let pinned: Conventions = match read(&config)? {
         Some(s) => serde_yaml::from_str(&s)
@@ -198,6 +207,7 @@ pub fn context(workspace: &Path, selected: &Path) -> Result<Context, String> {
     })
     .collect();
     Ok(Context {
+        registration: pinned.registration,
         root,
         package,
         layout,
@@ -598,6 +608,35 @@ pub fn single_plan(
     })
 }
 impl Plan {
+    /// Merge only snapshot-checked existing Dart edits into this transaction.
+    pub(crate) fn add_registration(
+        &mut self,
+        changes: Vec<Change>,
+        sources: Vec<(PathBuf, Option<String>)>,
+        notes: Vec<String>,
+    ) -> Result<(), String> {
+        for change in &changes {
+            checked_path(&self.root, &change.path)?;
+            if !change.path.starts_with(self.root.join("lib"))
+                || change.path.extension().is_none_or(|e| e != "dart")
+                || change.before.is_none()
+                || change.after.is_none()
+                || self.changes.iter().any(|c| c.path == change.path)
+            {
+                return Err(
+                    "Analyzer registration returned an invalid or overlapping edit"
+                        .into(),
+                );
+            }
+        }
+        for (path, _) in &sources {
+            checked_path(&self.root, path)?;
+        }
+        self.changes.extend(changes);
+        self.inputs.extend(sources);
+        self.notes.extend(notes);
+        self.validate()
+    }
     pub fn validate(&self) -> Result<(), String> {
         for (path, before) in &self.inputs {
             checked_path(&self.root, path)?;

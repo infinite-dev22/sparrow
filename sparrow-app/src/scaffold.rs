@@ -1,6 +1,7 @@
 //! Dependency-aware scaffolds, previewed and applied as one reversible plan.
 pub mod engine;
 mod feature;
+mod registration;
 #[cfg(test)]
 mod tests;
 use crate::{config::color::SparrowColor, window_tab::WindowTabData};
@@ -290,6 +291,9 @@ pub struct State {
     selected: RwSignal<usize>,
     history: RwSignal<Vec<engine::Applied>>,
     undoing: RwSignal<bool>,
+    busy: RwSignal<bool>,
+    generation: RwSignal<u64>,
+    auto_register: RwSignal<bool>,
 }
 impl State {
     pub fn new(cx: Scope) -> Self {
@@ -304,9 +308,14 @@ impl State {
             selected: cx.create_rw_signal(0),
             history: cx.create_rw_signal(Vec::new()),
             undoing: cx.create_rw_signal(false),
+            busy: cx.create_rw_signal(false),
+            generation: cx.create_rw_signal(0),
+            auto_register: cx.create_rw_signal(true),
         }
     }
     pub fn open(&self, base: PathBuf, template: Template) {
+        self.generation.update(|g| *g += 1);
+        self.busy.set(false);
         self.base.set(base);
         self.template.set(Some(template));
         self.name.set(String::new());
@@ -335,6 +344,8 @@ impl State {
         }
     }
     pub fn open_undo(&self) {
+        self.generation.update(|g| *g += 1);
+        self.busy.set(false);
         self.undoing.set(true);
         self.selected.set(0);
         self.error.set(String::new());
@@ -347,6 +358,9 @@ impl State {
         }
     }
     fn preview(&self, window: &WindowTabData) {
+        if self.busy.get_untracked() {
+            return;
+        }
         self.error.set(String::new());
         self.plan.set(None);
         self.selected.set(0);
@@ -354,6 +368,7 @@ impl State {
             self.open_undo();
             return;
         }
+        let mut registration_context = None;
         let result = (|| {
             let t = self.template.get_untracked().ok_or("Choose a scaffold")?;
             let root = window.workspace.path.as_deref().ok_or("Open a project")?;
@@ -365,7 +380,22 @@ impl State {
                 t.pack.clone()
             };
             if let Some(pack) = pack {
-                return engine::plan_pack(&ctx, &pack, &name);
+                let plan = engine::plan_pack(&ctx, &pack, &name)?;
+                if pack.id == "sparrow.feature.mvvm"
+                    && self.auto_register.get_untracked()
+                {
+                    if window.main_split.docs.with_untracked(|docs| {
+                        docs.iter().any(|(path, doc)| {
+                            path.starts_with(&ctx.root)
+                                && crate::dart::is_dart_path(path)
+                                && !doc.is_pristine()
+                        })
+                    }) {
+                        return Err("Save modified Dart files before analyzer-backed registration.".into());
+                    }
+                    registration_context = Some(ctx);
+                }
+                return Ok(plan);
             }
             if let Some(package) = missing_dependency(&ctx.root, &t) {
                 return Err(format!(
@@ -383,13 +413,48 @@ impl State {
         })();
         match result {
             Ok(plan) => {
-                self.planned_name.set(self.name.get_untracked());
-                self.plan.set(Some(plan));
+                if let Some(ctx) = registration_context {
+                    self.busy.set(true);
+                    self.error.set("Resolving router/provider registrations with the Dart analyzer… First use may download the bundled analyzer's pinned dependencies.".into());
+                    self.generation.update(|g| *g += 1);
+                    let ticket = self.generation.get_untracked();
+                    let state = self.clone();
+                    let name = self.name.get_untracked();
+                    let planned_name = name.clone();
+                    let send = floem::ext_event::create_ext_action(
+                        window.scope,
+                        move |result: Result<engine::Plan, String>| {
+                            if state.generation.get_untracked() != ticket
+                                || !state.active.get_untracked()
+                            {
+                                return;
+                            }
+                            state.busy.set(false);
+                            state.error.set(String::new());
+                            match result {
+                                Ok(plan) => {
+                                    state.planned_name.set(planned_name);
+                                    state.plan.set(Some(plan));
+                                }
+                                Err(error) => state.error.set(error),
+                            }
+                        },
+                    );
+                    std::thread::spawn(move || {
+                        send(registration::augment(plan, &ctx, &name))
+                    });
+                } else {
+                    self.planned_name.set(self.name.get_untracked());
+                    self.plan.set(Some(plan));
+                }
             }
             Err(error) => self.error.set(error),
         }
     }
     fn apply(&self, window: &WindowTabData) {
+        if self.busy.get_untracked() {
+            return;
+        }
         let Some(plan) = self.plan.get_untracked() else {
             self.error
                 .set("Preview the scaffold before applying.".into());
@@ -497,13 +562,16 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let plan = state.plan;
     let selected = state.selected;
     let undoing = state.undoing;
+    let busy = state.busy;
+    let auto_register = state.auto_register;
+    let registration_plan = state.plan;
     let focus = crate::modal_focus::ModalFocus::default();
     let preview = state.clone();
     let w = window.clone();
     focus.set_submit(move || preview.preview(&w));
     let input = focus
         .input(name)
-        .disabled(move || undoing.get())
+        .disabled(move || undoing.get() || busy.get())
         .style(move |s| {
             s.width_full()
                 .height(28.0)
@@ -600,12 +668,13 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         label(move ||if undoing.get(){"Undo Last Scaffold".into()}else{format!("New {}",template.get().map(|t|t.title).unwrap_or_default())}).style(|s|s.font_bold()),
         label(move ||base.get().display().to_string()).style(|s|s.width_full()),
         input,
+        focus.control(stack((crate::settings::checkbox(move ||auto_register.get(),config),label(||"Automatically register router and providers"))).style(|s|s.gap(8.0)).on_click_stop(move |_|{auto_register.update(|value|*value=!*value);registration_plan.set(None);}).disabled(move ||busy.get()).style(move |s|s.apply_if(undoing.get()||!template.get().and_then(|t|t.pack).is_some_and(|p|p.id=="sparrow.feature.mvvm"),|s|s.hide()))),
         scroll(label(move ||plan.get().map(|p|p.notes.join("\n")).unwrap_or_default())).style(|s|s.width_full().max_height(100.0)),
         stack((list,diff)).style(move |s|s.width_full().height(340.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
         label(move ||error.get()).style(|s|s.width_full()),
         stack((
-            focus.control(label(||"Preview Changes").on_click_stop(move |_|preview.preview(&w))),
-            focus.control(label(move ||if undoing.get(){"Undo Scaffold"}else{"Apply Changes"}).on_click_stop(move |_|apply.apply(&aw)).disabled(move ||plan.get().is_none())),
+            focus.control(label(||"Preview Changes").on_click_stop(move |_|preview.preview(&w)).disabled(move ||busy.get())),
+            focus.control(label(move ||if undoing.get(){"Undo Scaffold"}else{"Apply Changes"}).on_click_stop(move |_|apply.apply(&aw)).disabled(move ||plan.get().is_none()||busy.get())),
             focus.control(label(||"Undo Last Scaffold…").on_click_stop(move |_|undo.open_undo()).disabled(move ||history.get().is_empty())),
             focus.control(label(||"Pub Get").on_click_stop(move |_|{
                 let Some(root)=pub_window.workspace.path.as_deref() else{return;};

@@ -97,6 +97,75 @@ fn project_settings_are_snapshot_inputs_even_when_not_edited() {
     assert!(!dir.path().join("lib").exists());
 }
 #[test]
+fn registration_edits_share_preview_transaction_and_undo_with_generated_files() {
+    let dir = project();
+    fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let main = dir.path().join("lib/main.dart");
+    let before = "// 😀 original router\nvoid main() {}\n";
+    fs::write(&main, before).unwrap();
+    let mut plan = plan_pack(&ctx(dir.path()), &feature::pack(), "Orders").unwrap();
+    plan.add_registration(
+        vec![Change {
+            path: main.clone(),
+            before: Some(before.into()),
+            after: Some(format!("{before}// registered\n")),
+        }],
+        vec![(main.clone(), Some(before.into()))],
+        vec!["Analyzer registration".into()],
+    )
+    .unwrap();
+    let index = plan.changes.iter().position(|c| c.path == main).unwrap();
+    assert!(plan.diff(index).contains("+// registered"));
+    let applied = plan.apply().unwrap();
+    assert!(fs::read_to_string(&main).unwrap().contains("registered"));
+    applied.undo().unwrap();
+    assert_eq!(fs::read_to_string(&main).unwrap(), before);
+    assert!(!dir.path().join("lib/features/orders").exists());
+}
+#[test]
+fn stale_registration_source_blocks_the_complete_apply_and_undo() {
+    let dir = project();
+    fs::create_dir_all(dir.path().join("lib")).unwrap();
+    let main = dir.path().join("lib/main.dart");
+    fs::write(&main, "before").unwrap();
+    let mut plan = plan_pack(&ctx(dir.path()), &feature::pack(), "Orders").unwrap();
+    plan.add_registration(
+        vec![Change {
+            path: main.clone(),
+            before: Some("before".into()),
+            after: Some("registered".into()),
+        }],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    fs::write(&main, "user changes").unwrap();
+    assert!(plan.apply().is_err());
+    assert!(!dir.path().join("lib/features").exists());
+    fs::write(&main, "before").unwrap();
+    let applied = plan.apply().unwrap();
+    fs::write(&main, "new user changes").unwrap();
+    assert!(applied.undo().is_err());
+    assert!(dir.path().join("lib/features/orders").exists());
+    assert_eq!(fs::read_to_string(&main).unwrap(), "new user changes");
+}
+#[test]
+fn registration_target_settings_are_parsed_without_weakening_layout_validation() {
+    let dir = project();
+    fs::create_dir_all(dir.path().join(".sparrow")).unwrap();
+    fs::write(dir.path().join(".sparrow/scaffold.yaml"),"layout: layer-first\nregistration:\n  router: lib/router.dart#router\n  providers: lib/app.dart\n").unwrap();
+    let context = ctx(dir.path());
+    assert_eq!(
+        context.registration.router.as_deref(),
+        Some("lib/router.dart#router")
+    );
+    assert_eq!(
+        context.registration.providers.as_deref(),
+        Some("lib/app.dart")
+    );
+    assert_eq!(context.layout, "layer-first");
+}
+#[test]
 fn nearest_package_and_explicit_layout_override_win() {
     let dir = project();
     let child = dir.path().join("packages/child");

@@ -76,8 +76,9 @@ import 'package:{{package}}/{{repository_import}}/{{snake}}_repository.dart';
 import '{{snake}}_view_model.dart';
 
 class {{name}}Screen extends StatefulWidget {
-  const {{name}}Screen({super.key, this.repository});
+  const {{name}}Screen({super.key, this.repository, this.viewModel});
   final {{name}}Repository? repository;
+  final {{name}}ViewModel? viewModel;
   @override
   State<{{name}}Screen> createState() => _{{name}}ScreenState();
 }
@@ -87,13 +88,15 @@ class _{{name}}ScreenState extends State<{{name}}Screen> {
   @override
   void initState() {
     super.initState();
-    _model = {{name}}ViewModel(widget.repository ?? InMemory{{name}}Repository());
-    _model.load();
+    _model = widget.viewModel ?? {{name}}ViewModel(widget.repository ?? InMemory{{name}}Repository());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _model.load();
+    });
   }
 
   @override
   void dispose() {
-    _model.dispose();
+    if (widget.viewModel == null) _model.dispose();
     super.dispose();
   }
 
@@ -212,9 +215,9 @@ void main() {
         ),
     ];
     Pack {
-        schema: 1, id: "sparrow.feature.mvvm".into(), version: "1.0.0".into(),
+        schema: 1, id: "sparrow.feature.mvvm".into(), version: "1.1.0".into(),
         title: "Feature · MVVM / ChangeNotifier".into(),
-        description: "Screen + view model + repository + model + route factory + unit/widget tests. Includes loading, error, empty and data states. Uses ChangeNotifier explicitly; existing state packages are reported, not silently migrated. Connect the generated route factory to your router after applying.".into(),
+        description: "Screen + view model + repository + model + route factory + unit/widget tests. Includes loading, error, empty and data states. Uses ChangeNotifier explicitly; existing state packages are reported, not silently migrated. Automatic router and provider registration is resolved by the analyzer when enabled.".into(),
         files: files.into_iter().map(|(path,content)|PackFile{path:path.into(),content:content.into()}).collect(),
         dependencies: vec![Dependency{package:"flutter_test".into(),version:None,sdk:Some("flutter".into()),dev:true}],
     }

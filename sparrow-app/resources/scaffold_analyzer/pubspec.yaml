@@ -1,0 +1,7 @@
+name: sparrow_scaffold_analyzer
+publish_to: none
+environment:
+  sdk: '>=3.9.0 <4.0.0'
+dependencies:
+  analyzer: 10.2.0
+  path: ^1.9.0
