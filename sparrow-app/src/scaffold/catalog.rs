@@ -25,6 +25,12 @@ pub struct Entry {
     disabled: bool,
 }
 impl Entry {
+    pub fn manifest(&self) -> Option<&Path> {
+        match &self.origin { Origin::File(p) | Origin::Legacy(p) => Some(p), _ => None }
+    }
+    pub fn is_disabled(&self) -> bool { self.disabled }
+    pub fn problem(&self) -> Option<&str> { self.error.as_deref() }
+
     pub fn load(&self) -> Result<Pack, String> {
         if let Some(error) = &self.error {
             return Err(error.clone());
@@ -245,4 +251,19 @@ pub fn export_files(id: &str) -> Result<Vec<(PathBuf, String)>, String> {
         &mut files,
     )?;
     Ok(files)
+}
+
+/// Include every discovery layer so disabled and shadowed packs remain manageable.
+pub fn manager_entries(root: &Path) -> Vec<Entry> {
+    let mut entries = bundled_entries();
+    for (dir, label) in user_root().map(|p| (p, "User")).into_iter()
+        .chain(std::iter::once((root.join(".sparrow/scaffolds"), "Project"))) {
+        let mut layer = BTreeMap::new();
+        scan(&dir, label, &mut layer);
+        entries.extend(layer.into_values());
+    }
+    for entry in discover(root) {
+        if matches!(entry.origin, Origin::Legacy(_)) { entries.push(entry); }
+    }
+    entries
 }

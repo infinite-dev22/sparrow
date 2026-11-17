@@ -20,6 +20,23 @@ Use **Scaffold: Export Bundled Template…**, choose a default, then **Preview E
 
 Malformed overrides remain visible as errors; Sparrow does not silently fall back to a bundled template. Duplicate IDs within one root are errors. Across roots, later roots override earlier ones by the manifest's ID. Name the override directory after its ID so even an unreadable manifest can be associated with the overridden default.
 
+## Template manager
+
+Open **Scaffold: Manage Templates…** from the command palette, or **Manage templates…** in a scaffold dialog.
+
+- Filter by title, ID or source. The list includes bundled, user and project layers, including disabled, invalid and shadowed entries.
+- Choose **Destination: Project / User** for new packs, exports and bundled-disable overrides. Project destinations use the nearest package selected by the active editor.
+- Enter a new pack ID and choose **Create…** to preview a starter manifest and source file.
+- **Edit Manifest** and **Edit Sources** open the selected pack's files in Sparrow's editor. Save changes, then reopen the manager or choose **Refresh** to reload and validate. Normal editor undo applies to these edits.
+- **Export…** copies the selected pack's manifest and source tree to the destination. Export a bundled pack first to create an editable override. Existing files are never overwritten.
+- **Enable / Disable…** changes the manifest flag. Disabling a bundled entry creates a disabled override in the selected destination. If an override already exists, select that entry to change its state.
+- **Remove…** previews removal of the selected user/project pack's files. Bundled defaults cannot be removed; removing an override reveals any lower-priority default.
+- Review the diff, then choose **Apply Preview**. **Undo Last Change…** previews the inverse transaction, including restores after removal. Apply refuses to overwrite files changed since preview or unsaved editor changes. This undo history is shared with scaffold generation in the current window session.
+
+Legacy single-file templates can be edited and removed. Create a manifest-based pack to use enable/disable and export. Packs remain plain files suitable for version control; the manager requires no separate template database.
+
+Manager validation: 288 application tests passed (9 SDK-dependent tests ignored), including lifecycle, source snapshot, overwrite protection, invalid-pack removal, symlink rejection and filtered-selection regression tests. Native desktop checks cover creation, disable, removal, undo, opening a manifest in the editor, filtered refresh and exporting to the user template root.
+
 ## Schema 2 example
 
 ```yaml

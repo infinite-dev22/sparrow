@@ -362,6 +362,9 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "Scaffold: New From Pack…")]
     #[strum(serialize = "scaffold_from_pack")]
     ScaffoldFromPack,
+    #[strum(message = "Scaffold: Manage Templates…")]
+    #[strum(serialize = "scaffold_manage_templates")]
+    ScaffoldManageTemplates,
     #[strum(message = "Scaffold: Export Bundled Template…")]
     #[strum(serialize = "scaffold_export_pack")]
     ScaffoldExportPack,

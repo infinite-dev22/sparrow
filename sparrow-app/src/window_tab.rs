@@ -2314,6 +2314,7 @@ impl WindowTabData {
             ScaffoldNewFeature => self.scaffold.open_feature(self),
             ScaffoldUndo => self.scaffold.open_undo(),
             ScaffoldFromPack => self.scaffold.open_catalog(self,false),
+            ScaffoldManageTemplates => self.scaffold.open_manager(self),
             ScaffoldExportPack => self.scaffold.open_catalog(self,true),
             FlutterOpenDevTools | FlutterDevToolsMemory | FlutterDevToolsNetwork => {
                 let page = match cmd {

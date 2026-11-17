@@ -798,7 +798,31 @@ pub(crate) fn plan_export(
     }
     Ok(Plan{root:ctx.root.clone(),title:"Export bundled scaffold".into(),changes,notes:vec!["Copy the bundled default into this package's .sparrow/scaffolds folder. Edit its files and reopen New to use the override.".into()],inputs:inputs(&ctx.root)?})
 }
+/// Management operations use the same conflict checks, atomic commit and undo.
+pub(crate) fn management_plan(
+    root: &Path, title: &str, files: Vec<(PathBuf, Option<String>)>,
+    create_only: bool,
+) -> Result<Plan, String> {
+    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let mut changes = vec![];
+    let mut seen = std::collections::BTreeSet::new();
+    for (path, after) in files {
+        checked_path(&root, &path)?;
+        if !seen.insert(path.clone()) { return Err("Duplicate management destination".into()); }
+        let before = read(&path)?;
+        if create_only && before.is_some() { return Err(format!("Destination already exists: {}", path.display())); }
+        if before != after { changes.push(Change { path, before, after }); }
+    }
+    let plan = Plan { root, title: title.into(), changes, notes: vec![], inputs: vec![] };
+    plan.validate()?;
+    Ok(plan)
+}
 impl Plan {
+    pub(crate) fn with_management_inputs(mut self, inputs: Vec<(PathBuf, Option<String>)>) -> Result<Self, String> {
+        self.inputs.extend(inputs);
+        self.validate()?;
+        Ok(self)
+    }
     /// Merge only snapshot-checked existing Dart edits into this transaction.
     pub(crate) fn add_registration(
         &mut self,

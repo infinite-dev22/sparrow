@@ -1,5 +1,6 @@
 //! Dependency-aware scaffolds, previewed and applied as one reversible plan.
 mod catalog;
+mod manager;
 pub mod engine;
 mod registration;
 #[cfg(test)]
@@ -40,6 +41,8 @@ pub struct State {
     generation: RwSignal<u64>,
     auto_register: RwSignal<bool>,
     export_mode: RwSignal<bool>,
+    manager: manager::State,
+    manager_mode: RwSignal<bool>,
 }
 impl State {
     pub fn new(cx: Scope) -> Self {
@@ -58,9 +61,12 @@ impl State {
             generation: cx.create_rw_signal(0),
             auto_register: cx.create_rw_signal(true),
             export_mode: cx.create_rw_signal(false),
+            manager: manager::State::new(cx),
+            manager_mode: cx.create_rw_signal(false),
         }
     }
     pub fn open(&self, base: PathBuf, template: Template) {
+        self.manager_mode.set(false);
         self.generation.update(|g| *g += 1);
         self.busy.set(false);
         self.export_mode.set(false);
@@ -74,6 +80,7 @@ impl State {
         self.active.set(true);
     }
     pub fn open_catalog(&self, window: &WindowTabData, exporting: bool) {
+        self.manager_mode.set(false);
         let Some(root) = window.workspace.path.as_ref() else {
             return;
         };
@@ -110,6 +117,7 @@ impl State {
         }
     }
     pub fn open_feature(&self, window: &WindowTabData) {
+        self.manager_mode.set(false);
         if let Some(root) = window.workspace.path.clone() {
             let base = window
                 .main_split
@@ -136,6 +144,7 @@ impl State {
         }
     }
     pub fn open_undo(&self) {
+        self.manager_mode.set(false);
         self.generation.update(|g| *g += 1);
         self.busy.set(false);
         self.export_mode.set(false);
@@ -356,6 +365,13 @@ impl State {
     }
 }
 pub fn view(window: Rc<WindowTabData>) -> impl View {
+    let mode = window.scaffold.manager_mode;
+    floem::views::dyn_container(move || mode.get(), move |manager| -> Box<dyn View> {
+        if manager { Box::new(manager::view(window.clone())) }
+        else { Box::new(scaffold_view(window.clone())) }
+    }).style(|s| s.absolute().size_full())
+}
+fn scaffold_view(window: Rc<WindowTabData>) -> impl View {
     let state = window.scaffold.clone();
     let config = window.common.config;
     let active = state.active;
@@ -538,6 +554,10 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .disabled(move || busy.get() || undoing.get())
                 .style(move |s| s.apply_if(export_mode.get() || undoing.get(), |s| s.hide())),
         ),
+        focus.control(label(|| "Manage templates…").on_click_stop({
+            let window = window.clone();
+            move |_| window.scaffold.open_manager(&window)
+        })),
         input.style(move |s| s.apply_if(export_mode.get(), |s| s.hide())),
         focus.control(
             stack((
