@@ -68,6 +68,10 @@ class _File {
       unit = result.unit,
       errors = _errors(result) {
     unit.accept(nodes);
+    // Declaration names (classes, parameters, typedefs) are not all identifier
+    // AST nodes. Reserve every token spelling before choosing import aliases.
+    var token=unit.beginToken;
+    while(!token.isEof) {nodes.identifiers.add(token.lexeme);token=token.next!;}
   }
 
   String imported(String uri, String hint) {
@@ -367,6 +371,7 @@ Future<Map<String, Object?>> registration(Map<String, dynamic> request) async {
     );
     final notes = <String>[];
     for (final target in [if(router!=null)router,if(multi!=null)multi]) {
+      if(target.file.unit.directives.whereType<NamespaceDirective>().any((d)=>d.configurations.isNotEmpty)) throw StateError('Conditional imports/exports in registration target ${target.file.path} need platform-specific registration; automatic edits are refused.');
       if(target.file.errors.isNotEmpty) throw StateError('Fix analyzer errors in registration target ${target.file.path} before scaffolding: ${target.file.errors.join('; ')}');
     }
     if (multi != null) {
@@ -383,7 +388,7 @@ Future<Map<String, Object?>> registration(Map<String, dynamic> request) async {
           in list is ListLiteral
               ? list.elements
               : const <CollectionElement>[]) {
-        if (element is! InstanceCreationExpression) continue;
+        if (element is! InstanceCreationExpression || !_library(element).startsWith('package:provider/')) throw StateError('Opaque provider entries in ${f.path} may hide existing registrations. Use explicit Provider constructors.');
         final type = element.staticType;
         if (type is InterfaceType &&
             type.element.library.uri.toString().startsWith(
@@ -462,9 +467,26 @@ Future<Map<String, Object?>> registration(Map<String, dynamic> request) async {
             'GoRouter.routes must be a list literal or a direct same-file variable in ${f.path}. Generated/indirect routers need an explicit supported target.',
           );
         _checkElements(routes.elements, f.path);
-        final routeNodes = _Nodes();
-        routes.accept(routeNodes);
-        for (final element in routeNodes.constructors) {
+        final allRoutes=<InstanceCreationExpression>[];
+        final inspected=<int>{};
+        void inspectRoutes(ListLiteral collection) {
+          if(!inspected.add(collection.offset)) throw StateError('Cyclic/shared route collections in ${f.path} cannot be registered safely.');
+          _checkElements(collection.elements,f.path);
+          for(final entry in collection.elements) {
+            if(entry is! InstanceCreationExpression || !_library(entry).startsWith('package:go_router/') || !['GoRoute','ShellRoute','StatefulShellRoute','StatefulShellBranch'].contains(_class(entry))) throw StateError('Opaque route entries in ${f.path} may hide existing paths. Use explicit route constructors.');
+            allRoutes.add(entry);
+            for(final name in ['routes','branches']) {
+              final argument=_argument(entry,name);
+              if(argument!=null) {
+                final nested=_literal(f,argument);
+                if(nested is! ListLiteral) throw StateError('Indirect nested routes in ${f.path} cannot be inspected safely.');
+                inspectRoutes(nested);
+              }
+            }
+          }
+        }
+        inspectRoutes(routes);
+        for (final element in allRoutes) {
           if (_class(element) == 'GoRoute' &&
               _library(element).startsWith('package:go_router/')) {
             final path = _argument(element, 'path');

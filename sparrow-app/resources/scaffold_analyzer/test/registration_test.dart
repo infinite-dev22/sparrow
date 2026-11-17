@@ -35,6 +35,7 @@ class RouteBase {}
 class GoRouter {
   GoRouter({required List<RouteBase> routes});
 }
+class ShellRoute extends RouteBase { ShellRoute({required List<RouteBase> routes}); }
 class GoRoute extends RouteBase {
   GoRoute({required String path, required Widget Function(BuildContext,Object) builder});
 }
@@ -359,6 +360,31 @@ Future<void> main() async {
       "import 'package:provider/missing.dart';\nvoid main() {}\n",
     );
     await expectFailure(f, 'Cannot resolve');
+  });
+  await test('nested spreads cannot hide existing route paths',(f)async{
+    f.write('lib/main.dart',"import 'package:go_router/go_router.dart';\nfinal hidden=<RouteBase>[];\nfinal router=GoRouter(routes:[ShellRoute(routes:[...hidden])]);\n");
+    await expectFailure(f,'Dynamic/spread registration collections');
+  });
+  await test('route factory entries are not silently treated as inspected',(f)async{
+    f.write('lib/main.dart',"import 'package:flutter/material.dart';\nimport 'package:go_router/go_router.dart';\nGoRoute makeRoute()=>GoRoute(path:'/orders',builder:(_,s)=>const Widget());\nfinal router=GoRouter(routes:[makeRoute()]);\n");
+    await expectFailure(f,'Opaque route entries');
+  });
+  await test('provider factory entries cannot hide existing providers',(f)async{
+    f.write('lib/main.dart',"import 'package:flutter/material.dart';\nimport 'package:provider/provider.dart';\nProvider<String> makeProvider()=>Provider<String>(create:(_)=>'value');\nfinal app=MultiProvider(providers:[makeProvider()],child:MaterialApp());\n");
+    await expectFailure(f,'Opaque provider entries');
+  });
+  await test('conditional imports in selected targets require explicit platform handling',(f)async{
+    f.write('lib/platform.dart','const platform=1;');
+    f.write('lib/main.dart',"import 'package:flutter/material.dart';\nimport 'platform.dart' if (dart.library.io) 'platform.dart';\nfinal app=MaterialApp();\n");
+    await expectFailure(f,'Conditional imports/exports');
+  });
+  await test('nested literal variables are included in collision detection',(f)async{
+    f.write('lib/main.dart',"import 'package:flutter/material.dart';\nimport 'package:go_router/go_router.dart';\nfinal children=[GoRoute(path:'/orders',builder:(_,s)=>const Widget())];\nfinal router=GoRouter(routes:[ShellRoute(routes:children)]);\n");
+    await expectFailure(f,'already exists with a different destination');
+  });
+  await test('shared nested collections are refused',(f)async{
+    f.write('lib/main.dart',"import 'package:go_router/go_router.dart';\nfinal children=<RouteBase>[];\nfinal router=GoRouter(routes:[ShellRoute(routes:children),ShellRoute(routes:children)]);\n");
+    await expectFailure(f,'Cyclic/shared route collections');
   });
   print('$passed resolved-AST registration tests passed');
 }

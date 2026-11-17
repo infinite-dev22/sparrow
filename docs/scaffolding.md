@@ -95,7 +95,7 @@ Planning, UI, conflict checks, writes and undo remain Rust. A bundled, version-p
 
 Both existing-file edits and generated files are one transaction. Stale source/package configuration or dirty affected buffers block Apply. Undo restores router/provider files and removes generated files together, and refuses the whole undo if any affected file has changed.
 
-The helper's 13 resolved-AST tests cover aliases, Unicode/comments, compact collections, direct variable references, multiple targets, conflicts, idempotency, cross-file registration, app wrapping, constant route keys, dynamic collection refusal and semantic validation failures. See [analyzer API](https://pub.dev/documentation/analyzer/10.2.0/dart_ast_ast/), [GoRouter configuration](https://pub.dev/documentation/go_router/latest/topics/Configuration-topic.html) and [Provider](https://pub.dev/packages/provider).
+The helper's 19 resolved-AST tests cover aliases, Unicode/comments, compact collections, direct variable references, multiple targets, conflicts, idempotency, cross-file registration, app wrapping, constant route keys, dynamic collection refusal and semantic validation failures. See [analyzer API](https://pub.dev/documentation/analyzer/10.2.0/dart_ast_ast/), [GoRouter configuration](https://pub.dev/documentation/go_router/latest/topics/Configuration-topic.html) and [Provider](https://pub.dev/packages/provider).
 
 ## Remaining work
 
@@ -103,6 +103,14 @@ Support for other router/provider APIs, code-generation tasks with tracked rollb
 
 ## Validation
 
-The engine tests cover multi-file apply/undo, idempotency, stale settings and files, user edits before undo, nested packages, layout overrides, dependency preservation, incompatible locked versions, invalid manifests, path traversal, symlinks and preparation failures. The application suite passed 259 tests (seven environment-dependent tests skipped). The generated feature was analyzed and its four Flutter tests passed in each of the feature-first and layer-first packages against the installed SDK. Native desktop checks exercised the command palette, per-file preview, seven-file Apply and grouped Undo while preserving existing code.
+The engine tests cover multi-file apply/undo, idempotency, stale settings and files, user edits before undo, nested packages, layout overrides, dependency preservation, incompatible locked versions, invalid manifests, path traversal, symlinks and preparation failures. The application suite passed 261 tests (seven environment-dependent tests skipped). The generated feature was analyzed and its four Flutter tests passed in each of the feature-first and layer-first packages against the installed SDK. Native desktop checks exercised the command palette, per-file preview, seven-file Apply and grouped Undo while preserving existing code.
 
 Registration verification: four real Flutter fixtures (named routes alone, existing MultiProvider, automatic MaterialApp wrapping, and GoRouter with automatic wrapping) passed combined preview/apply/idempotency/undo checks. Their 20 feature/navigation widget and unit tests passed, including identity checks proving the route consumes the registered view model.
+
+## Hardening pass
+
+Registration follows nested same-file route-list variables when checking path collisions. It refuses nested spreads, opaque route/provider factory entries, shared/cyclic route collections, and conditional imports/exports in selected targets. These refusals are deliberate: the engine cannot prove the full registration set in those structures. Import alias allocation reserves declaration and parameter tokens as well as identifier nodes.
+
+Failure-injection tests interrupt application after earlier edits and creations have succeeded. They verify that original bytes are restored and generated files removed. A separate test simulates a concurrent edit during rollback: the edit is preserved and the transaction reports that recovery needs attention instead of overwriting it.
+
+This remains an early implementation. Current automated coverage is 261 application tests (seven skipped) and 19 resolved-AST tests; the previous real-Flutter four-project/20-test validation remains recorded above. This pass does not establish a multi-version SDK/package compatibility matrix or broad production-project coverage. Those remain required before describing the feature as production-hardened.

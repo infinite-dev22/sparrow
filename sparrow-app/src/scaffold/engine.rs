@@ -739,6 +739,14 @@ fn commit(
     changes: &[Change],
     dirs: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
+    commit_with_hook(root, changes, dirs, |_, _| Ok(()))
+}
+fn commit_with_hook(
+    root: &Path,
+    changes: &[Change],
+    dirs: &mut Vec<PathBuf>,
+    mut before_write: impl FnMut(usize, &[Change]) -> Result<(), String>,
+) -> Result<(), String> {
     let mut staged = vec![];
     for change in changes {
         checked_path(root, &change.path)?;
@@ -772,8 +780,9 @@ fn commit(
         staged.push(temporary);
     }
     let mut completed: Vec<&Change> = vec![];
-    for (change, temporary) in changes.iter().zip(staged) {
+    for (index, (change, temporary)) in changes.iter().zip(staged).enumerate() {
         let result = (|| {
+            before_write(index, changes)?;
             checked_path(root, &change.path)?;
             if read(&change.path)? != change.before {
                 return Err(format!(
@@ -817,6 +826,75 @@ fn commit(
         completed.push(change);
     }
     Ok(())
+}
+#[cfg(test)]
+mod failure_tests {
+    use super::*;
+    #[test]
+    fn mid_commit_failure_restores_edits_and_removes_created_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let edited = root.join("existing.dart");
+        fs::write(&edited, "original").unwrap();
+        let created = root.join("new.dart");
+        let changes = vec![
+            Change {
+                path: edited.clone(),
+                before: Some("original".into()),
+                after: Some("replacement".into()),
+            },
+            Change {
+                path: created.clone(),
+                before: None,
+                after: Some("generated".into()),
+            },
+            Change {
+                path: root.join("last.dart"),
+                before: None,
+                after: Some("never written".into()),
+            },
+        ];
+        let result = commit_with_hook(&root, &changes, &mut vec![], |i, _| {
+            if i == 2 {
+                Err("injected write failure".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.unwrap_err().contains("injected"));
+        assert_eq!(fs::read_to_string(edited).unwrap(), "original");
+        assert!(!created.exists());
+        assert!(!root.join("last.dart").exists());
+    }
+    #[test]
+    fn rollback_preserves_a_concurrent_user_edit_and_reports_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let path = root.join("first.dart");
+        let changes = vec![
+            Change {
+                path: path.clone(),
+                before: None,
+                after: Some("generated".into()),
+            },
+            Change {
+                path: root.join("second.dart"),
+                before: None,
+                after: Some("second".into()),
+            },
+        ];
+        let result = commit_with_hook(&root, &changes, &mut vec![], |i, _| {
+            if i == 1 {
+                fs::write(&path, "concurrent user edit").unwrap();
+                Err("injected failure".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.unwrap_err().contains("rollback needs attention"));
+        assert_eq!(fs::read_to_string(path).unwrap(), "concurrent user edit");
+        assert!(!root.join("second.dart").exists());
+    }
 }
 impl Applied {
     pub fn undo_plan(&self) -> Plan {
