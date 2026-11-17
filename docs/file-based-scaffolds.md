@@ -25,17 +25,21 @@ Malformed overrides remain visible as errors; Sparrow does not silently fall bac
 Open **Scaffold: Manage Templates…** from the command palette, or **Manage templates…** in a scaffold dialog.
 
 - Filter by title, ID or source. The list includes bundled, user and project layers, including disabled, invalid and shadowed entries.
-- Choose **Destination: Project / User** for new packs, exports and bundled-disable overrides. Project destinations use the nearest package selected by the active editor.
+- Choose **Destination: Project / User** for new packs, imports, duplicates, exports and bundled-disable overrides. Project destinations use the nearest package selected by the active editor.
 - Enter a new pack ID and choose **Create…** to preview a starter manifest and source file.
+- **Import…** opens a folder chooser. Select a folder containing `pack.yaml`; the manager validates the manifest and source references, then previews a copy under the original pack ID. The New pack ID field is not used for import. Existing destinations are never overwritten.
+- **Duplicate…** uses the **New pack ID** field and the selected template to preview an independent, enabled copy. Choose a different ID. The copy gets a “(Copy)” title and preserves template bodies, dependencies, compatibility and registration metadata. Bundled, user, project, disabled and legacy templates can be used as starting points.
 - **Edit Manifest** and **Edit Sources** open the selected pack's files in Sparrow's editor. Save changes, then reopen the manager or choose **Refresh** to reload and validate. Normal editor undo applies to these edits.
 - **Export…** copies the selected pack's manifest and source tree to the destination. Export a bundled pack first to create an editable override. Existing files are never overwritten.
 - **Enable / Disable…** changes the manifest flag. Disabling a bundled entry creates a disabled override in the selected destination. If an override already exists, select that entry to change its state.
 - **Remove…** previews removal of the selected user/project pack's files. Bundled defaults cannot be removed; removing an override reveals any lower-priority default.
 - Review the diff, then choose **Apply Preview**. **Undo Last Change…** previews the inverse transaction, including restores after removal. Apply refuses to overwrite files changed since preview or unsaved editor changes. This undo history is shared with scaffold generation in the current window session.
 
-Legacy single-file templates can be edited and removed. Create a manifest-based pack to use enable/disable and export. Packs remain plain files suitable for version control; the manager requires no separate template database.
+Legacy single-file templates can be edited, removed or duplicated into a manifest-based pack. Use the resulting pack for enable/disable and export. Packs remain plain files suitable for version control; the manager requires no separate template database.
 
-Manager validation: 288 application tests passed (9 SDK-dependent tests ignored), including lifecycle, source snapshot, overwrite protection, invalid-pack removal, symlink rejection and filtered-selection regression tests. Native desktop checks cover creation, disable, removal, undo, opening a manifest in the editor, filtered refresh and exporting to the user template root.
+Import and duplicate leave their sources unchanged. Changes to copied source files after preview invalidate Apply; preview again to pick up the edits. Imported packs retain their enabled/disabled state; duplicates start enabled. Import supports Sparrow schema 1/2 pack folders, not archives or other template formats.
+
+Manager validation: 295 application tests passed (9 SDK-dependent tests ignored), including lifecycle, source snapshot, overwrite protection, invalid-pack removal, symlink rejection and filtered-selection regression tests. Native desktop checks cover creation, disable, removal, undo, opening a manifest in the editor, filtered refresh, exporting to the user template root, and duplicate preview/apply/undo using keyboard navigation. Import validation and copying are covered by automated tests; the OS folder chooser uses the existing modal picker.
 
 ## Schema 2 example
 
