@@ -2311,6 +2311,8 @@ impl WindowTabData {
                 self.flutter_hot_reload.stop();
             }
             FlutterNewProject => self.flutter_project.active.set(true),
+            ScaffoldNewFeature => self.scaffold.open_feature(self),
+            ScaffoldUndo => self.scaffold.open_undo(),
             FlutterOpenDevTools | FlutterDevToolsMemory | FlutterDevToolsNetwork => {
                 let page = match cmd {
                     FlutterDevToolsMemory => crate::dart::devtools::DevToolsPage::Memory,

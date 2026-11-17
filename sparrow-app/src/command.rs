@@ -356,6 +356,12 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "New File")]
     #[strum(serialize = "new_file")]
     NewFile,
+    #[strum(message = "Scaffold: New Feature…")]
+    #[strum(serialize = "scaffold_new_feature")]
+    ScaffoldNewFeature,
+    #[strum(message = "Scaffold: Undo Last Scaffold…")]
+    #[strum(serialize = "scaffold_undo")]
+    ScaffoldUndo,
     #[strum(message = "Reformat Code…")]
     #[strum(serialize = "reformat_code_options")]
     ReformatCodeOptions,
