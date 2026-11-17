@@ -1,0 +1,54 @@
+{
+  "results": [
+    {
+      "failure": null,
+      "packages": {
+        "go_router": "18.0.1",
+        "id": "router-18-0",
+        "provider": "6.1.5+1"
+      },
+      "sdk": "local installed SDK",
+      "sdk_version": {
+        "channel": "stable",
+        "dartSdkVersion": "3.14.0",
+        "devToolsVersion": "2.61.0",
+        "engineBuildDate": "2026-11-09 19:33:19.494",
+        "engineCommitDate": "2026-11-09 15:57:36.000Z",
+        "engineContentHash": "bf601093ad255aaf5c6d0fc5c4f9acfa60943b2a",
+        "engineRevision": "371f77202a73e8dff57a8b3bff75bca55c090aee",
+        "flutterVersion": "3.50.0",
+        "frameworkCommitDate": "2026-11-09 08:50:21 -0800",
+        "frameworkRevision": "ab2912035e160d9cad6306df307576da6128ebdb",
+        "frameworkVersion": "3.50.0",
+        "repositoryUrl": "https://github.com/flutter/flutter.git"
+      },
+      "status": "passed"
+    },
+    {
+      "failure": null,
+      "packages": {
+        "go_router": "18.1.4",
+        "id": "router-18-1",
+        "provider": "6.1.5+1"
+      },
+      "sdk": "local installed SDK",
+      "sdk_version": {
+        "channel": "stable",
+        "dartSdkVersion": "3.14.0",
+        "devToolsVersion": "2.61.0",
+        "engineBuildDate": "2026-11-09 19:33:19.494",
+        "engineCommitDate": "2026-11-09 15:57:36.000Z",
+        "engineContentHash": "bf601093ad255aaf5c6d0fc5c4f9acfa60943b2a",
+        "engineRevision": "371f77202a73e8dff57a8b3bff75bca55c090aee",
+        "flutterVersion": "3.50.0",
+        "frameworkCommitDate": "2026-11-09 08:50:21 -0800",
+        "frameworkRevision": "ab2912035e160d9cad6306df307576da6128ebdb",
+        "frameworkVersion": "3.50.0",
+        "repositoryUrl": "https://github.com/flutter/flutter.git"
+      },
+      "status": "passed"
+    }
+  ],
+  "schema": 1,
+  "coverage_note": "One locally installed Linux Flutter SDK; two pinned package combinations. No cross-SDK or cross-platform claim."
+}

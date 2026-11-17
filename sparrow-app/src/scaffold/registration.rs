@@ -20,9 +20,7 @@ static SETUP: Mutex<()> = Mutex::new(());
 
 #[derive(Deserialize)]
 struct Response {
-    #[serde(default)]
     changes: Vec<Proposed>,
-    #[serde(default)]
     notes: Vec<String>,
     error: Option<String>,
 }
@@ -58,6 +56,23 @@ fn run(
         .map_err(|e| format!("Could not launch scaffold analyzer: {e}"))?;
     let start = Instant::now();
     loop {
+        if stdout
+            .as_file()
+            .metadata()
+            .map(|m| m.len())
+            .unwrap_or(u64::MAX)
+            > 16 * 1024 * 1024
+            || stderr
+                .as_file()
+                .metadata()
+                .map(|m| m.len())
+                .unwrap_or(u64::MAX)
+                > 2 * 1024 * 1024
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Scaffold analyzer output exceeded its limit".into());
+        }
         match child.try_wait() {
             Ok(Some(status)) => {
                 if stdout
@@ -80,9 +95,13 @@ fn run(
                 if status.success() {
                     return Ok(output);
                 }
-                if let Ok(response) = serde_json::from_str::<Response>(&output) {
-                    if let Some(error) = response.error {
-                        return Err(error);
+                if let Ok(response) =
+                    serde_json::from_str::<serde_json::Value>(&output)
+                {
+                    if let Some(error) =
+                        response.get("error").and_then(|v| v.as_str())
+                    {
+                        return Err(error.to_string());
                     }
                 }
                 return Err(format!(
@@ -100,6 +119,72 @@ fn run(
                 return Err(match result {Err(e)=>e.to_string(),_=>"Scaffold analysis timed out. Check package resolution and preview again.".into()});
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod process_tests {
+    use super::*;
+    fn child(mode: &str) -> Command {
+        let mut c = Command::new(std::env::current_exe().unwrap());
+        c.args([
+            "--exact",
+            "scaffold::registration::process_tests::helper_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("SPARROW_TEST_HELPER_MODE", mode);
+        c
+    }
+    #[test]
+    #[ignore = "subprocess fixture invoked only by process safety tests"]
+    fn helper_child() {
+        match std::env::var("SPARROW_TEST_HELPER_MODE").unwrap().as_str() {
+            "crash" => panic!("fixture crashed"),
+            "output" => {
+                std::io::stdout()
+                    .write_all(&vec![b'x'; 17 * 1024 * 1024])
+                    .unwrap();
+                std::thread::sleep(Duration::from_secs(2));
+            }
+            _ => std::thread::sleep(Duration::from_secs(2)),
+        }
+    }
+    #[test]
+    fn timed_out_helper_is_killed_and_reaped() {
+        assert!(
+            run(child("sleep"), None, Duration::from_millis(40))
+                .unwrap_err()
+                .contains("timed out")
+        );
+    }
+    #[test]
+    fn crashed_helper_is_a_reported_error() {
+        assert!(
+            run(child("crash"), None, Duration::from_secs(10))
+                .unwrap_err()
+                .contains("fixture crashed")
+        );
+    }
+    #[test]
+    fn output_limit_stops_a_still_running_helper() {
+        assert!(
+            run(child("output"), None, Duration::from_secs(10))
+                .unwrap_err()
+                .contains("exceeded its limit")
+        );
+    }
+    #[test]
+    fn incomplete_or_malformed_success_responses_are_rejected() {
+        for output in ["{}", "not json", r#"{"notes":[]}"#, r#"{"changes":[]}"#] {
+            assert!(
+                serde_json::from_str::<Response>(output).is_err(),
+                "{output}"
+            );
+        }
+        assert!(
+            serde_json::from_str::<Response>(r#"{"changes":[],"notes":[]}"#).is_ok()
+        );
     }
 }
 fn helper(dart: &Path) -> Result<PathBuf, String> {
@@ -286,12 +371,29 @@ mod sdk_tests {
         let sdk = PathBuf::from(
             std::env::var_os("SPARROW_TEST_FLUTTER_SDK").expect("Flutter SDK root"),
         );
-        for mode in [
-            "material",
-            "material_provider",
-            "material_wrap",
-            "go_provider",
-        ] {
+        run_suite(
+            &root,
+            &sdk,
+            "6.1.5+1",
+            "18.1.4",
+            &[
+                "material",
+                "material_provider",
+                "material_wrap",
+                "go_provider",
+            ],
+            true,
+        );
+    }
+    fn run_suite(
+        root: &Path,
+        sdk: &Path,
+        provider_version: &str,
+        router_version: &str,
+        modes: &[&str],
+        offline: bool,
+    ) {
+        for &mode in modes {
             let package = root.join(mode);
             assert!(!package.exists(), "use a fresh fixture root");
             fs::create_dir_all(package.join("lib")).unwrap();
@@ -305,14 +407,15 @@ mod sdk_tests {
             )
             .unwrap();
             let provider = mode != "material";
-            fs::write(package.join("pubspec.yaml"),format!("name: registration_example\nenvironment:\n  sdk: '>=3.10.0 <4.0.0'\ndependencies:\n  flutter:\n    sdk: flutter\n{}{}dev_dependencies:\n  flutter_test:\n    sdk: flutter\n",if provider{"  provider: 6.1.5+1\n"}else{""},if mode=="go_provider"{"  go_router: 18.1.4\n"}else{""})).unwrap();
+            fs::write(package.join("pubspec.yaml"),format!("name: registration_example\nenvironment:\n  sdk: '>=3.10.0 <4.0.0'\ndependencies:\n  flutter:\n    sdk: flutter\n{}{}dev_dependencies:\n  flutter_test:\n    sdk: flutter\n",if provider{format!("  provider: {provider_version}\n")}else{String::new()},if mode=="go_provider"{format!("  go_router: {router_version}\n")}else{String::new()})).unwrap();
             let flutter = crate::dart::sdk::find_flutter_binary(Some(&package))
                 .expect("Flutter executable");
-            let output = Command::new(flutter)
-                .current_dir(&package)
-                .args(["pub", "get", "--offline"])
-                .output()
-                .unwrap();
+            let mut resolve = Command::new(&flutter);
+            resolve.current_dir(&package).args(["pub", "get"]);
+            if offline {
+                resolve.arg("--offline");
+            }
+            let output = resolve.output().unwrap();
             assert!(
                 output.status.success(),
                 "{}",
@@ -388,7 +491,78 @@ mod sdk_tests {
                 }
             );
             fs::write(package.join("test/registration_test.dart"), test).unwrap();
+            let mut command = Command::new(&flutter);
+            command.current_dir(&package).arg("test");
+            let output = run(command, None, Duration::from_secs(180)).unwrap();
+            fs::write(package.join("flutter-tests.log"), output).unwrap();
             println!("PASS resolved AST preview/apply/idempotency/undo: {mode}");
         }
+    }
+    #[test]
+    #[ignore = "requires SPARROW_MATRIX_SDKS JSON array and a fresh SPARROW_REGISTRATION_EXPORT_ROOT"]
+    fn compatibility_matrix() {
+        let sdks: Vec<PathBuf> = serde_json::from_str(
+            &std::env::var("SPARROW_MATRIX_SDKS").expect("SDK roots JSON array"),
+        )
+        .unwrap();
+        assert!(!sdks.is_empty());
+        let root = PathBuf::from(
+            std::env::var_os("SPARROW_REGISTRATION_EXPORT_ROOT")
+                .expect("fresh report root"),
+        );
+        assert!(!root.exists());
+        fs::create_dir_all(&root).unwrap();
+        let matrix: serde_json::Value = serde_json::from_str(include_str!(
+            "../../resources/scaffold_analyzer/compatibility.json"
+        ))
+        .unwrap();
+        let mut report = vec![];
+        for (index, sdk) in sdks.iter().enumerate() {
+            let flutter = sdk.join("bin").join(if cfg!(windows) {
+                "flutter.bat"
+            } else {
+                "flutter"
+            });
+            let mut command = Command::new(flutter);
+            command.args(["--version", "--machine"]);
+            let version =
+                run(command, None, Duration::from_secs(120)).and_then(|s| {
+                    serde_json::from_str::<serde_json::Value>(&s)
+                        .map_err(|e| e.to_string())
+                });
+            for case in matrix["packages"].as_array().unwrap() {
+                let id = case["id"].as_str().unwrap();
+                let package_root = root.join(format!("sdk-{index}-{id}"));
+                let result = std::panic::catch_unwind(|| {
+                    assert!(version.is_ok(), "{version:?}");
+                    run_suite(
+                        &package_root,
+                        sdk,
+                        case["provider"].as_str().unwrap(),
+                        case["go_router"].as_str().unwrap(),
+                        &["go_provider"],
+                        std::env::var_os("SPARROW_MATRIX_ONLINE").is_none(),
+                    );
+                });
+                let failure = result.err().map(|e| {
+                    e.downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "test panicked".into())
+                });
+                report.push(json!({"sdk":sdk,"sdk_version":version.as_ref().ok(),"packages":case,"status":if failure.is_none(){"passed"}else{"failed"},"failure":failure,"fixture":package_root}));
+                fs::write(
+                    root.join("report.json"),
+                    serde_json::to_vec_pretty(&json!({"schema":1,"results":report}))
+                        .unwrap(),
+                )
+                .unwrap();
+            }
+        }
+        assert!(
+            report.iter().all(|r| r["status"] == "passed"),
+            "Compatibility failures: inspect {}",
+            root.join("report.json").display()
+        );
     }
 }

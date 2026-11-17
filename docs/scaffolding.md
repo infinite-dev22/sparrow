@@ -113,4 +113,8 @@ Registration follows nested same-file route-list variables when checking path co
 
 Failure-injection tests interrupt application after earlier edits and creations have succeeded. They verify that original bytes are restored and generated files removed. A separate test simulates a concurrent edit during rollback: the edit is preserved and the transaction reports that recovery needs attention instead of overwriting it.
 
-This remains an early implementation. Current automated coverage is 261 application tests (seven skipped) and 19 resolved-AST tests; the previous real-Flutter four-project/20-test validation remains recorded above. This pass does not establish a multi-version SDK/package compatibility matrix or broad production-project coverage. Those remain required before describing the feature as production-hardened.
+This remains an early implementation. Current automated coverage is 261 application tests (seven skipped) and 19 resolved-AST tests; the previous real-Flutter four-project/20-test validation remains recorded above. A subsequent [compatibility runner](scaffold-compatibility.md) now records package-version checks and accepts multiple SDK roots. Only one installed SDK has been verified so far; broader SDK and production-project coverage remain required before describing the feature as production-hardened.
+
+## Compatibility and helper-process pass
+
+The application suite now passes 265 tests (nine opt-in fixtures skipped). Timeout, crash, excessive live output and malformed/incomplete helper-response tests pass. The real-package compatibility runner and recorded local results are documented in [Scaffold compatibility checks](scaffold-compatibility.md).
