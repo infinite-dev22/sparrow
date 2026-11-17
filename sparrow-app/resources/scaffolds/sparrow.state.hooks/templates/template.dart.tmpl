@@ -1,0 +1,11 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_hooks/flutter_hooks.dart';
+
+class {{name}} extends HookWidget {
+  const {{name}}({super.key});
+  @override
+  Widget build(BuildContext context) {
+    final count = useState(0);
+    return TextButton(onPressed: () => count.value++, child: Text('${count.value}'));
+  }
+}

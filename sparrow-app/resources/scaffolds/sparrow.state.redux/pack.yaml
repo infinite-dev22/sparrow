@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.redux
+version: 1.0.0
+title: "Redux Store"
+category: state
+target: sibling
+suffix: "_store"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: redux
+    version: "any"

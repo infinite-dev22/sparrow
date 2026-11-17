@@ -1,0 +1,97 @@
+{
+  "sparrow.dart.class": {
+    "path": "counter.dart",
+    "sha256": "8bddd1ec1d45780b6785d6becdb9cb4435a16b5c49de062d68a34fb90b2e772b"
+  },
+  "sparrow.widget.stateless": {
+    "path": "counter.dart",
+    "sha256": "8ad570858ae53cce5c7a59e59f36f2fd9285905bab06aea2cbc3ef0b8329b615"
+  },
+  "sparrow.widget.stateful": {
+    "path": "counter.dart",
+    "sha256": "f53994d5c12b7574c796ffc28cf7debea0ab1a37d2c915c48350c9ee24495a89"
+  },
+  "sparrow.state.change_notifier": {
+    "path": "counter_notifier.dart",
+    "sha256": "1e89c461bc2bf4ae7dfe4d28402ac8dfb283ad4377504842db1531d6b26ea4c0"
+  },
+  "sparrow.state.value_notifier": {
+    "path": "counter_notifier.dart",
+    "sha256": "250b554965f922e68158011906c0c18877bccb8028cd34e01e4865579ebd8644"
+  },
+  "sparrow.state.inherited_widget": {
+    "path": "counter_scope.dart",
+    "sha256": "cf2ccce15cf30923d8fcec983a4fa32b8be09a8c73fb4d0393565f21cbb2b35d"
+  },
+  "sparrow.state.stream": {
+    "path": "counter_controller.dart",
+    "sha256": "7f5764a58e3b9d3c1fc221271a22993cde5c3fe87be8568bdae2e33bb107dddd"
+  },
+  "sparrow.state.bloc": {
+    "path": "counter_bloc.dart",
+    "sha256": "2627d0aa746f41d719d75f868acf6912aa1ad16ec92aa4a2436c6b16d98fc07d"
+  },
+  "sparrow.state.cubit": {
+    "path": "counter_cubit.dart",
+    "sha256": "ca7d63ef91a8c6bbd49c2b061d998d706c51d2a0fa4bcb2727bd6716f8ce4d11"
+  },
+  "sparrow.state.riverpod_notifier": {
+    "path": "counter_notifier.dart",
+    "sha256": "f32d07d221192a3c6863b27dc6375971eb01d58865784f4856597e9b27239149"
+  },
+  "sparrow.state.riverpod_async_notifier": {
+    "path": "counter_notifier.dart",
+    "sha256": "33c956b5aaab966bb238b3af19bc994b8c16a8eee28440e495c379c9c1883ccd"
+  },
+  "sparrow.state.provider": {
+    "path": "counter_provider.dart",
+    "sha256": "ba1c3ce8a5ad9e17c9473840c0659219087d8b7e88d9e611fa85d215d779ce59"
+  },
+  "sparrow.state.getx": {
+    "path": "counter_controller.dart",
+    "sha256": "16fc7cbe6f47d27f6824444df56c5fe2ea9474fd174b058e956fdf5cbc643f9b"
+  },
+  "sparrow.state.mobx": {
+    "path": "counter_store.dart",
+    "sha256": "11b83d2f1a42b432497a8ca1c559bae37b4266e41850504bb691ca210c2ed47c"
+  },
+  "sparrow.state.redux": {
+    "path": "counter_store.dart",
+    "sha256": "b96ecff0edfb51e23de50099a20d6f1d719254ff06af138b5e5d3c1871701c5e"
+  },
+  "sparrow.state.signals": {
+    "path": "counter_model.dart",
+    "sha256": "718aefdc141a6b2255fb60fac2f4f5b15c117c941e28ce6a8837c41388035407"
+  },
+  "sparrow.state.rxdart": {
+    "path": "counter_controller.dart",
+    "sha256": "be9f3d13b18899ad53a9a34728b8458b2ca02e8e56bedcadac0388062eb0fdf7"
+  },
+  "sparrow.state.hooks": {
+    "path": "counter.dart",
+    "sha256": "046a29ea41a5602d32c5f958a9ed74a322b6a098118b387bb785739a59010353"
+  },
+  "sparrow.state.scoped_model": {
+    "path": "counter_model.dart",
+    "sha256": "60ced4ee4b9fb692934e6a81ab9a32bae38a104b4766aa8c8f204f12a1e349f4"
+  },
+  "sparrow.state.stacked": {
+    "path": "counter_view_model.dart",
+    "sha256": "84f07ce8c1b587ee5bb88d8a8f3486733d6b4e51b9b6c1e1a4ebb6309aa483d3"
+  },
+  "sparrow.state.getit": {
+    "path": "counter_service.dart",
+    "sha256": "d15ea3d83240de5c0a594257afd9dd8bbb84d30f43c24480e76511beb38a5635"
+  },
+  "sparrow.feature.mvvm": {
+    "files": {
+      "lib/features/orders/domain/orders_item.dart": "bf732c64f9ba56ca4f00d93cfd0dc89e711f5cfbb57cb0c712b15f6cb1c7bffa",
+      "lib/features/orders/data/orders_repository.dart": "046d5afd73df9b3677d6a8e8e613d46261376c1a194ecc3c8f479c72b57a20b9",
+      "lib/features/orders/presentation/orders_view_model.dart": "2c8a9e86169ebc4cfb63d763e11ee456e82e22e89e52d4ce3aa6d72ce2cb1912",
+      "lib/features/orders/presentation/orders_screen.dart": "ceaa05c98f3713df32db4cd5670dc2cb82f0c1bc2c45e3835e972ea58422901b",
+      "lib/features/orders/presentation/orders_route.dart": "fbc82d4fee81d7f1fce7646a7c347281f139939d240409ae5033ec9b624bde9b",
+      "test/features/orders/orders_view_model_test.dart": "679a68b5c8a0c249cfffc7217c4815ae99bab745cd0273986e6cb46e732e9e5e",
+      "test/features/orders/orders_screen_test.dart": "d49bca4979202409e8caed93d3897267accaae73d06211dd2c88d403c4b80f81"
+    }
+  }
+}

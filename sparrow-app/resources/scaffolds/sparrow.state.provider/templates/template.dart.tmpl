@@ -1,0 +1,8 @@
+import 'package:flutter/foundation.dart';
+import 'package:provider/provider.dart';
+
+class {{name}} extends ChangeNotifier {
+  int count = 0;
+  void increment() { count++; notifyListeners(); }
+}
+final {{variable}}Provider = ChangeNotifierProvider<{{name}}>(create: (_) => {{name}}());

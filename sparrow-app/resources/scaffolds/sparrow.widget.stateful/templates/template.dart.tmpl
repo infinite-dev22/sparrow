@@ -1,0 +1,12 @@
+import 'package:flutter/material.dart';
+
+class {{name}} extends StatefulWidget {
+  const {{name}}({super.key});
+  @override
+  State<{{name}}> createState() => _{{name}}State();
+}
+class _{{name}}State extends State<{{name}}> {
+  int count = 0;
+  @override
+  Widget build(BuildContext context) => TextButton(onPressed: () => setState(() => count++), child: Text('$count'));
+}

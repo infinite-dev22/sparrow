@@ -1,0 +1,13 @@
+import 'package:flutter/widgets.dart';
+
+class {{name}} extends InheritedWidget {
+  const {{name}}({super.key, required super.child, required this.value});
+  final int value;
+  static {{name}} of(BuildContext context) {
+    final scope = context.dependOnInheritedWidgetOfExactType<{{name}}>();
+    assert(scope != null, 'No {{name}} found');
+    return scope!;
+  }
+  @override
+  bool updateShouldNotify({{name}} oldWidget) => value != oldWidget.value;
+}

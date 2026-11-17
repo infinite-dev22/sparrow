@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.rxdart
+version: 1.0.0
+title: "RxDart"
+category: state
+target: sibling
+suffix: "_controller"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: rxdart
+    version: "any"

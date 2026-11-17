@@ -1,0 +1,12 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:{{package}}/{{screen_import}}/{{snake}}_screen.dart';
+
+void main() {
+  testWidgets('shows the empty state', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: {{name}}Screen()));
+    await tester.pumpAndSettle();
+    expect(find.text('No items yet'), findsOneWidget);
+    expect(find.text('{{name}}'), findsOneWidget);
+  });
+}

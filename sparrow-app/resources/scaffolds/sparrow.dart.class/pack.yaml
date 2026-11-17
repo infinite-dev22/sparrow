@@ -1,0 +1,10 @@
+schema: 2
+id: sparrow.dart.class
+version: 1.0.0
+title: "Dart Class"
+category: widget
+target: sibling
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies: []

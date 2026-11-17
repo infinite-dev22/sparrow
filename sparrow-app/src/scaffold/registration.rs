@@ -277,8 +277,7 @@ fn collect(
 pub fn augment(mut plan: Plan, ctx: &Context, name: &str) -> Result<Plan, String> {
     let dart = crate::dart::sdk::find_dart_binary(Some(&ctx.root))
         .ok_or("Configure a Dart/Flutter SDK before automatic registration")?;
-    let (filename, _) = super::render(&super::template("name", "", None, ""), name)?;
-    let snake = filename.trim_end_matches(".dart");
+    let (snake, _) = super::engine::name_parts(name)?;
     let screen_dir = if ctx.layout == "layer-first" {
         format!("presentation/{snake}")
     } else {
@@ -431,7 +430,8 @@ mod sdk_tests {
             };
             fs::write(package.join("lib/main.dart"), &main).unwrap();
             let ctx = super::super::engine::context(&package, &package).unwrap();
-            let pack = super::super::feature::pack();
+            let pack =
+                super::super::catalog::bundled("sparrow.feature.mvvm").unwrap();
             let plan = augment(
                 super::super::engine::plan_pack(&ctx, &pack, "Orders").unwrap(),
                 &ctx,

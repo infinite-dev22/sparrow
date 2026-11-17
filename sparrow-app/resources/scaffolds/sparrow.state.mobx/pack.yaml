@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.mobx
+version: 1.0.0
+title: "MobX Store (no code generation)"
+category: state
+target: sibling
+suffix: "_store"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: mobx
+    version: "any"

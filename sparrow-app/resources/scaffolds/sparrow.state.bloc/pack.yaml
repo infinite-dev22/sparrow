@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.bloc
+version: 1.0.0
+title: "BLoC"
+category: state
+target: sibling
+suffix: "_bloc"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: bloc
+    version: "any"

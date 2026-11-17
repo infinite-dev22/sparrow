@@ -1,0 +1,12 @@
+schema: 2
+id: sparrow.state.hooks
+version: 1.0.0
+title: "Flutter Hooks"
+category: state
+target: sibling
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: flutter_hooks
+    version: "any"

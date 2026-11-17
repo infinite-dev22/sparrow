@@ -359,6 +359,12 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "Scaffold: New Feature…")]
     #[strum(serialize = "scaffold_new_feature")]
     ScaffoldNewFeature,
+    #[strum(message = "Scaffold: New From Pack…")]
+    #[strum(serialize = "scaffold_from_pack")]
+    ScaffoldFromPack,
+    #[strum(message = "Scaffold: Export Bundled Template…")]
+    #[strum(serialize = "scaffold_export_pack")]
+    ScaffoldExportPack,
     #[strum(message = "Scaffold: Undo Last Scaffold…")]
     #[strum(serialize = "scaffold_undo")]
     ScaffoldUndo,

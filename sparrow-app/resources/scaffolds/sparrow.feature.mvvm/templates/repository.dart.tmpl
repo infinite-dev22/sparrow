@@ -1,0 +1,10 @@
+import 'package:{{package}}/{{model_import}}/{{snake}}_item.dart';
+
+abstract interface class {{name}}Repository {
+  Future<List<{{name}}Item>> load();
+}
+
+class InMemory{{name}}Repository implements {{name}}Repository {
+  @override
+  Future<List<{{name}}Item>> load() async => const [];
+}

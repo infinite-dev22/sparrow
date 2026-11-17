@@ -1,0 +1,62 @@
+import 'package:flutter/material.dart';
+import 'package:{{package}}/{{repository_import}}/{{snake}}_repository.dart';
+import '{{snake}}_view_model.dart';
+
+class {{name}}Screen extends StatefulWidget {
+  const {{name}}Screen({super.key, this.repository, this.viewModel});
+  final {{name}}Repository? repository;
+  final {{name}}ViewModel? viewModel;
+  @override
+  State<{{name}}Screen> createState() => _{{name}}ScreenState();
+}
+
+class _{{name}}ScreenState extends State<{{name}}Screen> {
+  late final {{name}}ViewModel _model;
+  @override
+  void initState() {
+    super.initState();
+    _model = widget.viewModel ?? {{name}}ViewModel(widget.repository ?? InMemory{{name}}Repository());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _model.load();
+    });
+  }
+
+  @override
+  void dispose() {
+    if (widget.viewModel == null) _model.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('{{name}}')),
+    body: ListenableBuilder(
+      listenable: _model,
+      builder: (context, _) {
+        if (_model.loading) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (_model.error != null) {
+          return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(_model.error!),
+            FilledButton(onPressed: _model.load, child: const Text('Retry')),
+          ]));
+        }
+        if (_model.items.isEmpty) {
+          return const Center(child: Text('No items yet'));
+        }
+        return RefreshIndicator(
+          onRefresh: _model.load,
+          child: ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            itemCount: _model.items.length,
+            itemBuilder: (context, index) => ListTile(
+              key: ValueKey(_model.items[index].id),
+              title: Text(_model.items[index].title),
+            ),
+          ),
+        );
+      },
+    ),
+  );
+}

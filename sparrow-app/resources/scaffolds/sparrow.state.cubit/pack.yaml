@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.cubit
+version: 1.0.0
+title: "Cubit"
+category: state
+target: sibling
+suffix: "_cubit"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: bloc
+    version: "any"

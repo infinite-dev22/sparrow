@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.scoped_model
+version: 1.0.0
+title: "Scoped Model"
+category: state
+target: sibling
+suffix: "_model"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: scoped_model
+    version: "any"

@@ -1,0 +1,10 @@
+import 'package:bloc/bloc.dart';
+
+sealed class {{name}}Event {}
+final class {{name}}Increment extends {{name}}Event {}
+
+class {{name}} extends Bloc<{{name}}Event, int> {
+  {{name}}() : super(0) {
+    on<{{name}}Increment>((event, emit) => emit(state + 1));
+  }
+}

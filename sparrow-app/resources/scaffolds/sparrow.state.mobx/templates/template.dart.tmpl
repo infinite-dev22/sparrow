@@ -1,0 +1,6 @@
+import 'package:mobx/mobx.dart';
+
+class {{name}} {
+  final count = Observable(0);
+  void increment() => runInAction(() => count.value++);
+}

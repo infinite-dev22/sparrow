@@ -1,0 +1,26 @@
+schema: 2
+id: sparrow.feature.mvvm
+version: 1.1.0
+title: "Feature · MVVM / ChangeNotifier"
+category: feature
+target: package
+registration: mvvm_change_notifier
+files:
+  - path: "{{model_dir}}/{{snake}}_item.dart"
+    source: templates/model.dart.tmpl
+  - path: "{{repository_dir}}/{{snake}}_repository.dart"
+    source: templates/repository.dart.tmpl
+  - path: "{{state_dir}}/{{snake}}_view_model.dart"
+    source: templates/view_model.dart.tmpl
+  - path: "{{screen_dir}}/{{snake}}_screen.dart"
+    source: templates/screen.dart.tmpl
+  - path: "{{screen_dir}}/{{snake}}_route.dart"
+    source: templates/route.dart.tmpl
+  - path: "test/features/{{snake}}/{{snake}}_view_model_test.dart"
+    source: templates/view_model_test.dart.tmpl
+  - path: "test/features/{{snake}}/{{snake}}_screen_test.dart"
+    source: templates/screen_test.dart.tmpl
+dependencies:
+  - package: flutter_test
+    sdk: "flutter"
+    dev: true

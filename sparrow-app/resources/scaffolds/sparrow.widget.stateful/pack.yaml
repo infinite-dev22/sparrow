@@ -1,0 +1,10 @@
+schema: 2
+id: sparrow.widget.stateful
+version: 1.0.0
+title: "Stateful Widget / setState"
+category: widget
+target: sibling
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies: []

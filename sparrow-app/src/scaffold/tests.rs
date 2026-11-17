@@ -1,4 +1,4 @@
-use super::{engine::*, feature};
+use super::engine::*;
 use std::{fs, path::Path};
 
 const PUBSPEC: &str = "# Team conventions\nname: example_app\nenvironment:\n  sdk: '>=3.10.0 <4.0.0'\ndependencies: # Keep this comment\n  flutter:\n    sdk: flutter\n";
@@ -17,7 +17,12 @@ fn custom() -> Pack {
 fn feature_preview_apply_idempotency_and_undo_are_one_change() {
     let dir = project();
     let context = ctx(dir.path());
-    let plan = plan_pack(&context, &feature::pack(), "Orders").unwrap();
+    let plan = plan_pack(
+        &context,
+        &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+        "Orders",
+    )
+    .unwrap();
     assert_eq!(plan.changes.len(), 8);
     assert!(
         !dir.path().join("lib").exists(),
@@ -32,10 +37,14 @@ fn feature_preview_apply_idempotency_and_undo_are_one_change() {
         );
     }
     assert!(
-        plan_pack(&ctx(dir.path()), &feature::pack(), "Orders")
-            .unwrap()
-            .changes
-            .is_empty()
+        plan_pack(
+            &ctx(dir.path()),
+            &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+            "Orders"
+        )
+        .unwrap()
+        .changes
+        .is_empty()
     );
     applied.undo().unwrap();
     assert_eq!(
@@ -49,7 +58,12 @@ fn feature_preview_apply_idempotency_and_undo_are_one_change() {
 fn conflicts_abort_before_any_write_and_preserve_user_code() {
     let dir = project();
     let context = ctx(dir.path());
-    let plan = plan_pack(&context, &feature::pack(), "Orders").unwrap();
+    let plan = plan_pack(
+        &context,
+        &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+        "Orders",
+    )
+    .unwrap();
     let conflict = &plan.changes[2].path;
     fs::create_dir_all(conflict.parent().unwrap()).unwrap();
     fs::write(conflict, "user code").unwrap();
@@ -57,15 +71,24 @@ fn conflicts_abort_before_any_write_and_preserve_user_code() {
     assert!(!plan.changes[0].path.exists());
     assert_eq!(fs::read_to_string(conflict).unwrap(), "user code");
     assert!(
-        plan_pack(&context, &feature::pack(), "Orders")
-            .unwrap_err()
-            .contains("Already exists")
+        plan_pack(
+            &context,
+            &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+            "Orders"
+        )
+        .unwrap_err()
+        .contains("Already exists")
     );
 }
 #[test]
 fn undo_refuses_to_remove_edited_generated_files() {
     let dir = project();
-    let plan = plan_pack(&ctx(dir.path()), &feature::pack(), "Orders").unwrap();
+    let plan = plan_pack(
+        &ctx(dir.path()),
+        &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+        "Orders",
+    )
+    .unwrap();
     let applied = plan.apply().unwrap();
     fs::write(&plan.changes[2].path, "user additions").unwrap();
     assert!(applied.undo().is_err());
@@ -103,7 +126,12 @@ fn registration_edits_share_preview_transaction_and_undo_with_generated_files() 
     let main = dir.path().join("lib/main.dart");
     let before = "// 😀 original router\nvoid main() {}\n";
     fs::write(&main, before).unwrap();
-    let mut plan = plan_pack(&ctx(dir.path()), &feature::pack(), "Orders").unwrap();
+    let mut plan = plan_pack(
+        &ctx(dir.path()),
+        &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+        "Orders",
+    )
+    .unwrap();
     plan.add_registration(
         vec![Change {
             path: main.clone(),
@@ -128,7 +156,12 @@ fn stale_registration_source_blocks_the_complete_apply_and_undo() {
     fs::create_dir_all(dir.path().join("lib")).unwrap();
     let main = dir.path().join("lib/main.dart");
     fs::write(&main, "before").unwrap();
-    let mut plan = plan_pack(&ctx(dir.path()), &feature::pack(), "Orders").unwrap();
+    let mut plan = plan_pack(
+        &ctx(dir.path()),
+        &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+        "Orders",
+    )
+    .unwrap();
     plan.add_registration(
         vec![Change {
             path: main.clone(),
@@ -178,7 +211,12 @@ fn nearest_package_and_explicit_layout_override_win() {
     let child_ctx = context(dir.path(), &child.join("lib/presentation")).unwrap();
     assert_eq!(child_ctx.package, "child");
     assert_eq!(child_ctx.layout, "layer-first");
-    let plan = plan_pack(&child_ctx, &feature::pack(), "Orders").unwrap();
+    let plan = plan_pack(
+        &child_ctx,
+        &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+        "Orders",
+    )
+    .unwrap();
     assert!(
         plan.changes
             .iter()
@@ -197,7 +235,12 @@ fn nearest_package_and_explicit_layout_override_win() {
 fn singular_feature_convention_keeps_correct_package_imports() {
     let dir = project();
     fs::create_dir_all(dir.path().join("lib/feature")).unwrap();
-    let plan = plan_pack(&ctx(dir.path()), &feature::pack(), "Orders").unwrap();
+    let plan = plan_pack(
+        &ctx(dir.path()),
+        &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+        "Orders",
+    )
+    .unwrap();
     let screen = plan
         .changes
         .iter()
@@ -297,7 +340,7 @@ fn invalid_packs_and_unsafe_destinations_are_rejected() {
     pack.files[0].content = "{{unknown}}".into();
     assert!(plan_pack(&context, &pack, "Orders").is_err());
     pack = custom();
-    pack.schema = 2;
+    pack.schema = 3;
     assert!(plan_pack(&context, &pack, "Orders").is_err());
     assert!(plan_pack(&context, &custom(), "../../escape").is_err());
     let manifest = dir.path().join("pack.yaml");
@@ -335,6 +378,7 @@ fn preparation_failure_leaves_all_files_and_directories_unchanged() {
     pack.files.push(PackFile {
         path: "blocked/second.dart".into(),
         content: "class Second {}".into(),
+        source: None,
     });
     let plan = plan_pack(&ctx(dir.path()), &pack, "Orders").unwrap();
     fs::write(dir.path().join("blocked"), "not a folder").unwrap();
@@ -350,7 +394,12 @@ fn empty_dependency_sections_are_supported_without_rewriting_yaml() {
     let dir = project();
     let before = format!("{PUBSPEC}dev_dependencies:");
     fs::write(dir.path().join("pubspec.yaml"), &before).unwrap();
-    let plan = plan_pack(&ctx(dir.path()), &feature::pack(), "Orders").unwrap();
+    let plan = plan_pack(
+        &ctx(dir.path()),
+        &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+        "Orders",
+    )
+    .unwrap();
     plan.apply().unwrap();
     assert!(
         fs::read_to_string(dir.path().join("pubspec.yaml"))
@@ -372,9 +421,13 @@ fn export_features_for_sdk_validation() {
         if layout == "layer-first" {
             fs::create_dir_all(dir.join("lib/presentation")).unwrap();
         }
-        plan_pack(&ctx(&dir), &feature::pack(), "Orders")
-            .unwrap()
-            .apply()
-            .unwrap();
+        plan_pack(
+            &ctx(&dir),
+            &super::catalog::bundled("sparrow.feature.mvvm").unwrap(),
+            "Orders",
+        )
+        .unwrap()
+        .apply()
+        .unwrap();
     }
 }

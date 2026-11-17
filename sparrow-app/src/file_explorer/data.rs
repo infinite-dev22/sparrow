@@ -766,11 +766,11 @@ impl FileExplorerData {
         new_menu = new_menu.separator();
         let mut state_menu=Menu::new("State Management");
         let scaffold_root = crate::scaffold::engine::context(workspace_path,&base_path_a).map(|ctx|ctx.root).unwrap_or_else(|_|workspace_path.to_path_buf());
-        for (i,template) in crate::scaffold::catalog(&scaffold_root).into_iter().enumerate() {
+        for template in crate::scaffold::catalog(&scaffold_root) {
             let base=base_path_a.clone(); let commands=common.internal_command;
-            let is_pack = template.pack.is_some() || template.manifest.is_some();
+            let is_state = template.category==crate::scaffold::engine::Category::State;
             let item=MenuItem::new(template.title.clone()).action(move ||commands.send(InternalCommand::NewScaffold{base:base.clone(),template:template.clone()}));
-            if i<3 || is_pack {new_menu=new_menu.entry(item);} else {state_menu=state_menu.entry(item);}
+            if is_state {state_menu=state_menu.entry(item);} else {new_menu=new_menu.entry(item);}
         }
         menu=menu.entry(new_menu.entry(state_menu));
         if is_workspace {menu=menu.entry(crate::git_actions::menu(common.internal_command,None));}

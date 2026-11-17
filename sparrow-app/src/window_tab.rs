@@ -2313,6 +2313,8 @@ impl WindowTabData {
             FlutterNewProject => self.flutter_project.active.set(true),
             ScaffoldNewFeature => self.scaffold.open_feature(self),
             ScaffoldUndo => self.scaffold.open_undo(),
+            ScaffoldFromPack => self.scaffold.open_catalog(self,false),
+            ScaffoldExportPack => self.scaffold.open_catalog(self,true),
             FlutterOpenDevTools | FlutterDevToolsMemory | FlutterDevToolsNetwork => {
                 let page = match cmd {
                     FlutterDevToolsMemory => crate::dart::devtools::DevToolsPage::Memory,

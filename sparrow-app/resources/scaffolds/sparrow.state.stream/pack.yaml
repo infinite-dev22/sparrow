@@ -1,0 +1,11 @@
+schema: 2
+id: sparrow.state.stream
+version: 1.0.0
+title: "Streams / StreamBuilder"
+category: state
+target: sibling
+suffix: "_controller"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies: []

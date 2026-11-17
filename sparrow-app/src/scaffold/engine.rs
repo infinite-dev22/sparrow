@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::Write,
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -16,15 +16,52 @@ pub struct Pack {
     pub title: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default)]
+    pub target: Target,
+    #[serde(default)]
+    pub category: Category,
+    #[serde(default)]
+    pub suffix: Option<String>,
+    #[serde(default)]
+    pub compatible_with: BTreeMap<String, String>,
+    #[serde(default)]
+    pub registration: Option<Registration>,
+    #[serde(default)]
+    pub disabled: bool,
     pub files: Vec<PackFile>,
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
+    #[serde(skip)]
+    pub loaded_inputs: Vec<(PathBuf, Option<String>)>,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Target {
+    Sibling,
+    #[default]
+    Package,
+}
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Category {
+    Widget,
+    State,
+    Feature,
+    #[default]
+    Other,
+}
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Registration {
+    MvvmChangeNotifier,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackFile {
     pub path: String,
+    #[serde(default)]
     pub content: String,
+    pub source: Option<String>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,13 +106,25 @@ pub struct Applied {
     pub plan: Plan,
     created_dirs: Vec<PathBuf>,
 }
-fn read(path: &Path) -> Result<Option<String>, String> {
-    match fs::read_to_string(path) {
-        Ok(s) if s.len() <= 2 * 1024 * 1024 => Ok(Some(s)),
-        Ok(_) => Err(format!("{} exceeds 2 MB", path.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("{}: {e}", path.display())),
+pub(crate) fn read(path: &Path) -> Result<Option<String>, String> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{}: {e}", path.display())),
+    };
+    if file.metadata().map_err(|e| e.to_string())?.len() > 2 * 1024 * 1024 {
+        return Err(format!("{} exceeds 2 MB", path.display()));
     }
+    let mut bytes = Vec::new();
+    file.take(2 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    if bytes.len() > 2 * 1024 * 1024 {
+        return Err(format!("{} exceeds 2 MB", path.display()));
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 fn relative(path: &str) -> Result<PathBuf, String> {
     let path = Path::new(path);
@@ -227,15 +276,74 @@ pub fn load_pack(path: &Path) -> Result<Pack, String> {
     {
         return Err("Pack manifests cannot be symlinks".into());
     }
-    let pack: Pack =
-        serde_yaml::from_str(&read(path)?.ok_or("Pack manifest is missing")?)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+    let text = read(path)?.ok_or("Pack manifest is missing")?;
+    let base = path
+        .parent()
+        .ok_or("Missing pack folder")?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let mut observed = vec![(path.to_path_buf(), Some(text.clone()))];
+    let mut pack = parse_pack(&text, |source| {
+        let path = base.join(relative(source)?);
+        checked_path(&base, &path)?;
+        let text = read(&path)?
+            .ok_or_else(|| format!("Missing template source: {}", path.display()))?;
+        observed.push((path, Some(text.clone())));
+        Ok(text)
+    })?;
+    pack.loaded_inputs = observed;
+    Ok(pack)
+}
+pub(crate) fn parse_pack(
+    text: &str,
+    mut source: impl FnMut(&str) -> Result<String, String>,
+) -> Result<Pack, String> {
+    let mut pack: Pack = serde_yaml::from_str(text).map_err(|e| e.to_string())?;
+    let mut total = 0usize;
+    for file in &mut pack.files {
+        if let Some(path) = &file.source {
+            if !file.content.is_empty() {
+                return Err("Specify content or source, not both".into());
+            }
+            relative(path)?;
+            file.content = source(path)?;
+        }
+        total = total.saturating_add(file.content.len());
+        if total > 2 * 1024 * 1024 {
+            return Err("Pack contents exceed 2 MB".into());
+        }
+    }
     validate_pack(&pack)?;
     Ok(pack)
 }
-fn validate_pack(pack: &Pack) -> Result<(), String> {
-    if pack.schema != 1 {
-        return Err("Unsupported scaffold schema; expected 1".into());
+pub(crate) fn validate_pack(pack: &Pack) -> Result<(), String> {
+    if ![1, 2].contains(&pack.schema) {
+        return Err("Unsupported scaffold schema; expected 1 or 2".into());
+    }
+    if !pack
+        .id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+        || pack.id == "."
+        || pack.id == ".."
+    {
+        return Err("Pack id must be a safe directory name".into());
+    }
+    if pack.registration.is_some() && pack.target != Target::Package {
+        return Err("Registration requires a package-target pack".into());
+    }
+    if let Some(suffix) = &pack.suffix {
+        if !suffix.is_empty()
+            && (!suffix.starts_with('_')
+                || !suffix.chars().all(|c| {
+                    c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit()
+                }))
+        {
+            return Err("Suffix must use lower_snake_case starting with _".into());
+        }
+    }
+    for requirement in pack.compatible_with.values() {
+        version_requirement(requirement)?;
     }
     semver::Version::parse(&pack.version)
         .map_err(|e| format!("Invalid pack version: {e}"))?;
@@ -300,13 +408,27 @@ fn inputs(root: &Path) -> Result<Vec<(PathBuf, Option<String>)>, String> {
         .collect()
 }
 fn substitute(text: &str, vars: &BTreeMap<&str, String>) -> Result<String, String> {
-    let mut result = text.to_string();
-    for (key, value) in vars {
-        result = result.replace(&format!("{{{{{key}}}}}"), value);
+    let mut result = String::new();
+    let mut remaining = text;
+    while let Some(start) = remaining.find("{{") {
+        result.push_str(&remaining[..start]);
+        let tail = &remaining[start + 2..];
+        // A Dart named-parameter brace can immediately precede {{name}}.
+        // Treat the outer brace literally, matching the original renderer.
+        if tail.starts_with('{') {
+            result.push('{');
+            remaining = &remaining[start + 1..];
+            continue;
+        }
+        let end = tail.find("}}").ok_or("Unclosed template variable")?;
+        let key = tail[..end].trim();
+        let value = vars
+            .get(key)
+            .ok_or_else(|| format!("Unknown template variable: {key}"))?;
+        result.push_str(value);
+        remaining = &tail[end + 2..];
     }
-    if result.contains("{{") {
-        return Err("Unknown template variable; use name, snake, variable, package, feature_root, screen_dir, state_dir, model_dir or repository_dir".into());
-    }
+    result.push_str(remaining);
     Ok(result)
 }
 /// Add only absent dependencies, retaining comments and every existing constraint.
@@ -407,19 +529,83 @@ fn dependencies(
     }
     Ok((after, added))
 }
+pub fn name_parts(name: &str) -> Result<(String, String), String> {
+    if name.is_empty()
+        || !name.as_bytes()[0].is_ascii_uppercase()
+        || !name.chars().all(|c| c.is_ascii_alphanumeric())
+    {
+        return Err(
+            "Use a PascalCase Dart class name, for example CounterCubit.".into(),
+        );
+    }
+    let mut snake = String::new();
+    for (i, c) in name.chars().enumerate() {
+        if c.is_ascii_uppercase() && i > 0 {
+            snake.push('_');
+        }
+        snake.push(c.to_ascii_lowercase());
+    }
+    Ok((
+        snake,
+        format!("{}{}", name[..1].to_ascii_lowercase(), &name[1..]),
+    ))
+}
 pub fn plan_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Plan, String> {
+    if pack.target != Target::Package {
+        return Err("Sibling packs need the selected directory".into());
+    }
+    plan_pack_at(ctx, &ctx.root, pack, name)
+}
+pub fn plan_sibling(
+    ctx: &Context,
+    base: &Path,
+    pack: &Pack,
+    name: &str,
+) -> Result<Plan, String> {
+    if pack.target != Target::Sibling {
+        return Err("Expected a sibling-target pack".into());
+    }
+    plan_pack_at(ctx, base, pack, name)
+}
+fn plan_pack_at(
+    ctx: &Context,
+    base: &Path,
+    pack: &Pack,
+    name: &str,
+) -> Result<Plan, String> {
     validate_pack(pack)?;
-    let (file, _) = super::render(&super::template("name", "", None, ""), name)?;
-    let snake = file.trim_end_matches(".dart").to_string();
+    if pack.disabled {
+        return Err("This pack is disabled".into());
+    }
+    let base = base.canonicalize().map_err(|e| e.to_string())?;
+    if !base.starts_with(&ctx.root) || !base.is_dir() {
+        return Err("Choose a directory inside the target package".into());
+    }
+    let (snake, variable) = name_parts(name)?;
+    let suffix = pack.suffix.as_deref().unwrap_or("");
+    let suffixed_snake = if snake.ends_with(suffix) {
+        snake.clone()
+    } else {
+        format!("{snake}{suffix}")
+    };
+    let pascal_suffix = suffix
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("{}{}", s[..1].to_ascii_uppercase(), &s[1..]))
+        .collect::<String>();
+    let suffixed_name = if name.ends_with(&pascal_suffix) {
+        name.to_string()
+    } else {
+        format!("{name}{pascal_suffix}")
+    };
     let feature = format!("{}/{snake}", ctx.feature_root);
     let layer = ctx.layout == "layer-first";
     let vars = BTreeMap::from([
         ("name", name.to_string()),
+        ("suffixed_name", suffixed_name),
+        ("suffixed_snake", suffixed_snake),
         ("snake", snake.clone()),
-        (
-            "variable",
-            format!("{}{}", name[..1].to_lowercase(), &name[1..]),
-        ),
+        ("variable", variable),
         ("package", ctx.package.clone()),
         ("feature_root", feature.clone()),
         (
@@ -492,7 +678,12 @@ pub fn plan_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Plan, String>
     let mut changes = vec![];
     let mut seen = BTreeSet::new();
     for file in &pack.files {
-        let rel = relative(&substitute(&file.path, &vars)?)?;
+        let output = relative(&substitute(&file.path, &vars)?)?;
+        let path = base.join(output);
+        let rel = path
+            .strip_prefix(&ctx.root)
+            .map_err(|_| "Output escapes target package")?
+            .to_path_buf();
         if rel.components().next().is_some_and(|c| {
             [".sparrow", ".git", ".dart_tool", "build"]
                 .iter()
@@ -504,7 +695,6 @@ pub fn plan_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Plan, String>
         if !seen.insert(rel.clone()) {
             return Err(format!("Duplicate output: {}", rel.display()));
         }
-        let path = ctx.root.join(rel);
         checked_path(&ctx.root, &path)?;
         let after = substitute(&file.content, &vars)?;
         let before = read(&path)?;
@@ -547,19 +737,27 @@ pub fn plan_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Plan, String>
     }
     let lock: Option<serde_yaml::Value> = read(&ctx.root.join("pubspec.lock"))?
         .and_then(|s| serde_yaml::from_str(&s).ok());
-    for dep in &pack.dependencies {
-        if let (Some(req), Some(version)) = (
-            dep.version.as_deref(),
-            lock.as_ref()
-                .and_then(|v| v.get("packages"))
-                .and_then(|v| v.get(&dep.package))
-                .and_then(|v| v.get("version"))
-                .and_then(|v| v.as_str()),
-        ) {
+    for (package, req) in pack
+        .dependencies
+        .iter()
+        .filter_map(|d| d.version.as_deref().map(|v| (d.package.as_str(), v)))
+        .chain(
+            pack.compatible_with
+                .iter()
+                .map(|(p, v)| (p.as_str(), v.as_str())),
+        )
+    {
+        if let Some(version) = lock
+            .as_ref()
+            .and_then(|v| v.get("packages"))
+            .and_then(|v| v.get(package))
+            .and_then(|v| v.get("version"))
+            .and_then(|v| v.as_str())
+        {
             if !version_requirement(req)?.matches(
                 &semver::Version::parse(version).map_err(|e| e.to_string())?,
             ) {
-                notes.push(format!("Compatibility warning: {} resolved to {version}; this pack targets {req}. Existing constraints are preserved.",dep.package));
+                notes.push(format!("Compatibility warning: {} resolved to {version}; this pack targets {req}. Existing constraints are preserved.",package));
             }
         }
     }
@@ -568,44 +766,37 @@ pub fn plan_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Plan, String>
         title: pack.title.clone(),
         changes,
         notes,
-        inputs: inputs(&ctx.root)?,
+        inputs: inputs(&ctx.root)?
+            .into_iter()
+            .chain(pack.loaded_inputs.clone())
+            .collect(),
     })
 }
-pub fn single_plan(
+pub(crate) fn plan_export(
     ctx: &Context,
-    base: &Path,
-    file: String,
-    body: String,
-    title: String,
+    files: Vec<(PathBuf, String)>,
 ) -> Result<Plan, String> {
-    let path = base
-        .canonicalize()
-        .map_err(|e| e.to_string())?
-        .join(relative(&file)?);
-    checked_path(&ctx.root, &path)?;
-    let before = read(&path)?;
-    if before.as_ref().is_some_and(|s| s != &body) {
-        return Err(format!(
-            "Already exists with different content: {}",
-            path.display()
-        ));
+    let mut changes = vec![];
+    for (rel, after) in files {
+        let relative = relative(rel.to_str().ok_or("Invalid export path")?)?;
+        let path = ctx.root.join(".sparrow/scaffolds").join(relative);
+        checked_path(&ctx.root, &path)?;
+        let before = read(&path)?;
+        if before.as_ref().is_some_and(|b| b != &after) {
+            return Err(format!(
+                "Export destination already exists: {}",
+                path.display()
+            ));
+        }
+        if before.as_ref() != Some(&after) {
+            changes.push(Change {
+                path,
+                before,
+                after: Some(after),
+            });
+        }
     }
-    let changes = if before.as_ref() == Some(&body) {
-        vec![]
-    } else {
-        vec![Change {
-            path,
-            before,
-            after: Some(body),
-        }]
-    };
-    Ok(Plan {
-        root: ctx.root.clone(),
-        title,
-        changes,
-        notes: vec![format!("Package: {} · {}", ctx.package, ctx.root.display())],
-        inputs: inputs(&ctx.root)?,
-    })
+    Ok(Plan{root:ctx.root.clone(),title:"Export bundled scaffold".into(),changes,notes:vec!["Copy the bundled default into this package's .sparrow/scaffolds folder. Edit its files and reopen New to use the override.".into()],inputs:inputs(&ctx.root)?})
 }
 impl Plan {
     /// Merge only snapshot-checked existing Dart edits into this transaction.
@@ -639,7 +830,9 @@ impl Plan {
     }
     pub fn validate(&self) -> Result<(), String> {
         for (path, before) in &self.inputs {
-            checked_path(&self.root, path)?;
+            if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+                return Err("Template input became a symlink".into());
+            }
             if read(path)? != *before {
                 return Err(format!(
                     "Project settings changed since preview: {}. Preview again.",

@@ -1,5 +1,7 @@
 # Project-aware scaffolding
 
+See [File-based scaffold packs](file-based-scaffolds.md) for the current schema, discovery roots and export workflow. All bundled templates now use that format.
+
 Use **Scaffold: New Feature…** in the command palette, or right-click a folder and select **New → Feature · MVVM / ChangeNotifier**. Enter a PascalCase name, select **Preview Changes**, and inspect each file in the list before **Apply Changes**.
 
 [Native preview](scaffold-preview.png)
@@ -29,7 +31,7 @@ Apply refuses conflicting files, unsaved affected editor buffers, symlink destin
 
 **Undo Last Scaffold…**, available in the dialog and command palette, previews the inverse operation for the complete scaffold. It restores edited files and removes generated files only if every affected file still matches the applied result. Later user edits block the entire undo. Empty directories created by the scaffold are removed when possible. Undo history belongs to the current window session; it is separate from editor typing undo and is not persisted across restarts.
 
-The feature pack adds a missing `flutter_test` SDK dependency through the same preview. Existing dependency constraints and YAML comments are retained. Use **Pub Get** after applying; it runs visibly in Terminal in the selected package. Dependency resolution and its lockfile changes are a separate operation and are not included in scaffold undo. Single-file templates that need a missing package retain an explicit **Add required package…** action, followed by a fresh preview.
+The feature pack adds a missing `flutter_test` SDK dependency through the same preview. Existing dependency constraints and YAML comments are retained. Use **Pub Get** after applying; it runs visibly in Terminal in the selected package. Dependency resolution and its lockfile changes are a separate operation and are not included in scaffold undo. All templates now declare missing dependencies through the same previewed change plan; use Pub Get after applying.
 
 ## Declarative team packs
 
@@ -56,7 +58,7 @@ files:
       }
 ```
 
-Each output has a package-relative path and inline content. Available variables:
+Each output has a target-relative path and inline content or a pack-relative source file. Schema 1 remains supported; schema 2 adds sibling targets, categories, suffix helpers, compatibility metadata and explicit registration capabilities. Available variables:
 
 | Variable | Value |
 | --- | --- |

@@ -1,0 +1,11 @@
+schema: 2
+id: sparrow.state.inherited_widget
+version: 1.0.0
+title: "InheritedWidget"
+category: state
+target: sibling
+suffix: "_scope"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies: []
