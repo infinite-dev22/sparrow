@@ -1852,7 +1852,7 @@ impl EditorData {
             // Dart fast path — resolve first so we get the full edit
             // (textEdit, additionalTextEdits for auto-imports, detail,
             // documentation).
-            if item.item.data.as_ref().is_some_and(|v| v["sparrowAsset"] == true) {
+            if item.item.data.as_ref().is_some_and(|v| v["sparrowAsset"] == true || v["sparrowYaml"] == true) {
                 if let Err(err) = self.apply_completion_item(&item.item) { tracing::error!("asset completion: {err}"); }
                 return;
             }
@@ -2048,6 +2048,27 @@ impl EditorData {
         };
 
         let offset = self.cursor().with_untracked(|c| c.offset());
+        if crate::doc::yaml_schema::supports(&path) {
+            let source = doc.buffer.with_untracked(|b| b.to_string());
+            if let Some((start, items)) = crate::doc::yaml_schema::completions(&path, &source, offset) {
+                self.common.completion.update(|c| {
+                    c.request_id += 1;
+                    c.status = CompletionStatus::Started;
+                    c.offset = start;
+                    c.path = path.clone();
+                    c.input = source[start..offset].into();
+                    c.filtered_items.clear();
+                    c.input_items.clear();
+                    c.active.set(0);
+                    c.latest_editor_id = Some(self.id());
+                    c.receive_direct(c.request_id, items, PluginId(0));
+                });
+                self.common.completion.get_untracked().update_document_completion(self, offset);
+            } else {
+                self.cancel_completion();
+            }
+            return;
+        }
         if crate::dart::is_dart_path(&path)
             && self.common.workspace.kind
                 == crate::workspace::SparrowWorkspaceType::Local
@@ -2740,6 +2761,14 @@ impl EditorData {
             .filter(|(range, _)| range.start <= offset && range.end >= offset)
             .map(|(_, d)| d.clone())
             .collect();
+        if crate::doc::yaml_schema::supports(&path) {
+            let source = doc.buffer.with_untracked(|b| b.to_string());
+            let actions = if kind.as_deref().is_none_or(|k| "quickfix".starts_with(k)) {
+                crate::doc::yaml_schema::code_actions(&path, &source, position.line)
+            } else { Vec::new() };
+            callback(Ok((PluginId(0), actions)));
+            return;
+        }
         if crate::dart::is_dart_path(&path) {
             if !self.common.dart_lsp.is_available() {
                 callback(Err(

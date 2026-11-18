@@ -1,4 +1,5 @@
 mod yaml;
+pub(crate) mod yaml_schema;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -760,6 +761,7 @@ impl Doc {
                 || doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) != Some(SparrowLanguage::Yaml)
             { return; }
             let text = doc.buffer.with_untracked(|b| b.to_string());
+            let path = doc.content.with_untracked(|c| c.path().cloned());
             let scope = doc.scope;
             let publish = create_ext_action(scope, move |diagnostics| {
                 if doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) == Some(revision)
@@ -769,7 +771,15 @@ impl Doc {
                     doc.init_diagnostics();
                 }
             });
-            rayon::spawn(move || publish(yaml::diagnostics(&text)));
+            rayon::spawn(move || {
+                let mut diagnostics = yaml::diagnostics(&text);
+                if diagnostics.is_empty() {
+                    if let Some(path) = path {
+                        diagnostics.extend(yaml_schema::diagnostics(&path, &text));
+                    }
+                }
+                publish(diagnostics);
+            });
         });
     }
 
