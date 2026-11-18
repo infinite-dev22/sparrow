@@ -79,3 +79,10 @@ or scale override. The compositor reported 1920x1080, 60.052 Hz, scale 1 and
 GNOME denied the automated screenshot API; no Wayland visual screenshot or
 pointer interaction verification is claimed. The preview used temporary app
 settings to avoid changing the user's normal session state.
+
+The final Wayland glow uses a Rust-generated 180×80 opaque image scaled to the
+700×300 backdrop region, with padding clipped out to avoid atlas-edge seams.
+This replaces native gradient brushes that appeared flat in portal captures.
+Active stripe icons keep their blue background for hover and press states.
+The completed native portal verification and pixel samples are documented in
+[the Wayland Project header report](visual-checks/wayland-project-header.md).

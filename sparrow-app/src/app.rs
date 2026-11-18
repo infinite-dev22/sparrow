@@ -3643,12 +3643,7 @@ fn window_tab(
     let project_color = window_tab_data.common.project_color;
     let view = stack((
         stack((
-            floem::views::canvas(move |cx, _| {
-                crate::project_appearance::paint_glow(cx,
-                    config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
-                    project_color.get());
-            }).style(|s| s.absolute().width(700.0).height(300.0)
-                .pointer_events_none()),
+            crate::project_appearance::glow_view(config, project_color),
             title(
                 window_tab_data.clone(),
                 window_tabs,

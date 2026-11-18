@@ -29,7 +29,7 @@ use super::{
     terminal_view::terminal_panel,
 };
 use crate::{
-    app::{clickable_icon, clickable_icon_base},
+    app::clickable_icon_base,
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     file_explorer::view::file_explorer_panel,
     panel::{
@@ -758,17 +758,29 @@ fn stripe_picker(
                     }
                 }
             };
+            let icon_active = is_active.clone();
+            let glyph_active = is_active.clone();
             container(
-                clickable_icon(
-                    || icon,
-                    move || {
-                        window_tab_data.toggle_panel_visual(p);
-                    },
-                    || false,
-                    || false,
-                    move || tooltip,
-                    config,
-                )
+                crate::app::tooltip_label(config,
+                    container(svg(move || config.get().ui_svg(icon))
+                        .style(move |s| s.size(16.0, 16.0).color(
+                            if glyph_active() { floem::peniko::Color::from_rgb8(255,255,255) }
+                            else { config.get().color(SparrowColor::SPARROW_ICON_ACTIVE) })))
+                        .style(move |s| {
+                            let config = config.get();
+                            let active = icon_active();
+                            let blue = config.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND);
+                            s.size(28.0, 28.0).padding(6.0).border_radius(6.0)
+                                .color(if active { floem::peniko::Color::from_rgb8(255,255,255) }
+                                    else { config.color(SparrowColor::SPARROW_ICON_ACTIVE) })
+                                .apply_if(active, |s| s.background(blue))
+                                .hover(|s| s.cursor(CursorStyle::Pointer).background(if active { blue }
+                                    else { config.color(SparrowColor::PANEL_HOVERED_BACKGROUND) }))
+                                .active(|s| s.background(if active { blue }
+                                    else { config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND) }))
+                        })
+                        .on_click_stop(move |_| window_tab_data.toggle_panel_visual(p)),
+                    move || tooltip)
                 .draggable()
                 .on_event_stop(EventListener::DragStart, move |_| {
                     dragging.set(Some(DragContent::Panel(p)));

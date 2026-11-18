@@ -1,6 +1,5 @@
 //! Project identity is a shared backdrop, not separately tinted chrome widgets.
 use std::path::Path;
-use floem::Renderer;
 use crate::app::Color;
 
 const PALETTE: [[u8; 3]; 9] = [
@@ -55,33 +54,45 @@ pub(crate) fn color(root: &Path) -> [u8; 3] {
         });
     PALETTE[hash as usize % PALETTE.len()]
 }
-/// Paint with two-stop linear brushes, supported by both Floem renderers.
-/// Do not use a large SVG here: GPU SVGs share the finite icon texture atlas.
-pub(crate) fn paint_glow(
-    cx: &mut floem::context::PaintCx,
-    base: floem::peniko::Color,
-    accent: Option<[u8; 3]>,
-) {
-    use floem::peniko::{Color, Gradient, kurbo::Rect};
-    let accent = accent.unwrap_or([65, 77, 104]);
-    let base_rgb = base.to_rgba8();
-    // Narrow columns preserve the horizontal fade. Every brush starts at
-    // (0, 0): Vger's two-stop conversion does not preserve nonzero starts.
-    for x in (0..700).step_by(2) {
-        let amount = glow_strength(x as f64 + 1.0, 0.0);
-        let blend = |b: u8, a: u8| {
-            (f64::from(b) + (f64::from(a) - f64::from(b)) * amount).round() as u8
-        };
-        let peak = Color::from_rgb8(
-            blend(base_rgb.r, accent[0]),
-            blend(base_rgb.g, accent[1]),
-            blend(base_rgb.b, accent[2]),
-        );
-        let x = x as f64;
-        cx.fill(&Rect::new(x, 0.0, x + 2.0, 300.0),
-            &Gradient::new_linear((0.0, 0.0), (0.0, 300.0))
-                .with_stops([peak, base]), 0.0);
+/// A small opaque texture avoids backend-specific gradient brushes. It stays
+/// 180x80 even on HiDPI displays; the renderer scales a single cached quad.
+pub(crate) fn glow_image(base: Color, accent: Option<[u8; 3]>) -> floem::peniko::Image {
+    use floem::peniko::{Blob, Image, ImageFormat};
+    const WIDTH: u32 = 180;
+    const HEIGHT: u32 = 80;
+    let mut pixels = Vec::with_capacity((WIDTH * HEIGHT * 4) as usize);
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let point = floem::kurbo::Point::new(
+                (f64::from(x) - 2.0) * 4.0,
+                (f64::from(y) - 2.0) * 4.0);
+            let c = backdrop_color(base, accent, point).to_rgba8();
+            pixels.extend_from_slice(&[c.r, c.g, c.b, 255]);
+        }
     }
+    Image::new(Blob::new(std::sync::Arc::new(pixels)), ImageFormat::Rgba8, WIDTH, HEIGHT)
+}
+
+pub(crate) fn glow_view(
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
+    accent: floem::reactive::RwSignal<Option<[u8; 3]>>,
+) -> impl floem::View {
+    use floem::{View, reactive::SignalGet, views::Decorators};
+    // Img's public view-state update accepts a decoded Peniko image. This
+    // avoids PNG encoding/decoding and regenerates only on appearance changes.
+    let view = floem::views::img(Vec::new);
+    let id = view.id();
+    floem::reactive::create_effect(move |_| {
+        id.update_state(glow_image(
+            config.get().color(crate::config::color::SparrowColor::SPARROW_WINDOW_BACKGROUND),
+            accent.get()));
+    });
+    // Keep the atlas padding outside the visible viewport: sampling the edge
+    // of an atlas allocation otherwise leaves a dark seam at fractional scales.
+    floem::views::clip(view.style(|s| s.absolute().inset_left(-8.0).inset_top(-8.0)
+        .width(720.0).height(320.0)))
+        .style(|s| s.absolute().inset_left(0.0).inset_top(0.0)
+            .width(700.0).height(300.0).pointer_events_none())
 }
 
 /// Color of the shared backdrop at a window-relative point. Corner masks
@@ -112,6 +123,21 @@ fn glow_strength(x: f64, y: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn glow_texture_is_opaque_bounded_and_fades_to_frame() {
+        let base = Color::from_rgb8(38, 40, 44);
+        let image = glow_image(base, Some([224, 130, 61]));
+        assert!(image.width <= 256 && image.height <= 256);
+        let bytes = image.data.data();
+        assert!(bytes.chunks_exact(4).all(|pixel| pixel[3] == 255));
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * image.width as usize + x) * 4;
+            &bytes[offset..offset + 4]
+        };
+        assert!(pixel(24, 2)[0] > 90);
+        assert_eq!(pixel(179, 2), &[38, 40, 44, 255]);
+        assert_eq!(pixel(24, 79), &[38, 40, 44, 255]);
+    }
     #[test]
     fn directional_glow_has_bounded_falloff() {
         assert_eq!(glow_strength(0.0, 0.0), 0.0);
