@@ -1,3 +1,4 @@
+mod yaml;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -91,6 +92,20 @@ pub struct DiagnosticData {
     pub expanded: RwSignal<bool>,
     pub diagnostics: RwSignal<im::Vector<Diagnostic>>,
     pub diagnostics_span: RwSignal<Spans<Diagnostic>>,
+}
+
+impl DiagnosticData {
+    /// A language server update must not erase local YAML parser diagnostics.
+    pub(crate) fn set_external(&self, external: impl IntoIterator<Item = Diagnostic>) {
+        let builtin = self.diagnostics.get_untracked().into_iter().filter(yaml::is_builtin);
+        self.diagnostics.set(external.into_iter().chain(builtin)
+            .sorted_by_key(|diagnostic| diagnostic.range.start).collect());
+    }
+    fn set_yaml(&self, diagnostics: Vec<Diagnostic>) {
+        let external = self.diagnostics.get_untracked().into_iter().filter(|d| !yaml::is_builtin(d));
+        self.diagnostics.set(external.chain(diagnostics)
+            .sorted_by_key(|diagnostic| diagnostic.range.start).collect());
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -479,11 +494,13 @@ impl Doc {
             }
             self.clear_sticky_headers_cache();
         });
+        self.queue_yaml_lint();
     }
 
     /// Set the syntax highlighting this document should use.
     pub fn set_language(&self, language: SparrowLanguage) {
         self.syntax.set(Syntax::from_language(language));
+        self.queue_yaml_lint();
     }
 
     pub fn find(&self) -> &Find {
@@ -713,6 +730,7 @@ impl Doc {
     fn on_update(&self, edits: Option<SmallVec<[SyntaxEdit; 3]>>) {
         batch(|| {
             self.trigger_syntax_change(edits);
+            self.queue_yaml_lint();
             self.trigger_head_change();
             self.check_auto_save();
             self.get_inlay_hints();
@@ -723,6 +741,35 @@ impl Doc {
             self.clear_style_cache();
             self.get_code_lens();
             self.get_folding_range();
+        });
+    }
+
+    fn queue_yaml_lint(&self) {
+        if self.syntax.with_untracked(|s| s.language) != SparrowLanguage::Yaml {
+            if self.diagnostics.diagnostics.with_untracked(|d| d.iter().any(yaml::is_builtin)) {
+                self.diagnostics.set_yaml(vec![]);
+                self.init_diagnostics();
+            }
+            return;
+        }
+        if !self.loaded() { return; }
+        let revision = self.rev();
+        let doc = self.clone();
+        exec_after(Duration::from_millis(150), move |_| {
+            if doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) != Some(revision)
+                || doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) != Some(SparrowLanguage::Yaml)
+            { return; }
+            let text = doc.buffer.with_untracked(|b| b.to_string());
+            let scope = doc.scope;
+            let publish = create_ext_action(scope, move |diagnostics| {
+                if doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) == Some(revision)
+                    && doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) == Some(SparrowLanguage::Yaml)
+                {
+                    doc.diagnostics.set_yaml(diagnostics);
+                    doc.init_diagnostics();
+                }
+            });
+            rayon::spawn(move || publish(yaml::diagnostics(&text)));
         });
     }
 

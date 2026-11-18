@@ -975,12 +975,7 @@ impl WindowTabData {
                                 return;
                             };
                             let data = main_split_apply.get_diagnostic_data(path);
-                            data.diagnostics.set(
-                                diagnostics
-                                    .iter()
-                                    .cloned()
-                                    .collect::<im::Vector<_>>(),
-                            );
+                            data.set_external(diagnostics.iter().cloned());
                             doc.init_diagnostics();
                         }
                         DartNotification::ClosingLabels { path, labels } => {
@@ -3218,8 +3213,7 @@ impl WindowTabData {
 
                 self.main_split
                     .get_diagnostic_data(&path)
-                    .diagnostics
-                    .set(diagnostics);
+                    .set_external(diagnostics);
 
                 // inform the document about the diagnostics
                 if let Some(doc) = self

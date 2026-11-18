@@ -596,7 +596,7 @@ const LANGUAGES: &[SyntaxProperties] = &[
     SyntaxProperties {
         id: SparrowLanguage::Yaml,
         indent: Indent::space(2),
-        files: &[".metadata"],
+        files: &[".metadata", "pubspec.lock"],
         extensions: &["yml", "yaml"],
         comment: comment_properties!("#"),
         tree_sitter: TreeSitterProperties::DEFAULT,
@@ -1020,6 +1020,7 @@ mod tests {
         for (file, language) in [
             ("model.freezed.dart", SparrowLanguage::Dart),
             (".metadata", SparrowLanguage::Yaml),
+            ("pubspec.lock", SparrowLanguage::Yaml),
             (".env", SparrowLanguage::Ini),
             ("local.properties", SparrowLanguage::Ini),
             ("CMakeLists.txt", SparrowLanguage::Cmake),

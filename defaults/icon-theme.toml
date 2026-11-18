@@ -153,6 +153,9 @@ name = "sparrow Modern"
 "mobile_preview" = "sparrow_mobile_preview.svg"
 
 [icon-theme.filename]
+"Makefile" = "filetype-makefile.svg"
+"makefile" = "filetype-makefile.svg"
+"GNUmakefile" = "filetype-makefile.svg"
 "Dockerfile" = "filetype-docker.svg"
 "Dockerfile.*" = "filetype-docker.svg"
 "dockerfile" = "filetype-docker.svg"
@@ -186,6 +189,8 @@ name = "sparrow Modern"
 "GoogleService-Info.plist" = "filetype-plist.svg"
 
 [icon-theme.extension]
+"mk" = "filetype-makefile.svg"
+"mak" = "filetype-makefile.svg"
 "dockerfile" = "filetype-docker.svg"
 "dart" = "dart_logo.svg"
 "g.dart" = "filetype-generated.svg"
