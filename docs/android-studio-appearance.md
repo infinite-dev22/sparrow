@@ -27,3 +27,18 @@ Native before/after captures and interaction results for Dart Analysis, Device M
 Problems, Logcat, and Git History now have separate bottom tool-stripe entries. Their real-data behavior, native captures, validation, and remaining limitations are documented in [the additional tool-window check](visual-checks/tools.md).
 
 Notifications, Pull Requests and Running Devices now use real Dart/Flutter IDE events, GitHub repository data, and Flutter device discovery. Shared file icons distinguish Flutter project file types in Project and editor tabs. See [workflow captures, checks and limitations](visual-checks/workflows.md).
+
+
+Project source, test and excluded scopes now inherit through descendants. The
+`build`, `.dart_tool`, `.idea`, `target`, `.gradle` and `out` scopes carry a muted
+brown background and orange labels/icons; `test` and `integration_test` carry a
+green scope background. Git changes retain their foreground status colors.
+Scope matching uses path components, so `test_helpers` does not inherit `test`.
+
+Project identity is painted once beneath the main workbench. The title bar and
+both tool-window stripes expose this shared radial glow while editor and panel
+surfaces remain opaque. Color comes from `.idea/workspace.xml`'s
+`ProjectColorInfo` (custom hex color or associated palette index), including
+JSON/CDATA and legacy XML representations. Changes refresh through the project
+metadata watcher. Projects without valid color metadata receive a stable
+path-derived palette color; no JetBrains configuration is written.

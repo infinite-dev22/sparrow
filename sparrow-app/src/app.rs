@@ -3640,6 +3640,7 @@ fn window_tab(
     let modal_open =
         move || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || git_modal.get();
 
+    let project_color = window_tab_data.common.project_color;
     let view = stack((
         stack((
             title(
@@ -3665,9 +3666,9 @@ fn window_tab(
             window_origin.set(point);
         })
         .style(move |s| {
-            s.size_full().flex_col().background(
-                config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
-            )
+            s.size_full().flex_col().background(crate::project_appearance::backdrop(
+                config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND), project_color.get(),
+            ))
         })
         .disabled(modal_open)
         .debug_name("Base Layer"),

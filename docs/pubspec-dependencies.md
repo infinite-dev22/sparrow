@@ -22,11 +22,34 @@ compatibility, and Flutter's lower-bound-only SDK constraints.
 
 **Alt+Enter** offers version changes for invalid/unavailable constraints and newer
 SDK-compatible releases. Changes use the revision-checked diff preview and normal
-undo; files are not saved automatically. No package installation runs implicitly.
+undo; files are not saved automatically.
 
-These are conservative SDK/direct-dependency checks, not a transitive dependency
-solver or a guarantee of source/API compatibility. Run **Pub Get** after choosing
-versions to perform complete resolution. Path, Git, SDK and custom-hosted
-packages are excluded from public-registry checks. A custom `PUB_HOSTED_URL`
+The IDE also runs the selected SDK's Pub solver against an isolated copy of the
+manifest graph. This includes local path packages, workspace members and
+`pubspec_overrides.yaml`, using the active unsaved pubspec and saved sibling
+manifests. It does not write the source project's manifests, lockfile or
+`.dart_tool`; Pub may populate its shared download cache.
+
+On a conflict, the inline error retains Pub's causal dependency explanation.
+The IDE asks `pub outdated --json` for a coordinated set of resolvable versions,
+then runs another `pub upgrade --dry-run` with precisely the proposed edits.
+Only a successful second solve yields a **Pub-verified compatible versions**
+quick fix. If a version-only repair cannot be verified, the conflict explanation
+remains available. Local path package constraints and SDK requirements may need
+manual changes. Version compatibility does not guarantee source/API compatibility.
+
+Pub-backed fixes use the same diff preview and linked undo across workspace
+manifests. The IDE rejects stale fixes when a dependency manifest, override,
+lockfile, SDK-selection setting or relevant open buffer has changed. Save sibling
+manifest edits and edit/reload the active pubspec to refresh a check.
+
+Checks debounce while typing, cancel superseded processes, cap output and graph
+size, and time out after 90 seconds of Pub work. Results are cached briefly;
+missing SDKs, network errors and timeouts are reported as unavailable checks,
+rather than successful resolution. **Pub Get** remains the explicit action that
+writes package resolution into the project.
+
+Path, Git, SDK and custom-hosted packages are excluded from public-registry
+lookups, but are included in the actual Pub solve. A custom `PUB_HOSTED_URL`
 disables default pub.dev lookups; an explicit pub.dev hosted source can still be
-checked.
+checked. The selected SDK and existing Pub authentication/cache are respected.

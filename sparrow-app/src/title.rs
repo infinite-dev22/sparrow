@@ -875,14 +875,7 @@ pub fn title(
             .height(config.ui.header_height().max(38) as f32)
             .flex_shrink(0.0_f32)
             .items_center()
-            .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
-            .background(
-                floem::peniko::Gradient::new_linear((0.0, 0.0), (620.0, 32.0))
-                    .with_stops([
-                        Color::from_rgb8(0x41, 0x4D, 0x68),
-                        config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
-                    ]),
-            )
+            .background(Color::TRANSPARENT)
     })
     .debug_name("Title / Top Bar")
 }

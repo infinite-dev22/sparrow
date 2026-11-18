@@ -791,7 +791,11 @@ impl Doc {
                         diagnostics.extend(yaml_schema::diagnostics(path, &text));
                     }
                 }
-                publish(diagnostics.clone());
+                let mut immediate = diagnostics.clone();
+                if syntax_valid && path.as_ref().is_some_and(|p| p.file_name().is_some_and(|n| n == "pubspec.yaml")) {
+                    immediate.push(Diagnostic { range: Default::default(), severity: Some(lsp_types::DiagnosticSeverity::HINT), source: Some(yaml::SOURCE.into()), message: "Pub is checking the complete dependency graph…".into(), ..Default::default() });
+                }
+                publish(immediate);
                 if syntax_valid {
                     if let Some(path) = path {
                         diagnostics.extend(pubdev::diagnostics(&path, &text, || atomic_revision.load(atomic::Ordering::Acquire) != revision));

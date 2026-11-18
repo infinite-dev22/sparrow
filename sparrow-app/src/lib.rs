@@ -33,6 +33,7 @@ pub mod plugin;
 pub mod proxy;
 pub mod rename;
 pub mod workspace_undo;
+pub(crate) mod project_appearance;
 pub mod settings;
 pub mod snippet;
 pub mod source_control;

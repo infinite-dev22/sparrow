@@ -1,7 +1,7 @@
-//! pub.dev completion and conservative dependency checks, all off the UI thread.
-//! Pub remains authoritative for transitive solving; this module never runs pub
-//! or writes a manifest/lockfile. It uses only public, documented registry APIs.
+//! Registry completion and SDK/direct checks, augmented by isolated Pub solves.
+//! All work runs off the UI thread; workspace edits are previewed and undoable.
 mod constraint;
+pub(crate) mod solver;
 use super::yaml_schema::{self, Part};
 use constraint::Constraint;
 use lsp_types::{
@@ -817,26 +817,18 @@ pub(crate) fn diagnostics(
     let Ok(doc) = serde_yaml::from_str::<Yaml>(text) else {
         return vec![];
     };
-    if dependencies(&doc).is_empty() || cancelled() {
-        return vec![];
-    }
-    let env = environment(&doc, path.parent().unwrap_or(Path::new(".")));
-    reports(&doc, text, &env, |name| {
-        if cancelled() {
-            Err(())
-        } else {
-            REGISTRY.package(name)
-        }
-    })
-    .into_iter()
-    .map(|r| Diagnostic {
-        range: r.range,
-        message: r.message,
-        severity: Some(r.severity),
-        source: Some(super::yaml::SOURCE.into()),
-        ..Default::default()
-    })
-    .collect()
+    if cancelled() { return vec![]; }
+    let mut diagnostics = if dependencies(&doc).is_empty() { vec![] } else {
+        let env = environment(&doc, path.parent().unwrap_or(Path::new(".")));
+        reports(&doc, text, &env, |name| {
+            if cancelled() { Err(()) } else { REGISTRY.package(name) }
+        }).into_iter().map(|r| Diagnostic {
+            range: r.range, message: r.message, severity: Some(r.severity),
+            source: Some(super::yaml::SOURCE.into()), ..Default::default()
+        }).collect::<Vec<_>>()
+    };
+    diagnostics.extend(solver::diagnostics(path, text, &cancelled));
+    diagnostics
 }
 pub(crate) fn code_actions(
     path: &Path,
@@ -846,6 +838,7 @@ pub(crate) fn code_actions(
     if !is_pubspec(path) {
         return vec![];
     }
+    if let Some(actions) = solver::code_actions(path, text) { return actions; }
     let Ok(doc) = serde_yaml::from_str::<Yaml>(text) else {
         return vec![];
     };

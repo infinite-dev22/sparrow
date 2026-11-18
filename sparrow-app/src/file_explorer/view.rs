@@ -160,7 +160,12 @@ fn file_node_text_color(
         }
         Some(FileDiffKind::Added) => SparrowColor::SOURCE_CONTROL_ADDED,
         Some(FileDiffKind::Deleted) => SparrowColor::SOURCE_CONTROL_REMOVED,
-        None => SparrowColor::PANEL_FOREGROUND,
+        None => {
+            if node.kind.path().and_then(|path| super::project::role(path, source_control.common.workspace.path.as_deref())) == Some("excluded") {
+                return Color::from_rgb8(184, 133, 88);
+            }
+            SparrowColor::PANEL_FOREGROUND
+        },
     };
 
     config.get().color(color)
@@ -218,7 +223,7 @@ fn file_node_text_view(
                     }),
                 ))
             } else {
-                let platform = node.is_dir && super::project::role(&path, data.common.workspace.path.as_deref()) == Some("platform");
+                let platform = node.is_dir && path.parent() == data.common.workspace.path.as_deref() && super::project::role(&path, data.common.workspace.path.as_deref()) == Some("platform");
                 container(
                     label(move || {
                         project_info

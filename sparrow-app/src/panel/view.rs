@@ -704,7 +704,7 @@ pub fn tool_window_stripe(
             .height_pct(100.0)
             .flex_shrink(0.0f32)
             .padding_vert(2.0)
-            .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND)) // Blends with title bar
+            .background(floem::peniko::Color::TRANSPARENT) // Reveal the shared project backdrop.
             .apply_if(is_left, |s| s.margin_right(-1.0)) // Tighten gap
             .apply_if(!is_left, |s| s.margin_left(-1.0))
     })

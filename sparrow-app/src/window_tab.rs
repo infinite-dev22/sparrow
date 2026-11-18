@@ -142,6 +142,7 @@ pub struct WorkProgress {
 
 #[derive(Clone)]
 pub struct CommonData {
+    pub project_color: RwSignal<Option<[u8; 3]>>,
     pub document_views: RwSignal<BTreeMap<PathBuf, String>>,
     pub bookmarks: RwSignal<BTreeMap<PathBuf, std::collections::BTreeSet<usize>>>,
     pub workspace_undo: crate::workspace_undo::SharedHistory,
@@ -426,6 +427,7 @@ impl WindowTabData {
             cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
 
         let common = Rc::new(CommonData {
+            project_color: cx.create_rw_signal(None),
             document_views: cx.create_rw_signal(workspace_info.as_ref().map(|info|info.document_views.clone()).unwrap_or_default()),
             bookmarks: cx.create_rw_signal(workspace_info.as_ref().map(|info|info.bookmarks.clone()).unwrap_or_default()),
             workspace_undo: Default::default(),

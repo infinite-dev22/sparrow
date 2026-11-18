@@ -345,6 +345,9 @@ fn install(window: Rc<WindowTabData>, request_scope: Rc<RefCell<Option<Scope>>>)
     });
 }
 pub fn apply(window: &WindowTabData, prepared: Prepared) -> Result<(), String> {
+    crate::doc::pubdev::solver::validate_action_buffers(&prepared.action, |path| {
+        window.main_split.docs.with_untracked(|docs| docs.get(path).filter(|doc| doc.loaded()).map(|doc| doc.buffer.with_untracked(|buffer| buffer.to_string())))
+    })?;
     if let Some((path, rev)) = &prepared.origin {
         if window.main_split.docs.with_untracked(|docs| {
             docs.get(path).is_none_or(|doc| doc.rev() != *rev)

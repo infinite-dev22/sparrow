@@ -23,6 +23,7 @@ use std::{
 
 #[derive(Clone, Default, PartialEq)]
 pub struct ProjectInfo {
+    pub accent: Option<[u8; 3]>,
     pub flutter: bool,
     pub modules: BTreeMap<PathBuf, String>,
     libraries: Vec<Entry>,
@@ -100,10 +101,12 @@ pub use watch::LibraryWatch;
 
 pub fn load(common: Rc<CommonData>) -> (RwSignal<ProjectInfo>, watch::ProjectWatch) {
     let info = create_rw_signal(ProjectInfo::default());
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = std::sync::mpsc::channel::<ProjectInfo>();
     let updates = floem::ext_event::create_signal_from_channel(rx);
+    let project_color = common.project_color;
     floem::reactive::create_effect(move |_| {
         if let Some(value) = updates.get() {
+            project_color.set(value.accent);
             info.set(value);
         }
     });
@@ -132,8 +135,9 @@ pub fn node_label(path: &Path, info: &ProjectInfo) -> String {
 }
 pub fn role(path: &Path, root: Option<&Path>) -> Option<&'static str> {
     let relative = path.strip_prefix(root?).ok()?;
-    match relative.to_str()? {
-        ".dart_tool" | "build" | "target" | ".gradle" | "out" => Some("excluded"),
+    let first = relative.components().next()?.as_os_str().to_str()?;
+    match first {
+        ".dart_tool" | ".idea" | "build" | "target" | ".gradle" | "out" => Some("excluded"),
         "lib" => Some("source"),
         "test" | "integration_test" => Some("test"),
         "android" | "ios" | "macos" | "linux" | "windows" | "web" => Some("platform"),
@@ -569,11 +573,22 @@ mod tests {
         assert_eq!(rows[1].path, PathBuf::from("/local/lib/"));
     }
     #[test]
-    fn recognizes_only_top_level_flutter_roles() {
+    fn top_level_roles_determine_descendant_scope() {
         assert_eq!(
             role(Path::new("/p/build"), Some(Path::new("/p"))),
             Some("excluded")
         );
-        assert_eq!(role(Path::new("/p/lib/build"), Some(Path::new("/p"))), None);
+        assert_eq!(role(Path::new("/p/lib/build"), Some(Path::new("/p"))), Some("source"));
+    }
+}
+
+#[cfg(test)] mod inherited_role_tests {
+    use super::*;
+    #[test] fn roles_propagate_by_path_component_without_leaking_to_similar_names() {
+        let root = Path::new("/project");
+        for (path, expected) in [("build/cache/deep/output.bin",Some("excluded")),(".idea/caches/index",Some("excluded")),("test/features/widget_test.dart",Some("test")),("lib/features/model.dart",Some("source")),("test_helpers/file.dart",None),("buildable/file.dart",None)] {
+            assert_eq!(role(&root.join(path), Some(root)), expected);
+        }
+        assert_eq!(role(Path::new("/elsewhere/test/file.dart"),Some(root)),None);
     }
 }
