@@ -888,59 +888,7 @@ impl Plan {
         let Some(c) = self.changes.get(index) else {
             return "No changes. This scaffold is already applied.".into();
         };
-        let path = c.path.strip_prefix(&self.root).unwrap_or(&c.path).display();
-        let before = c.before.as_deref().unwrap_or("");
-        let after = c.after.as_deref().unwrap_or("");
-        let mut diff = format!(
-            "--- {}\n+++ {}\n",
-            if c.before.is_some() {
-                path.to_string()
-            } else {
-                "/dev/null".into()
-            },
-            if c.after.is_some() {
-                path.to_string()
-            } else {
-                "/dev/null".into()
-            }
-        );
-        let before: Vec<_> = before.lines().collect();
-        let after: Vec<_> = after.lines().collect();
-        let prefix = before
-            .iter()
-            .zip(&after)
-            .take_while(|(a, b)| a == b)
-            .count();
-        let suffix = before[prefix..]
-            .iter()
-            .rev()
-            .zip(after[prefix..].iter().rev())
-            .take_while(|(a, b)| a == b)
-            .count();
-        let start = prefix.saturating_sub(3);
-        let tail = suffix.min(3);
-        let old_end = before.len() - suffix;
-        let new_end = after.len() - suffix;
-        diff.push_str(&format!(
-            "@@ -{},{} +{},{} @@\n",
-            if before.is_empty() { 0 } else { start + 1 },
-            old_end + tail - start,
-            if after.is_empty() { 0 } else { start + 1 },
-            new_end + tail - start
-        ));
-        for line in &before[start..prefix] {
-            diff.push_str(&format!(" {line}\n"));
-        }
-        for line in &before[prefix..old_end] {
-            diff.push_str(&format!("-{line}\n"));
-        }
-        for line in &after[prefix..new_end] {
-            diff.push_str(&format!("+{line}\n"));
-        }
-        for line in &after[new_end..new_end + tail] {
-            diff.push_str(&format!(" {line}\n"));
-        }
-        diff
+        change_diff(&self.root, c)
     }
     pub fn apply(&self) -> Result<Applied, String> {
         self.validate()?;
@@ -1122,6 +1070,63 @@ mod failure_tests {
         assert!(!root.join("second.dart").exists());
     }
 }
+/// Unified diff shared by disk transactions and in-memory template actions.
+pub(crate) fn change_diff(root: &Path, c: &Change) -> String {
+    let path = c.path.strip_prefix(root).unwrap_or(&c.path).display();
+    let before = c.before.as_deref().unwrap_or("");
+    let after = c.after.as_deref().unwrap_or("");
+    let mut diff = format!(
+        "--- {}\n+++ {}\n",
+        if c.before.is_some() {
+            path.to_string()
+        } else {
+            "/dev/null".into()
+        },
+        if c.after.is_some() {
+            path.to_string()
+        } else {
+            "/dev/null".into()
+        }
+    );
+    let before: Vec<_> = before.lines().collect();
+    let after: Vec<_> = after.lines().collect();
+    let prefix = before
+        .iter()
+        .zip(&after)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = before[prefix..]
+        .iter()
+        .rev()
+        .zip(after[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let start = prefix.saturating_sub(3);
+    let tail = suffix.min(3);
+    let old_end = before.len() - suffix;
+    let new_end = after.len() - suffix;
+    diff.push_str(&format!(
+        "@@ -{},{} +{},{} @@\n",
+        if before.is_empty() { 0 } else { start + 1 },
+        old_end + tail - start,
+        if after.is_empty() { 0 } else { start + 1 },
+        new_end + tail - start
+    ));
+    for line in &before[start..prefix] {
+        diff.push_str(&format!(" {line}\n"));
+    }
+    for line in &before[prefix..old_end] {
+        diff.push_str(&format!("-{line}\n"));
+    }
+    for line in &after[prefix..new_end] {
+        diff.push_str(&format!("+{line}\n"));
+    }
+    for line in &after[new_end..new_end + tail] {
+        diff.push_str(&format!(" {line}\n"));
+    }
+    diff
+}
+
 impl Applied {
     pub fn undo_plan(&self) -> Plan {
         Plan { root:self.plan.root.clone(),title:format!("Undo {}",self.plan.title),notes:vec!["Removes generated files and restores edited files only if they still match the applied scaffold.".into()],changes:self.plan.changes.iter().map(|c|Change{path:c.path.clone(),before:c.after.clone(),after:c.before.clone()}).collect(),inputs:vec![] }

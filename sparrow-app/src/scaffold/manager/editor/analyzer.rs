@@ -1,4 +1,5 @@
 //! Rendered, in-memory Dart overlays in a separate server. Project buffers are untouched.
+pub(super) mod actions;
 use super::{Draft, engine, language};
 use crate::dart::lsp::{DartLspService, Notification};
 use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate};
@@ -255,6 +256,7 @@ impl Projection {
 #[derive(Clone, Debug)]
 pub(super) struct Snapshot {
     version: i64,
+    sample: String,
     root: PathBuf,
     files: BTreeMap<PathBuf, Projection>,
     symbols: BTreeMap<String, String>,
@@ -359,6 +361,7 @@ impl Snapshot {
         );
         Ok(Self {
             version,
+            sample: sample.to_string(),
             root: draft.ctx.root.clone(),
             files,
             symbols,
@@ -589,6 +592,8 @@ pub(super) struct Session {
     snapshot: RwSignal<Option<Snapshot>>,
     pub diagnostics: RwSignal<Vec<language::Diagnostic>>,
     published: RefCell<BTreeMap<PathBuf, Vec<language::Diagnostic>>>,
+    raw_diagnostics: RefCell<BTreeMap<PathBuf, Vec<lsp_types::Diagnostic>>>,
+    pub actions: actions::State,
     opened: RefCell<Vec<PathBuf>>,
     request: RwSignal<u64>,
     alive: std::cell::Cell<bool>,
@@ -611,6 +616,8 @@ impl Session {
             snapshot: scope.create_rw_signal(None),
             diagnostics: scope.create_rw_signal(vec![]),
             published: RefCell::new(BTreeMap::new()),
+            raw_diagnostics: RefCell::new(BTreeMap::new()),
+            actions: actions::State::new(scope),
             opened: RefCell::new(vec![]),
             request: scope.create_rw_signal(0),
             alive: std::cell::Cell::new(true),
@@ -658,6 +665,7 @@ impl Session {
                         let Some(p) = snapshot.files.get(&path) else {
                             return;
                         };
+                        target.raw_diagnostics.borrow_mut().insert(path.clone(), diagnostics.clone());
                         let mapped = diagnostics
                             .into_iter()
                             .filter_map(|d| {
@@ -729,6 +737,8 @@ impl Session {
         self.request.update(|n| *n += 1);
         self.snapshot.set(None);
         self.published.borrow_mut().clear();
+        self.raw_diagnostics.borrow_mut().clear();
+        self.actions.clear();
         self.diagnostics.set(vec![]);
     }
     pub fn update(&self, draft: &Draft, sample: &str, version: u64) {
@@ -766,6 +776,7 @@ impl Session {
         // View cleanup may already have disposed the editor's cursor signals.
         // Do not publish diagnostics or wake its effects during teardown.
         self.published.borrow_mut().clear();
+        self.raw_diagnostics.borrow_mut().clear();
         for path in self.opened.borrow_mut().drain(..) {
             self.service.send_close(path);
         }
@@ -971,7 +982,7 @@ mod tests {
         fs,
         time::{Duration, Instant},
     };
-    fn fixture(body: &str) -> (tempfile::TempDir, Draft) {
+    pub(super) fn fixture(body: &str) -> (tempfile::TempDir, Draft) {
         let root = tempfile::tempdir().unwrap();
         fs::write(
             root.path().join("pubspec.yaml"),

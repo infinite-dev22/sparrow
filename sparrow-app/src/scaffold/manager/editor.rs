@@ -233,6 +233,83 @@ fn accept_completion(
         id.request_focus();
     }
 }
+fn action_controls(
+    session: Rc<analyzer::Session>, draft: RwSignal<Option<Draft>>, selected: RwSignal<PathBuf>,
+    documents: Rc<RefCell<BTreeMap<PathBuf, Rc<TextDocument>>>>, handle: Rc<RefCell<Option<Editor>>>,
+    plan: RwSignal<Option<engine::Plan>>, error: RwSignal<String>, focus: &crate::modal_focus::ModalFocus,
+) -> impl View + use<> {
+    let actions=session.actions.clone();
+    let list=actions.list;
+    let preview=actions.preview;
+    let undo=actions.undo;
+    let message=actions.message;
+    let request_session=session.clone();
+    let request_handle=handle.clone();
+    let apply_session=session.clone();
+    let apply_documents=documents.clone();
+    let apply_handle=handle.clone();
+    let undo_session=session.clone();
+    let cancel=actions.clone();
+    let row_focus=focus.clone();
+    stack((
+        stack((
+            focus.control(label(||"Dart Actions…  Alt+Enter").on_click_stop(move |_| {
+                plan.set(None);
+                if let Some(ed)=request_handle.borrow().as_ref() { request_session.request_actions(ed,selected); }
+                else {message.set("Open a Dart template first.".into());}
+            })),
+            focus.control_if(label(||"Apply Action").disabled(move ||preview.get().is_none()).on_click_stop(move |_| {
+                match apply_session.apply_action(draft,&apply_documents.borrow(),plan,false) {
+                    Ok(())=>{
+                        error.set(String::new());
+                        if let Some(ed)=apply_handle.borrow().as_ref() {
+                            let text=ed.doc().text().to_string();
+                            ed.cursor.update(|c| {
+                                let mut offset=c.offset().min(text.len());
+                                while !text.is_char_boundary(offset) {offset-=1;}
+                                c.set_offset(offset,false,false);
+                            });
+                            if let Some(id)=ed.editor_view_id.get_untracked() {id.request_focus();}
+                            ed.editor_view_focused.notify();
+                        }
+                    }
+                    Err(e)=>error.set(e),
+                }
+            }),move ||preview.get_untracked().is_some()),
+            focus.control_if(label(||"Undo Action").disabled(move ||undo.get().is_none()).on_click_stop(move |_| {
+                match undo_session.apply_action(draft,&documents.borrow(),plan,true) {
+                    Ok(())=>{
+                        error.set(String::new());
+                        if let Some(ed)=handle.borrow().as_ref() {
+                            let text=ed.doc().text().to_string();
+                            ed.cursor.update(|c| {
+                                let mut offset=c.offset().min(text.len());
+                                while !text.is_char_boundary(offset) {offset-=1;}
+                                c.set_offset(offset,false,false);
+                            });
+                            if let Some(id)=ed.editor_view_id.get_untracked() {id.request_focus();}
+                            ed.editor_view_focused.notify();
+                        }
+                    }
+                    Err(e)=>error.set(e),
+                }
+            }),move ||undo.get_untracked().is_some()),
+            focus.control(label(||"Cancel Action").on_click_stop(move |_|cancel.clear())),
+        )).style(|s|s.gap(18.0).height(24.0).items_center()),
+        label(move ||message.get()).style(|s|s.font_size(12.0)),
+        scroll(dyn_stack(move ||list.get().into_iter().enumerate().collect::<Vec<_>>(),
+            |(index,action)|(*index,action.title.clone()),move |(_,choice)| {
+                let session=session.clone();
+                let enabled=choice.disabled.is_none();
+                let title=if let Some(reason)=&choice.disabled{format!("{} · {reason}",choice.title)}else{format!("{} · Preview…",choice.title)};
+                row_focus.control_if(label(move ||title.clone()).disabled(move ||!enabled)
+                    .on_click_stop(move |_|session.preview_action(&choice,draft))
+                    .style(|s|s.padding(3.0).width_full()),move ||enabled)
+            }).style(|s|s.flex_col().width_full()))
+            .style(move |s|s.width_full().max_height(86.0).apply_if(list.get().is_empty(),|s|s.hide())),
+    )).style(|s|s.flex_col().width_full().gap(3.0))
+}
+
 pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     let parent = window.scaffold.clone();
     let state = parent.manager.editor.clone();
@@ -356,6 +433,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     let editor_focus = focus.clone();
     let documents =
         Rc::new(RefCell::new(BTreeMap::<PathBuf, Rc<TextDocument>>::new()));
+    let action_bar = action_controls(analyzer.clone(),draft,selected,documents.clone(),active_editor.clone(),plan,error,&focus);
     let editor_scope = Scope::current();
     let text_editor_handle = active_editor.clone();
     let text_analyzer = analyzer.clone();
@@ -402,6 +480,16 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             let editor = text_editor_keys("",move |editor_signal,keypress,modifiers| {
                 let ed = editor_signal.get_untracked();
                 let key = match &keypress.key {KeyInput::Keyboard(key,_)=>Some(key),_=>None};
+                if matches!(key,Some(Key::Named(NamedKey::Escape))) && (!key_analyzer.actions.list.get_untracked().is_empty() || key_analyzer.actions.preview.get_untracked().is_some()) {
+                    key_analyzer.actions.clear();
+                    return CommandExecuted::Yes;
+                }
+                if modifiers.contains(Modifiers::ALT) && matches!(key,Some(Key::Named(NamedKey::Enter))) {
+                    plan.set(None);
+                    suggestions.set(vec![]);
+                    key_analyzer.request_actions(&ed,selected);
+                    return CommandExecuted::Yes;
+                }
                 let explicit = modifiers.contains(Modifiers::CONTROL)
                     && (matches!(key,Some(Key::Named(NamedKey::Space))) || matches!(key,Some(Key::Character(c)) if c.as_str()==" "));
                 if explicit {
@@ -603,6 +691,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         diagnostic_rows,
     ))
     .style(|s| s.flex_col().flex_grow(1.0_f32).min_width(0.0).height_full());
+    let action_preview = analyzer.actions.preview;
     let output = scroll(
         dyn_stack(
             move || {
@@ -624,6 +713,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                             .join("\n")
                     );
                 }
+                if let Some(preview) = action_preview.get() { text = preview.diff(); }
                 let mut lines = text
                     .lines()
                     .take(2000)
@@ -636,8 +726,12 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             },
             |(i, s)| (*i, s.clone()),
             move |(_, text)| {
+                let added=text.starts_with('+') && !text.starts_with("+++");
+                let removed=text.starts_with('-') && !text.starts_with("---");
                 label(move || text.clone()).style(move |s| {
-                    s.height(20.0)
+                    s.apply_if(action_preview.get().is_some() && added,|s|s.color(config.get().color(SparrowColor::SOURCE_CONTROL_ADDED)))
+                        .apply_if(action_preview.get().is_some() && removed,|s|s.color(config.get().color(SparrowColor::SOURCE_CONTROL_REMOVED)))
+                        .height(20.0)
                         .padding_horiz(6.0)
                         .font_family(config.get().editor.font_family.clone())
                         .font_size(12.0)
@@ -652,6 +746,8 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     let save_window = window.clone();
     let apply_window = window.clone();
     let discard_window = window.clone();
+    let save_actions=analyzer.actions.clone();
+    let generated_actions=analyzer.actions.clone();
     let body = stack((
         label(move ||format!("Template Editor{}",if draft.get().is_some_and(|d|d.dirty()) {" · Unsaved draft"} else {""}))
             .style(|s|s.font_bold()),
@@ -663,6 +759,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             label(move ||match rendered.get() {Ok(files)=>format!("Pack valid · {} generated files",files.len()),Err(e)=>e})
                 .style(move |s|s.flex_grow(1.0_f32).min_width(0.0).apply_if(rendered.get().is_err(),|s|s.color(config.get().color(SparrowColor::SPARROW_ERROR)))) ,
         )).style(|s|s.gap(12.0).items_center()),
+        action_bar,
         stack((files,code_panel,output)).style(|s|s.width_full().height(430.0).gap(10.0)),
         stack((
             focus.input(new_file).style(|s|s.width(270.0).height(28.0)),
@@ -680,6 +777,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         label(move ||error.get()).style(|s|s.width_full()),
         stack((
             focus.control(label(||"Preview Save").on_click_stop(move |_| {
+                save_actions.clear();
                 let result = draft.get_untracked().ok_or("No draft".into()).and_then(|d|d.save_plan(&sample.get_untracked()));
                 save_window.scaffold.undoing.set(false);
                 stage(&save_window,result);
@@ -692,7 +790,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                     error.set("Template saved. Undo Last Change is available in the manager.".into());
                 }
             })),
-            focus.control(label(||"Generated Preview").on_click_stop(move |_|plan.set(None))),
+            focus.control(label(||"Generated Preview").on_click_stop(move |_| {generated_actions.clear();plan.set(None);} )),
             focus.control(label(||"Back to Manager").on_click_stop(move |_| {plan.set(None);open.set(false);})),
             focus.control(label(||"Discard Draft").on_click_stop(move |_| {
                 draft.set(None);plan.set(None);open.set(false);

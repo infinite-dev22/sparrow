@@ -79,6 +79,19 @@ This integration follows the [Dart language-server method support](https://githu
 
 Analyzer verification: 319 application tests passed, with 10 SDK-dependent tests ignored in the ordinary run. The explicit Dart 3.14.0 test passed for real assignment diagnostics, type-aware member completion, resolved auto-import edits and no generated project writes. Native desktop checks exercised diagnostic source locations, completion insertion and undo, diagnostic clearing after corrections, sample-name changes, preview/apply save, and close/reopen with private-server shutdown.
 
+## Dart quick fixes and code actions
+
+Open a file-backed Dart template, place the caret at a diagnostic (or select code), then press **Alt+Enter** or choose **Dart Actions…**. Clicking a diagnostic first moves the caret to its source location. The analyzer returns applicable quick fixes and assists; preferred actions appear first. Select an action to show a colored unified diff of the **template sources** in the right pane. Previewing never edits buffers or disk. **Cancel Action** dismisses the list and diff.
+
+**Apply Action** changes the in-memory draft after checking its revision, sample and every source buffer against the preview. A fix may affect several template source files; all edits are preflighted before any are applied. Each affected open buffer receives one native undo operation, so **Ctrl+Z** undoes that file's part. **Undo Action** restores every file from the last applied action together, provided none of those files has changed afterward. Later edits are preserved by refusing a conflicting grouped undo. The existing **Preview Save / Apply Save** workflow persists the corrected template pack; the manager's **Undo Last Change…** reverses a saved pack transaction.
+
+Changing template text, metadata or the sample invalidates the action list and preview. Late replies and stale document versions are ignored, overlapping/invalid edits are rejected, and requests have a timeout. Known generated identifiers in new text are restored to template variables. An action that replaces a placeholder or a rewritten import URI requires manual editing. Inline YAML content can still show analyzer diagnostics, but applying fixes requires moving that content into a source file. A source reused by several generated outputs cannot be fixed automatically because its analysis context is ambiguous.
+
+Only previewable text edits to this template's private overlays are accepted. File creation/rename/deletion, edits to ordinary project files, additional confirmation annotations and actions requiring executable server commands are refused with an explanation. [Dart attaches an optional analytics command to inline fixes](https://github.com/dart-lang/sdk/blob/main/pkg/analysis_server/lib/src/lsp/handlers/code_actions/abstract_code_actions_producer.dart); Sparrow omits that logging command while using the complete text edit. No server commands run, no dependencies are installed, and generated application files remain untouched.
+
+
+Quick-fix verification: 326 application tests passed (11 SDK-dependent checks ignored in the ordinary run). Both explicit Dart 3.14.0 analyzer tests passed, covering real type fixes, regenerated diagnostics, completions/imports, draft apply/undo, and no generated project writes. Native desktop checks exercised Alt+Enter, the colored template-source diff, Apply Action, immediate Ctrl+Z, Undo Action, sample-change invalidation, and private-session cleanup.
+
 ## Schema 2 example
 
 ```yaml
