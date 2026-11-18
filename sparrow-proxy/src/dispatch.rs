@@ -138,7 +138,8 @@ impl ProxyHandler for Dispatcher {
                         }
                     }
                 } else {
-                    self.buffers.remove(&path);
+                    // Keep the mirror so unsaved editor contents can recreate
+                    // an externally deleted file on Save.
                     self.core_rpc.open_file_changed(path, FileChanged::Delete);
                 }
             }
@@ -916,7 +917,13 @@ impl ProxyHandler for Dispatcher {
                 path,
                 create_parents,
             } => {
-                let buffer = self.buffers.get_mut(&path).unwrap();
+                let Some(buffer) = self.buffers.get_mut(&path) else {
+                    self.respond_rpc(id, Err(RpcError {
+                        code: 0,
+                        message: format!("Cannot save {}: buffer is no longer open", path.display()),
+                    }));
+                    return;
+                };
                 let result = buffer
                     .save(rev, create_parents)
                     .map(|_r| {

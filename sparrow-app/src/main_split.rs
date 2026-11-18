@@ -96,18 +96,17 @@ impl SplitContent {
         }
     }
 
-    pub fn content_info(&self, data: &WindowTabData) -> SplitContentInfo {
-        match &self {
+    pub fn content_info(&self, data: &WindowTabData) -> Option<SplitContentInfo> {
+        Some(match &self {
             SplitContent::EditorTab(editor_tab_id) => {
                 let editor_tab_data = data
                     .main_split
                     .editor_tabs
                     .get_untracked()
                     .get(editor_tab_id)
-                    .cloned()
-                    .unwrap();
+                    .cloned()?;
                 SplitContentInfo::EditorTab(
-                    editor_tab_data.get_untracked().tab_info(data),
+                    editor_tab_data.get_untracked().tab_info(data)?,
                 )
             }
             SplitContent::Split(split_id) => {
@@ -116,11 +115,10 @@ impl SplitContent {
                     .splits
                     .get_untracked()
                     .get(split_id)
-                    .cloned()
-                    .unwrap();
-                SplitContentInfo::Split(split_data.get_untracked().split_info(data))
+                    .cloned()?;
+                SplitContentInfo::Split(split_data.get_untracked().split_info(data)?)
             }
-        }
+        })
     }
 }
 
@@ -206,15 +204,15 @@ impl SplitContentInfo {
 }
 
 impl SplitData {
-    pub fn split_info(&self, data: &WindowTabData) -> SplitInfo {
-        SplitInfo {
+    pub fn split_info(&self, data: &WindowTabData) -> Option<SplitInfo> {
+        Some(SplitInfo {
             direction: self.direction,
             children: self
                 .children
                 .iter()
                 .map(|(_, child)| child.content_info(data))
-                .collect(),
-        }
+                .collect::<Option<Vec<_>>>()?,
+        })
     }
 
     pub fn editor_tab_index(&self, editor_tab_id: EditorTabId) -> Option<usize> {
@@ -2525,30 +2523,23 @@ impl MainSplitData {
                 doc.handle_file_changed(Rope::from(content));
             }
             FileChanged::Delete => {
-                if self.docs.with_untracked(|x| x.get(path).is_none()) {
-                    return;
-                }
-                let Some(editor_id) = self.editors.get_editor_id_by_path(path)
-                else {
-                    return;
-                };
-                let id = editor_id.to_raw();
-                if let Some(tab_id) = self.editor_tabs.with_untracked(|x| {
-                    for (tab_id, tab_data) in x {
-                        if tab_data.with_untracked(|x| {
-                            x.children.iter().any(|(_, _, child)| child.id() == id)
-                        }) {
-                            return Some(*tab_id);
-                        }
-                    }
-                    None
-                }) {
-                    self.editor_tab_close(tab_id);
-                }
-                self.editors.remove(editor_id);
-                self.docs.update(|x| {
-                    x.remove(path);
+                let Some(doc) = self.docs.with_untracked(|docs| docs.get(path).cloned()) else { return; };
+                // An external deletion must not discard unsaved edits, or close
+                // unrelated files in the same tab group. Use normal child-close
+                // cleanup so tabs and editor storage stay consistent.
+                if !doc.is_pristine() { return; }
+                let targets = self.editor_tabs.with_untracked(|tabs| {
+                    tabs.iter().flat_map(|(tab_id, tab)| {
+                        tab.with_untracked(|tab| tab.children.iter().filter_map(|(_, _, child)| {
+                            let EditorTabChild::Editor(id) = child else { return None; };
+                            let editor = self.editors.editor_untracked(*id)?;
+                            editor.doc().content.with_untracked(|content| (content.path().is_some_and(|p| p.as_path() == path))
+                                .then(|| (*tab_id, child.clone())))
+                        }).collect::<Vec<_>>())
+                    }).collect::<Vec<_>>()
                 });
+                for (tab, child) in targets { self.editor_tab_child_close(tab, child, false); }
+                self.docs.update(|docs| { docs.remove(path); });
             }
         }
     }

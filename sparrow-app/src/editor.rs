@@ -357,7 +357,7 @@ impl EditorData {
         self.editor.id()
     }
 
-    pub fn editor_info(&self, _data: &WindowTabData) -> EditorInfo {
+    pub fn editor_info(&self) -> EditorInfo {
         let offset = self.cursor().get_untracked().offset();
         let scroll_offset = self.viewport().get_untracked().origin();
         let doc = self.doc();

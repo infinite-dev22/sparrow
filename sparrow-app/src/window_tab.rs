@@ -742,7 +742,7 @@ impl WindowTabData {
                     // Editor/tab removal updates several signals in sequence. Take
                     // the snapshot after the transition, never inside its effects.
                     if revision.get()==next && data.main_split.splits.try_get_untracked().is_some() {
-                        database.save_workspace_info(workspace,data.workspace_info());
+                        if let Some(info) = data.workspace_info() { database.save_workspace_info(workspace,info); }
                     }
                 });
             });
@@ -3521,21 +3521,20 @@ impl WindowTabData {
         }
     }
 
-    pub fn workspace_info(&self) -> WorkspaceInfo {
+    pub fn workspace_info(&self) -> Option<WorkspaceInfo> {
         let main_split_data = self
             .main_split
             .splits
             .get_untracked()
             .get(&self.main_split.root_split)
-            .cloned()
-            .unwrap();
-        WorkspaceInfo {
+            .cloned()?;
+        Some(WorkspaceInfo {
             commit_message: self.source_control.editor.doc().buffer.with_untracked(|buffer|buffer.to_string()),
             amend_commit: self.source_control.amend.get_untracked(),
             selected_run_configuration: self.run_configs.with_untracked(|configs|configs.get(self.active_run_config_idx.get_untracked()).map(|config|config.name.clone())),
             document_views: self.common.document_views.get_untracked(),
             bookmarks: self.common.bookmarks.get_untracked(),
-            split: main_split_data.get_untracked().split_info(self),
+            split: main_split_data.get_untracked().split_info(self)?,
             panel: self.panel.panel_info(),
             breakpoints: self
                 .terminal
@@ -3547,7 +3546,7 @@ impl WindowTabData {
                     (path, breakpoints.into_values().collect::<Vec<_>>())
                 })
                 .collect(),
-        }
+        })
     }
 
     pub fn hover_origin(&self) -> Option<Point> {

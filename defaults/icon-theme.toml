@@ -52,6 +52,7 @@ name = "sparrow Modern"
 "window.restore"   = "chrome-restore.svg"        # Lucide: square (restore variant)
 "window.maximize"  = "chrome-maximize.svg"       # Lucide: maximize
 "window.minimize"  = "chrome-minimize.svg"       # Lucide: minimize
+"window.more"      = "more.svg"                  # Lucide: minimize
 
 # ── Files / Explorer ─────────────────────────────────────────────────────
 "file"            = "file.svg"                   # Lucide: file

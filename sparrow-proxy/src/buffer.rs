@@ -346,6 +346,18 @@ mod synchronization_tests {
     }
 
     #[test]
+    fn retained_buffer_can_save_unsaved_edits_after_external_deletion() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pods.yml");
+        fs::write(&path, "original: true\n").unwrap();
+        let mut buffer = Buffer::new(BufferId::next(), path.clone());
+        let rev = buffer.rev + 1;
+        buffer.synchronize(rev, "unsaved: preserved\n".into()).unwrap();
+        fs::remove_file(&path).unwrap();
+        buffer.save(rev, false).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), "unsaved: preserved\n");
+    }
+    #[test]
     fn delayed_snapshot_cannot_replace_newer_edits() {
         let dir = tempfile::tempdir().unwrap();
         let mut buffer = Buffer::new(BufferId::next(), dir.path().join("main.dart"));

@@ -54,6 +54,7 @@ struct Registry {
     client: reqwest::blocking::Client,
     memory: Mutex<HashMap<String, Cached>>,
     gate: Mutex<()>,
+    retry_after: Mutex<Option<Instant>>,
     disk: Option<PathBuf>,
 }
 static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
@@ -83,6 +84,7 @@ impl Registry {
                 .expect("HTTP client"),
             memory: Mutex::new(HashMap::new()),
             gate: Mutex::new(()),
+            retry_after: Mutex::new(None),
             disk,
         }
     }
@@ -164,6 +166,9 @@ impl Registry {
         reply
     }
     fn fetch(&self, endpoint: &str) -> Reply {
+        if self.retry_after.lock().unwrap().is_some_and(|until| Instant::now() < until) {
+            return Reply::Failed;
+        }
         let result = (|| -> Result<Vec<u8>, String> {
             let mut response = self
                 .client
@@ -206,10 +211,14 @@ impl Registry {
             Ok(bytes)
         })();
         match result {
-            Ok(bytes) => Reply::Data(Arc::new(bytes)),
+            Ok(bytes) => {
+                *self.retry_after.lock().unwrap() = None;
+                Reply::Data(Arc::new(bytes))
+            },
             Err(e) if e == "404" => Reply::Missing,
             Err(e) => {
-                tracing::debug!("pub.dev unavailable: {e}");
+                *self.retry_after.lock().unwrap() = Some(Instant::now() + Duration::from_secs(60));
+                tracing::debug!("pub.dev temporarily unavailable; using cached metadata and pausing registry requests for 60s: {e}");
                 Reply::Failed
             }
         }
@@ -1018,6 +1027,28 @@ mod tests {
             })
             .is_empty()
         }
+    }
+    #[test]
+    fn registry_failure_pauses_other_requests_and_preserves_stale_metadata() {
+        use std::{io::Write, net::TcpListener};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = listener.try_clone().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = server.accept().unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).unwrap();
+            stream.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let cache = tempfile::tempdir().unwrap();
+        std::fs::write(cache.path().join("old.json"), b"{\"name\":\"old\"}").unwrap();
+        let registry = Registry::new(format!("http://{address}"), Some(cache.path().to_path_buf()));
+        assert!(matches!(registry.get("old", "/old", Duration::ZERO), Reply::Data(_)));
+        worker.join().unwrap();
+        assert!(matches!(registry.get("other", "/other", PACKAGE_TTL), Reply::Failed));
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        assert!(cache.path().join("old.json").is_file());
     }
     #[test]
     fn documented_gzip_names_api_is_cached_in_memory_and_on_disk() {

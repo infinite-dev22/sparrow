@@ -228,7 +228,7 @@ impl SparrowDb {
     }
     pub fn save_window_tab(&self, data: Rc<WindowTabData>) -> Result<()> {
         let workspace = (*data.workspace).clone();
-        let workspace_info = data.workspace_info();
+        let Some(workspace_info) = data.workspace_info() else { return Ok(()); };
 
         self.save_tx
             .send(SaveEvent::Workspace(workspace, workspace_info))?;
@@ -377,7 +377,7 @@ impl SparrowDb {
 
     pub fn insert_window_tab(&self, data: Rc<WindowTabData>) -> Result<()> {
         let workspace = (*data.workspace).clone();
-        let workspace_info = data.workspace_info();
+        let Some(workspace_info) = data.workspace_info() else { return Ok(()); };
 
         self.insert_workspace(&workspace, &workspace_info)?;
         // self.insert_unsaved_buffer(main_split)?;
