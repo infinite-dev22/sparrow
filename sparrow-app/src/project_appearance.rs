@@ -1,5 +1,8 @@
 //! Project identity is a shared backdrop, not separately tinted chrome widgets.
 use std::path::Path;
+use floem::Renderer;
+use crate::app::Color;
+
 const PALETTE: [[u8; 3]; 9] = [
     [224, 130, 61],
     [226, 114, 55],
@@ -79,27 +82,72 @@ pub(crate) fn color(root: &Path) -> [u8; 3] {
         });
     PALETTE[hash as usize % PALETTE.len()]
 }
-/// Rasterized by Floem's SVG renderer on both GPU and software backends.
-/// Direct gradient background brushes are unsupported by Vger, so the frame must
-/// keep a solid background and composite this transparent underlay over it.
-pub(crate) fn glow_svg(accent: Option<[u8; 3]>) -> String {
-    let [r, g, b] = accent.unwrap_or([65, 77, 104]);
-    format!(r##"<svg xmlns="http://www.w3.org/2000/svg" width="700" height="300" viewBox="0 0 700 300">
-<defs>
-<linearGradient id="glow" gradientUnits="userSpaceOnUse" x1="0" x2="700">
-<stop offset="0" stop-color="rgb({r},{g},{b})" stop-opacity="0"/>
-<stop offset="0.12857143" stop-color="rgb({r},{g},{b})" stop-opacity="0.3"/>
-<stop offset="1" stop-color="rgb({r},{g},{b})" stop-opacity="0"/>
-</linearGradient>
-<linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="300">
-<stop offset="0" stop-color="white"/><stop offset="1" stop-color="black"/>
-</linearGradient>
-<mask id="vertical" maskUnits="userSpaceOnUse" x="0" y="0" width="700" height="300"><rect width="700" height="300" fill="url(#fade)"/></mask>
-</defs><rect width="700" height="300" fill="url(#glow)" mask="url(#vertical)"/></svg>"##)
+/// Paint with two-stop linear brushes, supported by both Floem renderers.
+/// Do not use a large SVG here: GPU SVGs share the finite icon texture atlas.
+pub(crate) fn paint_glow(
+    cx: &mut floem::context::PaintCx,
+    base: floem::peniko::Color,
+    accent: Option<[u8; 3]>,
+) {
+    use floem::peniko::{Color, Gradient, kurbo::Rect};
+    let accent = accent.unwrap_or([65, 77, 104]);
+    let base_rgb = base.to_rgba8();
+    // Narrow columns preserve the horizontal fade. Every brush starts at
+    // (0, 0): Vger's two-stop conversion does not preserve nonzero starts.
+    for x in (0..700).step_by(2) {
+        let amount = glow_strength(x as f64 + 1.0, 0.0);
+        let blend = |b: u8, a: u8| {
+            (f64::from(b) + (f64::from(a) - f64::from(b)) * amount).round() as u8
+        };
+        let peak = Color::from_rgb8(
+            blend(base_rgb.r, accent[0]),
+            blend(base_rgb.g, accent[1]),
+            blend(base_rgb.b, accent[2]),
+        );
+        let x = x as f64;
+        cx.fill(&Rect::new(x, 0.0, x + 2.0, 300.0),
+            &Gradient::new_linear((0.0, 0.0), (0.0, 300.0))
+                .with_stops([peak, base]), 0.0);
+    }
+}
+
+/// Color of the shared backdrop at a window-relative point. Corner masks
+/// must reveal this color rather than cutting flat frame-colored squares
+/// into the project glow.
+pub(crate) fn backdrop_color(
+    base: floem::peniko::Color,
+    accent: Option<[u8; 3]>,
+    point: floem::kurbo::Point,
+) -> floem::peniko::Color {
+    let base_rgb = base.to_rgba8();
+    let accent = accent.unwrap_or([65, 77, 104]);
+    let amount = glow_strength(point.x, point.y);
+    let blend = |b: u8, a: u8| {
+        (f64::from(b) + (f64::from(a) - f64::from(b)) * amount).round() as u8
+    };
+    Color::from_rgb8(
+        blend(base_rgb.r, accent[0]),
+        blend(base_rgb.g, accent[1]),
+        blend(base_rgb.b, accent[2]),
+    )
+}
+
+fn glow_strength(x: f64, y: f64) -> f64 {
+    let horizontal = if x <= 90.0 { x / 90.0 } else { (700.0 - x) / 610.0 };
+    0.3 * horizontal.clamp(0.0, 1.0) * (1.0 - y / 300.0).clamp(0.0, 1.0)
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn directional_glow_has_bounded_falloff() {
+        assert_eq!(glow_strength(0.0, 0.0), 0.0);
+        assert_eq!(glow_strength(90.0, 0.0), 0.3);
+        assert_eq!(glow_strength(90.0, 150.0), 0.15);
+        assert_eq!(glow_strength(700.0, 0.0), 0.0);
+        assert_eq!(glow_strength(90.0, 300.0), 0.0);
+        assert_eq!(glow_strength(900.0, 500.0), 0.0);
+    }
     #[test]
     fn imports_idea_custom_colors_and_palette_with_safe_fallbacks() {
         assert_eq!(

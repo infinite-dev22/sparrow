@@ -37,18 +37,27 @@ Scope matching uses path components, so `test_helpers` does not inherit `test`.
 
 Project identity is painted once beneath the main workbench. The title bar and
 both tool-window stripes expose this shared directional glow while editor and panel
-surfaces remain opaque. The frame has a solid base; a transparent SVG underlay
+surfaces remain opaque. The frame has a solid base; native vector painting
 provides a horizontal amber peak near the project chip and a vertical fade ending
-at 300 px. It works on both GPU and software renderers, since Vger does not support
-direct radial background brushes. Color comes from `.idea/workspace.xml`'s
+at 300 px. It uses two-stop linear brushes, avoiding radial brushes and the GPU SVG icon atlas. Color comes from `.idea/workspace.xml`'s
 `ProjectColorInfo` (custom hex color or associated palette index), including
 JSON/CDATA and legacy XML representations. Changes refresh through the project
 metadata watcher. Projects without valid color metadata receive a stable
 path-derived palette color; no JetBrains configuration is written.
 
-The directional glow was checked in the native renderer against the supplied
+The earlier software-rendered directional glow was checked against the supplied
 2026-11-18 16:44 reference. At (100, 1), reference RGB is (94, 67, 49)
 and Sparrow is (94, 67, 50); at (500, 1), they are (56, 49, 45) and
 (56, 49, 46). Both return to frame RGB (38, 40, 44) at (700, 1)
 and (30, 300). These samples check the backdrop, not a pixel-perfect match
 of the entire IDE. Custom project colors use the same directional falloff.
+
+The earlier isolated preview selected a CPU adapter and silently fell back to
+Tiny Skia; it did not establish GPU correctness. The glow now uses native canvas
+rectangles and two-stop linear brushes rather than an SVG texture. This also
+avoids texture-atlas pressure from a large SVG at high display scales.
+
+The vector replacement was checked on the Intel i915 hardware adapter at
+100% and 200% X11 display scale. The isolated process's DRM render engine
+reported submitted GPU work, confirming this check did not use the earlier CPU
+fallback. The 200% capture is `target/appearance-hardware-2x.png`.

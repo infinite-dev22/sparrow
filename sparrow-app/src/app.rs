@@ -2115,7 +2115,7 @@ fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
     .debug_name("Main Split");
 
     // Islands look: the editor area is a rounded island.
-    stack((split, island_corners(config)))
+    stack((split, island_corners(config, window_tab_data.common.project_color)))
         .style(move |s| {
             let config = config.get();
             let is_hidden = hidden_panel.panel_bottom_maximized(true)
@@ -3643,9 +3643,12 @@ fn window_tab(
     let project_color = window_tab_data.common.project_color;
     let view = stack((
         stack((
-            svg(move || crate::project_appearance::glow_svg(project_color.get()))
-                .style(|s| s.absolute().width(700.0).height(300.0)
-                    .pointer_events_none().set(floem::style::TextColor, None)),
+            floem::views::canvas(move |cx, _| {
+                crate::project_appearance::paint_glow(cx,
+                    config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
+                    project_color.get());
+            }).style(|s| s.absolute().width(700.0).height(300.0)
+                .pointer_events_none()),
             title(
                 window_tab_data.clone(),
                 window_tabs,

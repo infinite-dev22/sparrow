@@ -46,14 +46,22 @@ pub const ISLAND_RADIUS: f32 = 8.0;
 fn island_corner(
     config: ReadSignal<Arc<SparrowConfig>>,
     path: &'static str,
+    accent: RwSignal<Option<[u8; 3]>>,
     top: bool,
     left: bool,
 ) -> impl View {
     let svg_str = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10"><path d="{path}" fill="currentColor"/></svg>"#
     );
-    svg(move || svg_str.clone()).style(move |s| {
-        let color = config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND);
+    let origin = create_rw_signal(Point::ZERO);
+    svg(move || svg_str.clone())
+    .on_move(move |point| origin.set(point))
+    .style(move |s| {
+        let color = crate::project_appearance::backdrop_color(
+            config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
+            accent.get(),
+            origin.get() + (f64::from(ISLAND_RADIUS) / 2.0, f64::from(ISLAND_RADIUS) / 2.0),
+        );
         s.absolute()
             .size(ISLAND_RADIUS, ISLAND_RADIUS)
             .color(color)
@@ -65,14 +73,17 @@ fn island_corner(
 }
 
 /// floem does not clip children to a rounded parent, so rounded corners are
-/// faked by painting four quarter-circle masks in the window-frame colour on
-/// top of the island's corners.
-pub fn island_corners(config: ReadSignal<Arc<SparrowConfig>>) -> impl View {
+/// faked by painting four quarter-circle masks matching the shared backdrop
+/// at each island corner (including the project glow).
+pub fn island_corners(
+    config: ReadSignal<Arc<SparrowConfig>>,
+    accent: RwSignal<Option<[u8; 3]>>,
+) -> impl View {
     stack((
-        island_corner(config, "M0 0H10A10 10 0 0 0 0 10Z", true, true),
-        island_corner(config, "M0 0H10V10A10 10 0 0 0 0 0Z", true, false),
-        island_corner(config, "M0 0V10H10A10 10 0 0 1 0 0Z", false, true),
-        island_corner(config, "M10 0V10H0A10 10 0 0 0 10 0Z", false, false),
+        island_corner(config, "M0 0H10A10 10 0 0 0 0 10Z", accent, true, true),
+        island_corner(config, "M0 0H10V10A10 10 0 0 0 0 0Z", accent, true, false),
+        island_corner(config, "M0 0V10H10A10 10 0 0 1 0 0Z", accent, false, true),
+        island_corner(config, "M10 0V10H0A10 10 0 0 0 10 0Z", accent, false, false),
     ))
     .style(|s| {
         s.absolute()
@@ -446,7 +457,7 @@ pub fn panel_container_view(
         panel_view(window_tab_data.clone(), position.first()),
         panel_view(window_tab_data.clone(), position.second()),
         resize_drag_view(position),
-        island_corners(config),
+        island_corners(config, window_tab_data.common.project_color),
         stack((drop_view(position.first()), drop_view(position.second()))).style(
             move |s| {
                 let is_dragging_panel = is_dragging_panel();
