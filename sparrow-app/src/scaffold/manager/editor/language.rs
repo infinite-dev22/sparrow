@@ -22,10 +22,11 @@ pub(super) struct Diagnostic {
     pub range: Range<usize>,
     pub message: String,
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct Completion {
     pub label: String,
     pub insert: String,
+    pub analyzer: Option<super::analyzer::Choice>,
     pub range: Range<usize>,
 }
 pub(super) fn placeholders(text: &str) -> Vec<(Range<usize>, &str)> {
@@ -291,6 +292,7 @@ pub(super) fn completions(
                 .filter(|s| s.starts_with(key))
                 .take(12)
                 .map(|key| Completion {
+                    analyzer: None,
                     label: format!("{{{{{key}}}}}"),
                     insert: format!("{{{{{key}}}}}"),
                     range: start..end,
@@ -359,6 +361,7 @@ pub(super) fn completions(
                         .filter(|p| p.starts_with(fragment))
                         .take(12)
                         .map(|p| Completion {
+                            analyzer: None,
                             label: p.into(),
                             insert: p.into(),
                             range: begin
@@ -435,6 +438,7 @@ pub(super) fn completions(
         .filter(|s| s.starts_with(word) && s != word)
         .take(12)
         .map(|value| Completion {
+            analyzer: None,
             label: value.clone(),
             insert: format!("{value}{suffix}"),
             range: start..end,

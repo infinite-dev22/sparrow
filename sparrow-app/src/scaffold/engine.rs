@@ -572,9 +572,7 @@ pub fn plan_sibling(
     }
     plan_pack_at(ctx, base, pack, name)
 }
-/// Pure rendering shared by generation and the in-manager draft preview.
-pub(crate) fn render_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Vec<(PathBuf, String)>, String> {
-    validate_pack(pack)?;
+pub(crate) fn template_variables(ctx: &Context,pack: &Pack,name: &str) -> Result<BTreeMap<&'static str,String>,String> {
     let (snake, variable) = name_parts(name)?;
     let suffix = pack.suffix.as_deref().unwrap_or("");
     let suffixed_snake = if snake.ends_with(suffix) {
@@ -594,7 +592,7 @@ pub(crate) fn render_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Vec<
     };
     let feature = format!("{}/{snake}", ctx.feature_root);
     let layer = ctx.layout == "layer-first";
-    let vars = BTreeMap::from([
+    Ok(BTreeMap::from([
         ("name", name.to_string()),
         ("suffixed_name", suffixed_name),
         ("suffixed_snake", suffixed_snake),
@@ -668,7 +666,12 @@ pub(crate) fn render_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Vec<
                 )
             },
         ),
-    ]);
+    ]))
+}
+/// Pure rendering shared by generation and the in-manager draft preview.
+pub(crate) fn render_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Vec<(PathBuf, String)>, String> {
+    validate_pack(pack)?;
+    let vars = template_variables(ctx,pack,name)?;
     let mut files = vec![];
     let mut seen = BTreeSet::new();
     for file in &pack.files {

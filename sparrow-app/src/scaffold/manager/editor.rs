@@ -1,4 +1,5 @@
 //! In-memory pack editing with the generator's strict renderer and transactional saves.
+mod analyzer;
 mod language;
 use super::{
     boundary, catalog, copy_files, editable, engine, pack_from_files, stage,
@@ -248,6 +249,22 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     let error = parent.error;
     let config = window.common.config;
     let diagnostics = state.diagnostics;
+    let local_diagnostics =
+        Scope::current().create_rw_signal(Vec::<language::Diagnostic>::new());
+    let analyzer = analyzer::Session::new(
+        draft
+            .get_untracked()
+            .map(|d| d.ctx.root)
+            .unwrap_or_default(),
+    );
+    let dart_status = analyzer.status;
+    let merged_analyzer = analyzer.clone();
+    floem::reactive::create_effect(move |_| {
+        let mut all = local_diagnostics.get();
+        all.extend(merged_analyzer.diagnostics.get());
+        diagnostics.set(all);
+    });
+    let validation_analyzer = analyzer.clone();
     let suggestions =
         Scope::current().create_rw_signal(Vec::<language::Completion>::new());
     let suggestion_index = Scope::current().create_rw_signal(0usize);
@@ -258,6 +275,10 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     floem::reactive::create_effect(move |_| {
         let current = draft.get();
         let sample = sample.get();
+        let _ = validation_analyzer.ready.get();
+        validation_analyzer.invalidate();
+        local_diagnostics.set(vec![]);
+        let analysis = validation_analyzer.clone();
         revision.update(|r| *r += 1);
         let token = revision.get_untracked();
         rendered.set(Err("Validating…".into()));
@@ -266,12 +287,15 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             std::time::Duration::from_millis(150),
             move |_| {
                 if revision.get_untracked() == token && open.get_untracked() {
-                    diagnostics.set(
+                    local_diagnostics.set(
                         current
                             .as_ref()
                             .map(|d| language::diagnostics(d, &sample))
                             .unwrap_or_default(),
                     );
+                    if let Some(d) = current.as_ref() {
+                        analysis.update(d, &sample, token);
+                    }
                     rendered.set(
                         current
                             .ok_or("No draft".to_string())
@@ -334,6 +358,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         Rc::new(RefCell::new(BTreeMap::<PathBuf, Rc<TextDocument>>::new()));
     let editor_scope = Scope::current();
     let text_editor_handle = active_editor.clone();
+    let text_analyzer = analyzer.clone();
     let text = dyn_container(
         move || (epoch.get(), selected.get()),
         move |(_, path)| {
@@ -372,6 +397,8 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             let refresh_path = path.clone();
             let style_path = path.clone();
             let text_editor_handle = text_editor_handle.clone();
+            let key_analyzer=text_analyzer.clone();
+            let refresh_analyzer=text_analyzer.clone();
             let editor = text_editor_keys("",move |editor_signal,keypress,modifiers| {
                 let ed = editor_signal.get_untracked();
                 let key = match &keypress.key {KeyInput::Keyboard(key,_)=>Some(key),_=>None};
@@ -382,6 +409,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                     let files=draft.get_untracked().map(|d|d.files).unwrap_or_default();
                     suggestions.set(language::completions(&key_path,&body,ed.cursor.get_untracked().offset(),&files,true));
                     suggestion_index.set(0);
+                    key_analyzer.request_completions(&key_path,&ed,selected,suggestions,true);
                     return CommandExecuted::Yes;
                 }
                 let available=suggestions.get_untracked();
@@ -395,7 +423,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                         }
                         Some(Key::Named(NamedKey::Enter|NamedKey::Tab))=>{
                             if let Some(choice)=available.get(suggestion_index.get_untracked()) {
-                                accept_completion(&ed,choice,draft,plan,error,selected);
+                                key_analyzer.accept(&ed,choice,draft,selected,plan,error);
                             }
                             suggestions.set(vec![]);return CommandExecuted::Yes;
                         }
@@ -417,6 +445,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                     let body=refresh_ed.doc().text().to_string();
                     suggestions.set(language::completions(&refresh_path,&body,offset,&files,false));
                     suggestion_index.set(0);
+                    refresh_analyzer.request_completions(&refresh_path,&refresh_ed,selected,suggestions,false);
                     let (_,point)=refresh_ed.points_of_offset(offset,CursorAffinity::Forward);
                     let viewport=refresh_ed.viewport.get_untracked();
                     popup_point.set(((point.x-viewport.x0+45.0).clamp(0.0,180.0),(point.y-viewport.y0).clamp(0.0,260.0)));
@@ -429,7 +458,12 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                     let files=draft.get();
                     let body=files.and_then(|d|d.files.get(&style_path).cloned()).unwrap_or_default();
                     version.set(version.get()+1);
-                    ed.update_styling(Rc::new(language::CodeStyle::new(&style_path,&body,&diags,config,version.get())));
+                    // Styling rebuilds Floem's internal editor effects. Those
+                    // implementation signals must not become dependencies of
+                    // this diagnostics effect, or the rebuild triggers itself.
+                    floem::reactive::untrack(|| {
+                        ed.update_styling(Rc::new(language::CodeStyle::new(&style_path,&body,&diags,config,version.get())));
+                    });
                 });
             })
                 .editor_style(move |s| {
@@ -454,55 +488,57 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     )
     .style(|s| s.flex_grow(1.0_f32).min_width(0.0).height_full());
     let popup_handle = active_editor.clone();
-    let popup =
-        scroll(
-            dyn_stack(
-                move || {
-                    suggestions
-                        .get()
-                        .into_iter()
-                        .enumerate()
-                        .collect::<Vec<_>>()
-                },
-                |(i, c)| (*i, c.label.clone()),
-                move |(i, choice)| {
-                    let handle = popup_handle.clone();
-                    let label_text = choice.label.clone();
-                    label(move || label_text.clone())
-                        .on_click_stop(move |_| {
-                            if let Some(ed) = handle.borrow().as_ref() {
-                                accept_completion(
-                                    ed, &choice, draft, plan, error, selected,
-                                );
-                            }
-                            suggestions.set(vec![]);
-                        })
-                        .style(move |s| {
-                            s.height(24.0).padding_horiz(8.0).width_full().apply_if(
-                                suggestion_index.get() == i,
-                                |s| {
-                                    s.background(config.get().color(
+    let popup_analyzer = analyzer.clone();
+    let popup = scroll(
+        dyn_stack(
+            move || {
+                suggestions
+                    .get()
+                    .into_iter()
+                    .enumerate()
+                    .collect::<Vec<_>>()
+            },
+            |(i, c)| (*i, c.label.clone()),
+            move |(i, choice)| {
+                let handle = popup_handle.clone();
+                let analyzer = popup_analyzer.clone();
+                let label_text = choice.label.clone();
+                label(move || label_text.clone())
+                    .on_click_stop(move |_| {
+                        if let Some(ed) = handle.borrow().as_ref() {
+                            analyzer
+                                .accept(ed, &choice, draft, selected, plan, error);
+                        }
+                        suggestions.set(vec![]);
+                    })
+                    .style(move |s| {
+                        s.height(24.0).padding_horiz(8.0).width_full().apply_if(
+                            suggestion_index.get() == i,
+                            |s| {
+                                s.background(
+                                    config.get().color(
                                         SparrowColor::PANEL_CURRENT_BACKGROUND,
-                                    ))
-                                },
-                            )
-                        })
-                },
-            )
-            .style(|s| s.flex_col()),
+                                    ),
+                                )
+                            },
+                        )
+                    })
+            },
         )
-        .style(move |s| {
-            s.absolute()
-                .inset_left(popup_point.get().0)
-                .inset_top(popup_point.get().1)
-                .width(300.0)
-                .max_height(150.0)
-                .z_index(200)
-                .border(1.0)
-                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-                .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
-                .apply_if(suggestions.get().is_empty(), |s| s.hide())
-        });
+        .style(|s| s.flex_col()),
+    )
+    .style(move |s| {
+        s.absolute()
+            .inset_left(popup_point.get().0)
+            .inset_top(popup_point.get().1)
+            .width(300.0)
+            .max_height(150.0)
+            .z_index(200)
+            .border(1.0)
+            .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+            .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
+            .apply_if(suggestions.get().is_empty(), |s| s.hide())
+    });
     let diagnostic_handle = active_editor.clone();
     let rows_focus = focus.clone();
     let diagnostic_rows = scroll(
@@ -621,6 +657,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             .style(|s|s.font_bold()),
         label(move ||draft.get().map(|d|format!("{} → {}",d.source,d.directory.display())).unwrap_or_default()),
         label(||"Edit metadata in pack.yaml. Ctrl+Space: complete · ↑/↓: choose · Enter/Tab: insert · Esc: dismiss."),
+        label(move ||dart_status.get()),
         stack((
             label(||"Sample name:"),focus.input(sample).style(|s|s.width(180.0).height(28.0)),
             label(move ||match rendered.get() {Ok(files)=>format!("Pack valid · {} generated files",files.len()),Err(e)=>e})
@@ -675,7 +712,9 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                 plan.set(None);open.set(false);EventPropagation::Stop
             } else {EventPropagation::Continue}
         });
-    focus.bind_root(dialog, active, config)
+    focus
+        .bind_root(dialog, active, config)
+        .on_cleanup(move || analyzer.close())
 }
 
 #[cfg(test)]

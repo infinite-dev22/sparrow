@@ -124,6 +124,22 @@ impl DartLspService {
     /// If `dart` is not on PATH the service is returned in the "unavailable"
     /// state and every method is a no-op — the caller never needs to check.
     pub fn spawn(workspace_root: PathBuf) -> (Self, NotifReceiver) {
+        Self::spawn_inner(workspace_root,true)
+    }
+
+    /// Isolated, read-only analysis session for unsaved scaffold projections.
+    /// Does not bootstrap packages or run pub get in the user's workspace.
+    pub(crate) fn spawn_for_templates(workspace_root: PathBuf) -> (Self, NotifReceiver) {
+        Self::spawn_inner(workspace_root,false)
+    }
+
+    /// End a private template session even if an asynchronous callback still
+    /// holds a service clone. Ordinary workbench sessions use last-clone Drop.
+    pub(crate) fn shutdown_template_session(&self) {
+        let _ = self.tx.send(LspCommand::Shutdown);
+    }
+
+    fn spawn_inner(workspace_root: PathBuf, bootstrap: bool) -> (Self, NotifReceiver) {
         let (cmd_tx, cmd_rx) = unbounded();
         let (notif_tx, notif_rx) = std::sync::mpsc::channel();
         let last_sent = Arc::new(Mutex::new(HashMap::new()));
@@ -161,10 +177,13 @@ impl DartLspService {
 
         *state.client_tx.lock()=Some(cmd_tx.clone());
         // Bootstrap workspace in background (detect SDK, run pub get if needed)
+        if bootstrap {
         let resolution_notifications=notif_tx.clone();
         crate::dart::bootstrap::bootstrap_workspace_observed(&workspace_root,Some(Box::new(move |id,result|{
             let _=resolution_notifications.send(Notification::PackageResolution{id,result});
         })));
+
+        }
 
         let mut child = match analysis_server_command(&dart_bin)
             .current_dir(&workspace_root)
