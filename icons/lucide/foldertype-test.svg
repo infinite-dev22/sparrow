@@ -1,7 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon icon-tabler icons-tabler-outline icon-tabler-folder-test">
-  <path stroke="none" d="M0 0h24v24H0z" fill="none" />
-  <path d="M12.75 19h-7.75a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2.5" />
-  <path d="M16.5 14h4" />
-  <path d="M17.5 14v2.5l-2.2 3.8a1 1 0 0 0 .87 1.5h4.66a1 1 0 0 0 .87 -1.5l-2.2 -3.8v-2.5" />
-  <path d="M16.2 18.8h4.6" />
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+     class="icon icon-tabler icons-tabler-outline icon-tabler-folder-test">
+    <path stroke="none" d="M0 0h24v24H0z" fill="none"/>
+    <path d="M12.75 19h-7.75a2 2 0 0 1 -2 -2v-11a2 2 0 0 1 2 -2h4l3 3h7a2 2 0 0 1 2 2v2.5"/>
+    <path d="M16.5 14h4"/>
+    <path d="M17.5 14v2.5l-2.2 3.8a1 1 0 0 0 .87 1.5h4.66a1 1 0 0 0 .87 -1.5l-2.2 -3.8v-2.5"/>
+    <path d="M16.2 18.8h4.6"/>
 </svg>
