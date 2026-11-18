@@ -1216,7 +1216,8 @@ void main() { final value = Ord; }
                 lsp_types::Url::from_file_path(part_path).unwrap().as_str()
             )
         );
-        let start = main.generated.find("42").unwrap();
+        // The temporary file URI may also contain the digits 42.
+        let start = main.generated.find("value = 42").unwrap() + "value = ".len();
         assert_eq!(&main.raw[main.diagnostic_range(start..start + 2)], "42");
         let (main_path, _) =
             b.file_for(Path::new("templates/main.dart.tmpl")).unwrap();

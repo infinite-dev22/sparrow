@@ -152,7 +152,7 @@ mod flutter_file_catalog_tests {
             let icon = theme.resolve_path_to_icon(&[Path::new(name)]).unwrap_or_else(|| panic!("no icon for {name}"));
             assert!(store.get_default_svg(icon.file_name().unwrap().to_str().unwrap()).contains("<svg"), "{name}");
         }
-        for name in ["Assets.xcassets", "Runner.xcodeproj", "Runner.xcworkspace", "Flutter.framework", "Flutter.xcframework"] {
+        for name in ["test", ".sparrow", "build", "Assets.xcassets", "Runner.xcodeproj", "Runner.xcworkspace", "Flutter.framework", "Flutter.xcframework"] {
             let icon = theme.resolve_folder_to_icon(Path::new(name)).unwrap();
             assert!(store.get_default_svg(icon.file_name().unwrap().to_str().unwrap()).contains("<svg"));
         }
@@ -181,9 +181,14 @@ mod flutter_file_catalog_tests {
         let mut store = SvgStore::default();
         for file in LUCIDE_ICONS_DIR.files() {
             let name = file.path().to_str().unwrap();
-            if name.starts_with("filetype-") && name.ends_with(".svg") {
+            if (name.starts_with("filetype-") || name.starts_with("foldertype-")) && name.ends_with(".svg") {
                 assert!(mapped.iter().any(|mapped| mapped.as_str() == name), "unmapped {name}");
-                assert!(store.get_default_svg(name).contains("<svg"));
+                let svg = store.get_default_svg(name);
+                assert!(svg.contains("<svg"));
+                if name.starts_with("foldertype-") {
+                    let xml = roxmltree::Document::parse(&svg).unwrap();
+                    assert_eq!(xml.root_element().tag_name().namespace(), Some("http://www.w3.org/2000/svg"), "{name}");
+                }
             }
         }
         for asset in theme.ui.values() {

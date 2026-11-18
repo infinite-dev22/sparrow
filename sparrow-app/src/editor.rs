@@ -2050,6 +2050,38 @@ impl EditorData {
         let offset = self.cursor().with_untracked(|c| c.offset());
         if crate::doc::yaml_schema::supports(&path) {
             let source = doc.buffer.with_untracked(|b| b.to_string());
+            if let Some(request) = crate::doc::pubdev::completion_request(&path, &source, offset) {
+                let revision = doc.rev();
+                let request_id = self.common.completion.with_untracked(|c| c.request_id) + 1;
+                self.common.completion.update(|c| {
+                    c.request_id = request_id;
+                    c.status = CompletionStatus::Started;
+                    c.offset = request.start;
+                    c.path = path.clone();
+                    c.input = request.input.clone();
+                    c.filtered_items.clear();
+                    c.input_items.clear();
+                    c.active.set(0);
+                    c.latest_editor_id = Some(self.id());
+                });
+                let editor = self.clone();
+                floem::action::exec_after(std::time::Duration::from_millis(200), move |_| {
+                    if editor.doc().rev() != revision
+                        || editor.cursor().with_untracked(|c| c.offset()) != offset
+                        || editor.common.completion.with_untracked(|c| c.request_id != request_id || c.status == CompletionStatus::Inactive) { return; }
+                    let deliver = create_ext_action(editor.scope, move |items: Vec<CompletionItem>| {
+                        if editor.doc().rev() != revision
+                            || editor.cursor().with_untracked(|c| c.offset()) != offset
+                            || editor.doc().content.with_untracked(|c| c.path().cloned()) != Some(path)
+                            || editor.common.completion.with_untracked(|c| c.request_id != request_id || c.status == CompletionStatus::Inactive) { return; }
+                        if items.is_empty() { editor.cancel_completion(); return; }
+                        editor.common.completion.update(|c| c.receive_direct(request_id, items, PluginId(0)));
+                        editor.common.completion.get_untracked().update_document_completion(&editor, offset);
+                    });
+                    rayon::spawn(move || deliver(request.complete()));
+                });
+                return;
+            }
             if let Some((start, items)) = crate::doc::yaml_schema::completions(&path, &source, offset) {
                 self.common.completion.update(|c| {
                     c.request_id += 1;
@@ -2764,7 +2796,9 @@ impl EditorData {
         if crate::doc::yaml_schema::supports(&path) {
             let source = doc.buffer.with_untracked(|b| b.to_string());
             let actions = if kind.as_deref().is_none_or(|k| "quickfix".starts_with(k)) {
-                crate::doc::yaml_schema::code_actions(&path, &source, position.line)
+                let mut actions = crate::doc::yaml_schema::code_actions(&path, &source, position.line);
+                actions.extend(crate::doc::pubdev::code_actions(&path, &source, position.line));
+                actions
             } else { Vec::new() };
             callback(Ok((PluginId(0), actions)));
             return;

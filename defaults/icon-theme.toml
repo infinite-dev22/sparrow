@@ -287,6 +287,9 @@ name = "sparrow Modern"
 "toml" = "filetype-config.svg"
 
 [icon-theme.foldername]
+"test" = "foldertype-test.svg"
+".sparrow" = "foldertype-config.svg"
+"build" = "foldertype-build.svg"
 ".xcassets" = "filetype-apple-assets.svg"
 ".xcodeproj" = "filetype-xcode.svg"
 ".xcworkspace" = "filetype-xcode.svg"

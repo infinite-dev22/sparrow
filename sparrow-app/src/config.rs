@@ -673,7 +673,7 @@ impl SparrowConfig {
                 let color = self
                     .icon_theme
                     .use_editor_color
-                    .unwrap_or(false)
+                    .unwrap_or_else(|| svg.contains("currentColor"))
                     .then(|| self.color(SparrowColor::SPARROW_ICON_ACTIVE));
                 (svg, color)
             }

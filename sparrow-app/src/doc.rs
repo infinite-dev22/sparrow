@@ -1,5 +1,6 @@
 mod yaml;
 pub(crate) mod yaml_schema;
+pub(crate) mod pubdev;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -763,6 +764,17 @@ impl Doc {
             let text = doc.buffer.with_untracked(|b| b.to_string());
             let path = doc.content.with_untracked(|c| c.path().cloned());
             let scope = doc.scope;
+            let package_doc = doc.clone();
+            let atomic_revision = doc.buffer.with_untracked(|b| b.atomic_rev());
+            let publish_packages = create_ext_action(scope, move |diagnostics| {
+                if package_doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) == Some(revision)
+                    && package_doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) == Some(SparrowLanguage::Yaml)
+                {
+                    package_doc.diagnostics.set_yaml(diagnostics);
+                    package_doc.init_diagnostics();
+                    package_doc.clear_code_actions();
+                }
+            });
             let publish = create_ext_action(scope, move |diagnostics| {
                 if doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) == Some(revision)
                     && doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) == Some(SparrowLanguage::Yaml)
@@ -773,12 +785,19 @@ impl Doc {
             });
             rayon::spawn(move || {
                 let mut diagnostics = yaml::diagnostics(&text);
-                if diagnostics.is_empty() {
-                    if let Some(path) = path {
-                        diagnostics.extend(yaml_schema::diagnostics(&path, &text));
+                let syntax_valid = diagnostics.is_empty();
+                if syntax_valid {
+                    if let Some(path) = &path {
+                        diagnostics.extend(yaml_schema::diagnostics(path, &text));
                     }
                 }
-                publish(diagnostics);
+                publish(diagnostics.clone());
+                if syntax_valid {
+                    if let Some(path) = path {
+                        diagnostics.extend(pubdev::diagnostics(&path, &text, || atomic_revision.load(atomic::Ordering::Acquire) != revision));
+                    }
+                }
+                publish_packages(diagnostics);
             });
         });
     }

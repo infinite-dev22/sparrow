@@ -30,7 +30,7 @@ pub(crate) fn supports(path: &Path) -> bool {
     schema(path).is_some()
 }
 #[derive(Clone, Debug)]
-enum Part {
+pub(super) enum Part {
     Key(String),
     Index(usize),
 }
@@ -501,7 +501,7 @@ fn cursor_path(value: &Yaml, path: &mut Vec<Part>) -> Option<(Vec<Part>, bool)> 
                 }
             }
         }
-        Yaml::String(s) if s == CURSOR => return Some((path.clone(), false)),
+        Yaml::String(s) if s.contains(CURSOR) => return Some((path.clone(), false)),
         _ => {}
     }
     None
@@ -534,40 +534,9 @@ pub(crate) fn completions(
     offset: usize,
 ) -> Option<(usize, Vec<CompletionItem>)> {
     let root = schema(path)?;
-    if !text.is_char_boundary(offset) || text.contains(CURSOR) {
-        return None;
-    }
-    let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.');
-    let start = text[..offset]
-        .rfind(|c: char| !word(c))
-        .map_or(0, |i| i + text[i..].chars().next().unwrap().len_utf8());
-    let end = offset
-        + text[offset..]
-            .find(|c: char| !word(c))
-            .unwrap_or(text.len() - offset);
+    let (start, end, document, context, key) =
+        completion_context(path, text, offset)?;
     let input = &text[start..offset];
-    let mut found = None;
-    for replacement in [CURSOR.to_owned(), format!("{CURSOR}: null")] {
-        let probe = format!("{}{replacement}{}", &text[..start], &text[end..]);
-        if let Ok(value) = serde_yaml::from_str::<Yaml>(&probe) {
-            if let Some((path, key)) = cursor_path(&value, &mut vec![]) {
-                // An unfinished mapping key can parse as its parent's scalar
-                // value. Try the key probe before accepting that interpretation.
-                if !key
-                    && at_path(root, &path).is_some_and(|s| {
-                        types(s).contains(&"object")
-                            && !types(s).contains(&"string")
-                            && !types(s).contains(&"array")
-                    })
-                {
-                    continue;
-                }
-                found = Some((value, path, key));
-                break;
-            }
-        }
-    }
-    let (document, context, key) = found?;
     let s = at_path(root, &context)?;
     let mut options: Vec<(String, String, String)> = vec![];
     let colon_exists = text[end..]
@@ -777,4 +746,68 @@ mod tests {
         assert_eq!(messages(OPT, text).len(), 1);
         assert!(code_actions(Path::new(OPT), text, 0).is_empty());
     }
+}
+
+/// Exact scalar range shared with pub.dev services. Anchors, aliases and
+/// containers are deliberately excluded from automatic edits.
+pub(super) fn scalar_range(text: &str, path: Vec<Part>, key: bool) -> Option<Range> {
+    let issue = Issue {
+        path,
+        key,
+        message: String::new(),
+        replacement: None,
+        warning: false,
+    };
+    let start = locate(text, &issue)?;
+    let raw = text[start..scalar_end(text, start)].trim_end();
+    if raw.is_empty() || raw.starts_with(['&', '*', '!', '|', '>', '{', '[']) {
+        return None;
+    }
+    serde_yaml::from_str::<Yaml>(raw).ok()?;
+    Some(Range::new(
+        byte_position(text, start),
+        byte_position(text, start + raw.len()),
+    ))
+}
+
+pub(super) fn completion_context(
+    path: &Path,
+    text: &str,
+    offset: usize,
+) -> Option<(usize, usize, Yaml, Vec<Part>, bool)> {
+    let root = schema(path)?;
+    if !text.is_char_boundary(offset) || text.contains(CURSOR) {
+        return None;
+    }
+    let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.');
+    let start = text[..offset]
+        .rfind(|c: char| !word(c))
+        .map_or(0, |i| i + text[i..].chars().next().unwrap().len_utf8());
+    let end = offset
+        + text[offset..]
+            .find(|c: char| !word(c))
+            .unwrap_or(text.len() - offset);
+    let mut found = None;
+    for replacement in [CURSOR.to_owned(), format!("{CURSOR}: null")] {
+        let probe = format!("{}{replacement}{}", &text[..start], &text[end..]);
+        if let Ok(value) = serde_yaml::from_str::<Yaml>(&probe) {
+            if let Some((path, key)) = cursor_path(&value, &mut vec![]) {
+                // An unfinished mapping key can parse as its parent's scalar
+                // value. Try the key probe before accepting that interpretation.
+                if !key
+                    && at_path(root, &path).is_some_and(|s| {
+                        types(s).contains(&"object")
+                            && !types(s).contains(&"string")
+                            && !types(s).contains(&"array")
+                    })
+                {
+                    continue;
+                }
+                found = Some((value, path, key));
+                break;
+            }
+        }
+    }
+    let (document, context, key) = found?;
+    Some((start, end, document, context, key))
 }
