@@ -1,4 +1,5 @@
 //! In-memory pack editing with the generator's strict renderer and transactional saves.
+mod language;
 use super::{
     boundary, catalog, copy_files, editable, engine, pack_from_files, stage,
     valid_id,
@@ -7,15 +8,19 @@ use crate::{config::color::SparrowColor, window_tab::WindowTabData};
 use floem::{
     View,
     event::{Event, EventListener, EventPropagation},
-    keyboard::{Key, NamedKey},
+    keyboard::{Key, Modifiers, NamedKey},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate},
     views::{
         Decorators, container, dyn_container, dyn_stack,
         editor::{
-            text::{Document, SimpleStylingBuilder},
+            Editor,
+            command::CommandExecuted,
+            core::{cursor::CursorAffinity, editor::EditType, selection::Selection},
+            keypress::{default_key_handler, key::KeyInput},
+            text::Document,
             text_document::TextDocument,
         },
-        label, scroll, stack, text_editor,
+        label, scroll, stack, text_editor_keys,
     },
 };
 use std::{
@@ -153,6 +158,7 @@ pub(super) struct State {
     rendered: RwSignal<Rendered>,
     epoch: RwSignal<u64>,
     revision: RwSignal<u64>,
+    diagnostics: RwSignal<Vec<language::Diagnostic>>,
 }
 impl State {
     pub fn new(cx: Scope) -> Self {
@@ -165,6 +171,7 @@ impl State {
             rendered: cx.create_rw_signal(Err("Validating…".into())),
             epoch: cx.create_rw_signal(0),
             revision: cx.create_rw_signal(0),
+            diagnostics: cx.create_rw_signal(vec![]),
         }
     }
 }
@@ -188,6 +195,43 @@ pub(super) fn open(window: &WindowTabData) -> Result<(), String> {
     Ok(())
 }
 
+fn accept_completion(
+    ed: &Editor,
+    choice: &language::Completion,
+    draft: RwSignal<Option<Draft>>,
+    plan: RwSignal<Option<engine::Plan>>,
+    error: RwSignal<String>,
+    selected: RwSignal<PathBuf>,
+) {
+    let body = ed.doc().text().to_string();
+    if choice.range.end > body.len()
+        || !body.is_char_boundary(choice.range.start)
+        || !body.is_char_boundary(choice.range.end)
+    {
+        return;
+    }
+    ed.doc().edit_single(
+        Selection::region(choice.range.start, choice.range.end),
+        &choice.insert,
+        EditType::InsertChars,
+    );
+    ed.cursor.update(|c| {
+        c.set_offset(choice.range.start + choice.insert.len(), false, false)
+    });
+    let text = ed.doc().text().to_string();
+    // Programmatic edits have no OnUpdate.editor; explicitly sync the draft.
+    // The selected path is supplied by the live editor's completion caller.
+    plan.set(None);
+    draft.update(|d| {
+        if let Some(d) = d {
+            d.files.insert(selected.get_untracked(), text);
+        }
+    });
+    error.set(String::new());
+    if let Some(id) = ed.editor_view_id.get_untracked() {
+        id.request_focus();
+    }
+}
 pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     let parent = window.scaffold.clone();
     let state = parent.manager.editor.clone();
@@ -203,6 +247,12 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     let plan = parent.plan;
     let error = parent.error;
     let config = window.common.config;
+    let diagnostics = state.diagnostics;
+    let suggestions =
+        Scope::current().create_rw_signal(Vec::<language::Completion>::new());
+    let suggestion_index = Scope::current().create_rw_signal(0usize);
+    let popup_point = Scope::current().create_rw_signal((0.0f64, 0.0f64));
+    let active_editor = Rc::new(RefCell::new(None::<Editor>));
     let focus = crate::modal_focus::ModalFocus::default();
     crate::modal_focus::restore_workbench_on_close(active, window.common.clone());
     floem::reactive::create_effect(move |_| {
@@ -216,6 +266,12 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             std::time::Duration::from_millis(150),
             move |_| {
                 if revision.get_untracked() == token && open.get_untracked() {
+                    diagnostics.set(
+                        current
+                            .as_ref()
+                            .map(|d| language::diagnostics(d, &sample))
+                            .unwrap_or_default(),
+                    );
                     rendered.set(
                         current
                             .ok_or("No draft".to_string())
@@ -226,20 +282,36 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         );
     });
     let file_focus = focus.clone();
-    let files = scroll(
-        dyn_stack(
-            move || {
-                draft
-                    .get()
-                    .map(|d| d.files.keys().cloned().collect::<Vec<_>>())
-                    .unwrap_or_default()
-            },
-            |p| p.clone(),
-            move |path| {
-                let label_path = path.clone();
-                let click_path = path.clone();
-                file_focus.control(
-                    label(move || label_path.display().to_string())
+    let files =
+        scroll(
+            dyn_stack(
+                move || {
+                    draft
+                        .get()
+                        .map(|d| d.files.keys().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default()
+                },
+                |p| p.clone(),
+                move |path| {
+                    let label_path = path.clone();
+                    let click_path = path.clone();
+                    let diagnostic_path = path.clone();
+                    file_focus.control(
+                        label(move || {
+                            format!(
+                                "{}{}",
+                                if diagnostics
+                                    .get()
+                                    .iter()
+                                    .any(|d| d.path == diagnostic_path)
+                                {
+                                    "● "
+                                } else {
+                                    ""
+                                },
+                                label_path.display()
+                            )
+                        })
                         .on_click_stop(move |_| selected.set(click_path.clone()))
                         .style(move |s| {
                             s.padding(6.0).width_full().apply_if(
@@ -251,16 +323,17 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                                 },
                             )
                         }),
-                )
-            },
+                    )
+                },
+            )
+            .style(|s| s.flex_col()),
         )
-        .style(|s| s.flex_col()),
-    )
-    .style(|s| s.width(210.0).min_width(140.0).height_full());
+        .style(|s| s.width(210.0).min_width(140.0).height_full());
     let editor_focus = focus.clone();
     let documents =
         Rc::new(RefCell::new(BTreeMap::<PathBuf, Rc<TextDocument>>::new()));
     let editor_scope = Scope::current();
+    let text_editor_handle = active_editor.clone();
     let text = dyn_container(
         move || (epoch.get(), selected.get()),
         move |(_, path)| {
@@ -294,18 +367,71 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                 documents.borrow_mut().insert(path.clone(), doc.clone());
                 doc
             });
-            let style = SimpleStylingBuilder::default()
-                .font_size(13)
-                .font_family(vec![
-                    floem::text::FamilyOwned::Name(
-                        config.get_untracked().editor.font_family.clone(),
-                    ),
-                    floem::text::FamilyOwned::Monospace,
-                ])
-                .build();
-            let editor = text_editor("")
-                .use_doc(doc)
-                .styling(style)
+            suggestions.set(vec![]);
+            let key_path = path.clone();
+            let refresh_path = path.clone();
+            let style_path = path.clone();
+            let text_editor_handle = text_editor_handle.clone();
+            let editor = text_editor_keys("",move |editor_signal,keypress,modifiers| {
+                let ed = editor_signal.get_untracked();
+                let key = match &keypress.key {KeyInput::Keyboard(key,_)=>Some(key),_=>None};
+                let explicit = modifiers.contains(Modifiers::CONTROL)
+                    && (matches!(key,Some(Key::Named(NamedKey::Space))) || matches!(key,Some(Key::Character(c)) if c.as_str()==" "));
+                if explicit {
+                    let body=ed.doc().text().to_string();
+                    let files=draft.get_untracked().map(|d|d.files).unwrap_or_default();
+                    suggestions.set(language::completions(&key_path,&body,ed.cursor.get_untracked().offset(),&files,true));
+                    suggestion_index.set(0);
+                    return CommandExecuted::Yes;
+                }
+                let available=suggestions.get_untracked();
+                if !available.is_empty() && !modifiers.intersects(Modifiers::CONTROL|Modifiers::ALT|Modifiers::META) {
+                    match key {
+                        Some(Key::Named(NamedKey::ArrowDown))=>{
+                            suggestion_index.update(|i|*i=(*i+1)%available.len());return CommandExecuted::Yes;
+                        }
+                        Some(Key::Named(NamedKey::ArrowUp))=>{
+                            suggestion_index.update(|i|*i=(*i+available.len()-1)%available.len());return CommandExecuted::Yes;
+                        }
+                        Some(Key::Named(NamedKey::Enter|NamedKey::Tab))=>{
+                            if let Some(choice)=available.get(suggestion_index.get_untracked()) {
+                                accept_completion(&ed,choice,draft,plan,error,selected);
+                            }
+                            suggestions.set(vec![]);return CommandExecuted::Yes;
+                        }
+                        Some(Key::Named(NamedKey::Escape))=>{
+                            suggestions.set(vec![]);return CommandExecuted::Yes;
+                        }
+                        _=>{}
+                    }
+                }
+                default_key_handler(editor_signal)(keypress,modifiers)
+            }).use_doc(doc).with_editor(move |ed| {
+                *text_editor_handle.borrow_mut()=Some(ed.clone());
+                let ed=ed.clone();
+                let refresh_ed=ed.clone();
+                floem::reactive::create_effect(move |_| {
+                    let offset=refresh_ed.cursor.get().offset();
+                    // Track buffer edits through the draft, even if the cursor did not move.
+                    let files=draft.get().map(|d|d.files).unwrap_or_default();
+                    let body=refresh_ed.doc().text().to_string();
+                    suggestions.set(language::completions(&refresh_path,&body,offset,&files,false));
+                    suggestion_index.set(0);
+                    let (_,point)=refresh_ed.points_of_offset(offset,CursorAffinity::Forward);
+                    let viewport=refresh_ed.viewport.get_untracked();
+                    popup_point.set(((point.x-viewport.x0+45.0).clamp(0.0,180.0),(point.y-viewport.y0).clamp(0.0,260.0)));
+                });
+                let version=Rc::new(std::cell::Cell::new(0u64));
+                floem::reactive::create_effect(move |_| {
+                    let diags=diagnostics.get();
+                    let config=config.get();
+                    // Each new document revision and diagnostics refresh invalidates line styles.
+                    let files=draft.get();
+                    let body=files.and_then(|d|d.files.get(&style_path).cloned()).unwrap_or_default();
+                    version.set(version.get()+1);
+                    ed.update_styling(Rc::new(language::CodeStyle::new(&style_path,&body,&diags,config,version.get())));
+                });
+            })
                 .editor_style(move |s| {
                     s.cursor_color(config.get().color(SparrowColor::EDITOR_CARET))
                         .selection_color(
@@ -327,6 +453,120 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         },
     )
     .style(|s| s.flex_grow(1.0_f32).min_width(0.0).height_full());
+    let popup_handle = active_editor.clone();
+    let popup =
+        scroll(
+            dyn_stack(
+                move || {
+                    suggestions
+                        .get()
+                        .into_iter()
+                        .enumerate()
+                        .collect::<Vec<_>>()
+                },
+                |(i, c)| (*i, c.label.clone()),
+                move |(i, choice)| {
+                    let handle = popup_handle.clone();
+                    let label_text = choice.label.clone();
+                    label(move || label_text.clone())
+                        .on_click_stop(move |_| {
+                            if let Some(ed) = handle.borrow().as_ref() {
+                                accept_completion(
+                                    ed, &choice, draft, plan, error, selected,
+                                );
+                            }
+                            suggestions.set(vec![]);
+                        })
+                        .style(move |s| {
+                            s.height(24.0).padding_horiz(8.0).width_full().apply_if(
+                                suggestion_index.get() == i,
+                                |s| {
+                                    s.background(config.get().color(
+                                        SparrowColor::PANEL_CURRENT_BACKGROUND,
+                                    ))
+                                },
+                            )
+                        })
+                },
+            )
+            .style(|s| s.flex_col()),
+        )
+        .style(move |s| {
+            s.absolute()
+                .inset_left(popup_point.get().0)
+                .inset_top(popup_point.get().1)
+                .width(300.0)
+                .max_height(150.0)
+                .z_index(200)
+                .border(1.0)
+                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+                .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
+                .apply_if(suggestions.get().is_empty(), |s| s.hide())
+        });
+    let diagnostic_handle = active_editor.clone();
+    let rows_focus = focus.clone();
+    let diagnostic_rows = scroll(
+        dyn_stack(
+            move || {
+                diagnostics
+                    .get()
+                    .into_iter()
+                    .filter(|d| d.path == selected.get())
+                    .collect::<Vec<_>>()
+            },
+            |d| (d.path.clone(), d.range.start, d.message.clone()),
+            move |diagnostic| {
+                let handle = diagnostic_handle.clone();
+                rows_focus.control(
+                    label({
+                        let diagnostic = diagnostic.clone();
+                        move || {
+                            let body = draft
+                                .get()
+                                .and_then(|d| d.files.get(&diagnostic.path).cloned())
+                                .unwrap_or_default();
+                            let (line, col) =
+                                language::position(&body, diagnostic.range.start);
+                            format!(
+                                "{}:{line}:{col} · {}",
+                                diagnostic.path.display(),
+                                diagnostic.message
+                            )
+                        }
+                    })
+                    .on_click_stop(move |_| {
+                        if let Some(ed) = handle.borrow().as_ref() {
+                            ed.cursor.update(|c| {
+                                c.set_offset(diagnostic.range.start, false, false)
+                            });
+                            if let Some(id) = ed.editor_view_id.get_untracked() {
+                                id.request_focus();
+                            }
+                            ed.editor_view_focused.notify();
+                        }
+                    })
+                    .style(move |s| {
+                        s.padding(4.0)
+                            .width_full()
+                            .color(config.get().color(SparrowColor::SPARROW_ERROR))
+                    }),
+                )
+            },
+        )
+        .style(|s| s.flex_col()),
+    )
+    .style(move |s| {
+        s.width_full().max_height(80.0).apply_if(
+            !diagnostics.get().iter().any(|d| d.path == selected.get()),
+            |s| s.hide(),
+        )
+    });
+    let code_panel = stack((
+        stack((text, popup))
+            .style(|s| s.flex_grow(1.0_f32).min_height(160.0).width_full()),
+        diagnostic_rows,
+    ))
+    .style(|s| s.flex_col().flex_grow(1.0_f32).min_width(0.0).height_full());
     let output = scroll(
         dyn_stack(
             move || {
@@ -380,13 +620,13 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         label(move ||format!("Template Editor{}",if draft.get().is_some_and(|d|d.dirty()) {" · Unsaved draft"} else {""}))
             .style(|s|s.font_bold()),
         label(move ||draft.get().map(|d|format!("{} → {}",d.source,d.directory.display())).unwrap_or_default()),
-        label(||"Edit metadata in pack.yaml. Live preview renders generated files without changing your project."),
+        label(||"Edit metadata in pack.yaml. Ctrl+Space: complete · ↑/↓: choose · Enter/Tab: insert · Esc: dismiss."),
         stack((
             label(||"Sample name:"),focus.input(sample).style(|s|s.width(180.0).height(28.0)),
             label(move ||match rendered.get() {Ok(files)=>format!("Pack valid · {} generated files",files.len()),Err(e)=>e})
                 .style(move |s|s.flex_grow(1.0_f32).min_width(0.0).apply_if(rendered.get().is_err(),|s|s.color(config.get().color(SparrowColor::SPARROW_ERROR)))) ,
         )).style(|s|s.gap(12.0).items_center()),
-        stack((files,text,output)).style(|s|s.width_full().height(430.0).gap(10.0)),
+        stack((files,code_panel,output)).style(|s|s.width_full().height(430.0).gap(10.0)),
         stack((
             focus.input(new_file).style(|s|s.width(270.0).height(28.0)),
             focus.control(label(||"Add File").on_click_stop(move |_| {
@@ -467,6 +707,43 @@ mod tests {
     fn body(d: &mut Draft, text: &str) {
         d.files
             .insert("templates/template.dart.tmpl".into(), text.into());
+    }
+    #[test]
+    fn accepted_completion_updates_draft_cursor_and_document_undo() {
+        use floem::views::editor::{
+            command::Command, core::command::EditCommand, text::SimpleStyling,
+        };
+        let root = project();
+        let mut initial = local(root.path());
+        body(&mut initial, "class {{na}} {}");
+        let source = PathBuf::from("templates/template.dart.tmpl");
+        let text = initial.files[&source].clone();
+        let choices =
+            language::completions(&source, &text, 10, &initial.files, true);
+        let name = choices.iter().find(|c| c.label == "{{name}}").unwrap();
+        let cx = Scope::new();
+        let draft = cx.create_rw_signal(Some(initial));
+        let plan = cx.create_rw_signal(None);
+        let error = cx.create_rw_signal(String::new());
+        let selected = cx.create_rw_signal(source.clone());
+        let doc = Rc::new(TextDocument::new(cx, text.clone()));
+        let ed = Editor::new(cx, doc.clone(), Rc::new(SimpleStyling::new()), false);
+        ed.cursor.update(|c| c.set_offset(10, false, false));
+        accept_completion(&ed, name, draft, plan, error, selected);
+        assert_eq!(doc.text().to_string(), "class {{name}} {}");
+        assert_eq!(
+            draft.get_untracked().unwrap().files[&source],
+            "class {{name}} {}"
+        );
+        assert_eq!(ed.cursor.get_untracked().offset(), 14);
+        ed.doc().run_command(
+            &ed,
+            &Command::Edit(EditCommand::Undo),
+            Some(1),
+            Modifiers::empty(),
+        );
+        assert_eq!(doc.text().to_string(), text);
+        cx.dispose();
     }
     #[test]
     fn live_validation_checks_yaml_sources_metadata_variables_and_output_paths() {

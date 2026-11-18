@@ -53,7 +53,15 @@ Bundled packs save as an override in the destination selected before opening the
 
 **Back to Manager** keeps unsaved buffers for the window session; **Resume Editor…** returns to that draft even if another pack is selected. **Discard Draft** explicitly drops unsaved buffers without changing saved files. Drafts are not persisted across IDE restarts. The existing **Edit Manifest** / **Edit Sources** actions still open the ordinary workbench editor.
 
+The code pane uses Sparrow's YAML/Dart syntax highlighting and theme colors. Template variables are styled separately, including variables embedded in Dart strings and YAML values. No additional grammar download is required for basic token highlighting.
+
+Completions appear while typing a prefix; **Ctrl+Space** requests them explicitly. Use **Up/Down** to choose, **Enter/Tab** to insert, and **Escape** to dismiss the suggestions. Pack completions include manifest fields, file/dependency fields, enum and boolean values, and source files in the draft. Dart template completions include keywords, identifiers from the current file, and the supported `{{variables}}`. Completions replace the existing token and preserve surrounding braces, colons and path suffixes. Completion edits use the document's undo history. These are offline template-aware suggestions, not analyzer-based Dart member/type completion.
+
+Live validation underlines errors in the code pane and marks affected file tabs. The diagnostic list below the code shows file, line, column and message; select a diagnostic to move the caret to its location. YAML schema/parser errors, missing source files, unknown/unclosed variables and generation validation failures are reported. Sample-name errors remain in the sample/preview status. This validation does not run Dart analysis or diagnose Dart type errors.
+
 Editor validation: 303 application tests passed (9 SDK-dependent tests ignored), including byte parity with all bundled generators, invalid-pack repair, preview without application writes, added-file conflicts, save snapshots and undo. Native desktop checks verified multiline editing, live errors, file switching with document undo, save preview/apply/undo, and draft resume/discard.
+
+Language-assistance validation: 311 application tests passed (9 SDK-dependent tests ignored). Coverage includes contextual completions, replacement ranges, Unicode diagnostics, completion insertion/undo, syntax spans and virtual end-of-file line handling. Native checks verified YAML/Dart colors, keyboard completion, red error underlines, diagnostic navigation, repair, save and undo.
 
 ## Schema 2 example
 

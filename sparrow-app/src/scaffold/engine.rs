@@ -407,6 +407,11 @@ fn inputs(root: &Path) -> Result<Vec<(PathBuf, Option<String>)>, String> {
         })
         .collect()
 }
+pub(crate) const TEMPLATE_VARIABLES: &[&str] = &[
+    "name", "variable", "snake", "suffixed_name", "suffixed_snake", "package",
+    "feature_root", "screen_dir", "state_dir", "model_dir", "repository_dir",
+    "screen_import", "model_import", "repository_import",
+];
 fn substitute(text: &str, vars: &BTreeMap<&str, String>) -> Result<String, String> {
     let mut result = String::new();
     let mut remaining = text;
