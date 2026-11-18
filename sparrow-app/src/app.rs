@@ -3618,6 +3618,11 @@ fn window_tab(
     let workbench_command = window_tab_data.common.workbench_command;
     let window_tab_scope = window_tab_data.scope;
     let hover_active = window_tab_data.common.hover.active;
+    let title_menus = [
+        window_tab_data.project_menu_visible,
+        window_tab_data.branch_menu_visible,
+        window_tab_data.device_menu_visible,
+    ];
     let status_height = window_tab_data.status_height;
     let project_chip_origin = create_rw_signal(Point::ZERO);
     let branch_chip_origin = create_rw_signal(Point::ZERO);
@@ -3707,6 +3712,11 @@ fn window_tab(
             .class(floem::views::scroll::Handle, |s| {
                 s.background(config.color(SparrowColor::SPARROW_SCROLL_BAR))
             })
+    })
+    .on_event_cont(EventListener::WindowLostFocus, move |_| {
+        for menu in title_menus {
+            menu.set(false);
+        }
     })
     .debug_name("Window Tab");
 

@@ -3420,6 +3420,26 @@ impl WindowTabData {
     }
 
     pub fn key_down<'a>(&self, event: impl Into<EventRef<'a>> + Copy) -> bool {
+        // Toolbar selectors keep their anchor/search field focused. Handle
+        // cancellation before dispatching Escape to the underlying editor.
+        if let EventRef::Keyboard(key) = event.into() {
+            let menus = [
+                self.project_menu_visible,
+                self.branch_menu_visible,
+                self.device_menu_visible,
+            ];
+            if key.modifiers.is_empty()
+                && key.key.logical_key
+                    == floem::keyboard::Key::Named(floem::keyboard::NamedKey::Escape)
+                && menus.iter().any(|menu| menu.get_untracked())
+            {
+                for menu in menus {
+                    menu.set(false);
+                }
+                crate::modal_focus::note_popup_escape();
+                return true;
+            }
+        }
         if self.settings_modal_visible.get_untracked()
             || self.run_config_modal_visible.get_untracked()
             || self.flutter_project.active.get_untracked()

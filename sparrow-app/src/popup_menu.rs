@@ -206,7 +206,7 @@ fn show(menu: Menu, position: Option<Point>, anchor: Option<ViewId>) {
         .or(Some(common.view_id.get_untracked()));
     let pos = position.unwrap_or_else(|| POINTER.with(|last| *last.borrow()));
     let config = common.config;
-    let size = common.workbench_size;
+    let size = common.window_common.size;
     let levels = create_rw_signal(vec![menu.clone()]);
     let selections = create_rw_signal(vec![first_enabled(&menu)]);
     let id = add_overlay(Point::ZERO, move |overlay| {
@@ -258,6 +258,7 @@ fn show(menu: Menu, position: Option<Point>, anchor: Option<ViewId>) {
                     .with_untracked(|s| s.get(depth).copied().unwrap_or(0));
                 match &key.key.logical_key {
                     Key::Named(NamedKey::Escape) => {crate::modal_focus::note_popup_escape();dismiss(overlay, restore)},
+                    Key::Named(NamedKey::Tab) => dismiss(overlay, restore),
                     Key::Named(NamedKey::ArrowLeft) if depth > 0 => {
                         levels.update(|menus| {
                             menus.pop();
@@ -326,7 +327,18 @@ fn show(menu: Menu, position: Option<Point>, anchor: Option<ViewId>) {
                 }
                 EventPropagation::Stop
             })
-            .style(|s| s.absolute().size_full().z_index(1000));
+            .on_event_stop(EventListener::WindowLostFocus, move |_| {
+                // Do not steal focus back from the newly activated window.
+                dismiss(overlay, None);
+            })
+            .style(move |s| {
+                // Floem's overlay wrapper is auto-sized. Percentage dimensions
+                // collapse its absolute child to zero, leaving only the menus
+                // hit-testable. Give the backdrop real window dimensions so it
+                // catches outside clicks, including after a window resize.
+                let bounds = size.get();
+                s.absolute().size(bounds.width, bounds.height).z_index(1000)
+            });
         let focus = view.id();
         focus.request_focus();
         view

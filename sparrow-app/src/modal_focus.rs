@@ -147,7 +147,11 @@ impl ModalFocus {
         let id = view.id();
         self.set_root(id);
         let navigation = self.clone();
+        let unfocused_navigation = self.clone();
         view.style(move |s| s.apply_if(!visible.get(), |s| s.hide()))
+            .on_event_cont(EventListener::WindowLostFocus, move |_| {
+                unfocused_navigation.dismiss_popup(false);
+            })
             .on_event(EventListener::KeyDown, move |event| {
                 if let Event::KeyDown(key) = event {
                     if key.key.logical_key == Key::Named(NamedKey::Tab) {
