@@ -11,7 +11,7 @@ use floem::{
     style::{AlignItems, CursorStyle, Position, Style},
     text::Style as FontStyle,
     views::{
-        Container, Decorators, container, dyn_stack, label, scroll, stack, svg,
+        Container, Decorators, TooltipExt, container, dyn_stack, label, scroll, stack, svg,
         virtual_stack,
     },
 };
@@ -60,6 +60,76 @@ fn blend_colors(background: Color, foreground: Color) -> Color {
     Color::from_rgba8(r, g, b, 255)
 }
 
+fn project_header(window: Rc<WindowTabData>) -> impl View {
+    use crate::popup_menu::{Menu, MenuItem, PopupMenuExt};
+    let config = window.common.config;
+    let data = window.file_explorer.clone();
+    let dropdown_window = window.clone();
+    let new_data = data.clone();
+    let select_window = window.clone();
+    let expand = data.clone();
+    let collapse = data.clone();
+    let options = window.clone();
+    let hide = window.panel.clone();
+    let button = move |text: &'static str, tip: &'static str, action: Box<dyn Fn()>| {
+        let path = match text {
+            "⊙" => "M8 1v3m0 8v3M1 8h3m8 0h3M13 8a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z",
+            "⌃" => "m4 5 4-4 4 4M4 11l4 4 4-4",
+            "⌄" => "m4 1 4 4 4-4M4 15l4-4 4 4",
+            _ => "M3 8h10",
+        };
+        svg(move || format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="{path}" fill="none" stroke="currentColor" stroke-width="1"/></svg>"#))
+            .on_click_stop(move |_| action())
+            .style(move |s| s.size(24.0, 24.0).padding(5.0)
+                .color(config.get().color(SparrowColor::SPARROW_ICON_ACTIVE))
+                .cursor(CursorStyle::Pointer).border_radius(4.0)
+                .hover(|s| s.background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND))))
+            .tooltip(move || label(move || tip))
+    };
+    stack((
+        label(|| "Project ⌄").style(|s| s.margin_left(12.0).font_weight(floem::text::Weight(600)).cursor(CursorStyle::Pointer))
+            .ide_popout_menu(move || {
+                let w = dropdown_window.clone();
+                let refresh = w.file_explorer.clone();
+                Menu::new("Project").entry(MenuItem::new("Show Open Editors").action(move || {
+                    let visible = w.common.config.get_untracked().ui.open_editors_visible;
+                    SparrowConfig::update_file("ui", "open-editors-visible", (!visible).into());
+                    w.reload_config();
+                })).entry(MenuItem::new("Refresh Project").action(move || refresh.reload()))
+            }),
+        floem::views::empty().style(|s| s.flex_grow(1.0_f32)),
+        label(|| "+").style(|s| s.size(24.0,24.0).items_center().justify_center().cursor(CursorStyle::Pointer))
+            .tooltip(|| label(|| "New"))
+            .ide_popout_menu(move || {
+                let base = new_data.select.get_untracked().and_then(|kind| kind.path().map(ToOwned::to_owned))
+                    .map(|p| if p.is_dir() { p } else { p.parent().unwrap_or(&p).to_path_buf() })
+                    .unwrap_or_else(|| new_data.root.with_untracked(|r| r.path.clone()));
+                new_data.creation_menu(base)
+            }),
+        button("⊙", "Select Opened File", Box::new(move || {
+            if let Some(editor) = select_window.main_split.active_editor.get_untracked() {
+                if let Some(path) = editor.doc().content.with_untracked(|c| c.path().cloned()) {
+                    select_window.file_explorer.reveal_in_file_tree(path);
+                }
+            }
+        })),
+        button("⌃", "Expand Loaded Folders", Box::new(move || expand.set_tree_open(true))),
+        button("⌄", "Collapse All", Box::new(move || collapse.set_tree_open(false))),
+        label(|| "⋮").style(|s| s.size(24.0,24.0).items_center().justify_center().cursor(CursorStyle::Pointer))
+            .ide_popout_menu(move || {
+                let refresh = options.file_explorer.clone();
+                let left = options.panel.clone(); let right = left.clone(); let bottom = left.clone();
+                Menu::new("Project Options")
+                    .entry(MenuItem::new("Refresh").action(move || refresh.reload()))
+                    .separator()
+                    .entry(MenuItem::new("Move to Left").action(move || left.move_panel_to_position(PanelKind::FileExplorer, &PanelPosition::LeftTop)))
+                    .entry(MenuItem::new("Move to Right").action(move || right.move_panel_to_position(PanelKind::FileExplorer, &PanelPosition::RightTop)))
+                    .entry(MenuItem::new("Move to Bottom").action(move || bottom.move_panel_to_position(PanelKind::FileExplorer, &PanelPosition::BottomLeft)))
+            }),
+        button("−", "Hide Project", Box::new(move || hide.hide_panel(&PanelKind::FileExplorer))),
+    )).style(|s| s.height(32.0).width_full().items_center().flex_shrink(0.0_f32))
+}
+
 pub fn file_explorer_panel(
     window_tab_data: Rc<WindowTabData>,
     position: PanelPosition,
@@ -69,12 +139,7 @@ pub fn file_explorer_panel(
     let source_control = window_tab_data.source_control.clone();
     let (project_info, project_watch) = super::project::load(window_tab_data.common.clone());
     let library_watch = project_watch.libraries();
-    let header = crate::panel::chrome::header(
-        window_tab_data.clone(),
-        PanelKind::FileExplorer,
-        "Project",
-        floem::views::empty(),
-    );
+    let header = project_header(window_tab_data.clone());
     let open_editors = PanelBuilder::new(config, position)
         .add_height_style(
             "Open Editors",

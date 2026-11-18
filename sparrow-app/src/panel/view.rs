@@ -797,11 +797,7 @@ fn stripe_picker(
                     .margin_vert(2.0)
                     .border_radius(6.0)
                     .apply_if(is_active(), |s| {
-                        s.background(config.color(if p == PanelKind::FileExplorer {
-                            SparrowColor::ACTIVITY_CURRENT
-                        } else {
-                            SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND
-                        }))
+                        s.background(config.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))
                     })
             })
         },

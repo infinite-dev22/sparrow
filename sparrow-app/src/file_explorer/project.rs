@@ -137,7 +137,7 @@ pub fn role(path: &Path, root: Option<&Path>) -> Option<&'static str> {
     let relative = path.strip_prefix(root?).ok()?;
     let first = relative.components().next()?.as_os_str().to_str()?;
     match first {
-        ".dart_tool" | ".idea" | "build" | "target" | ".gradle" | "out" => Some("excluded"),
+        ".dart_tool" | ".sparrow" | "build" | "target" | ".gradle" | "out" => Some("excluded"),
         "lib" => Some("source"),
         "test" | "integration_test" => Some("test"),
         "android" | "ios" | "macos" | "linux" | "windows" | "web" => Some("platform"),
@@ -586,7 +586,7 @@ mod tests {
     use super::*;
     #[test] fn roles_propagate_by_path_component_without_leaking_to_similar_names() {
         let root = Path::new("/project");
-        for (path, expected) in [("build/cache/deep/output.bin",Some("excluded")),(".idea/caches/index",Some("excluded")),("test/features/widget_test.dart",Some("test")),("lib/features/model.dart",Some("source")),("test_helpers/file.dart",None),("buildable/file.dart",None)] {
+        for (path, expected) in [("build/cache/deep/output.bin",Some("excluded")),(".sparrow/caches/index",Some("excluded")),("test/features/widget_test.dart",Some("test")),("lib/features/model.dart",Some("source")),("test_helpers/file.dart",None),("buildable/file.dart",None)] {
             assert_eq!(role(&root.join(path), Some(root)), expected);
         }
         assert_eq!(role(Path::new("/elsewhere/test/file.dart"),Some(root)),None);

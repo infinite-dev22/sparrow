@@ -61,7 +61,8 @@ name = "sparrow Modern"
 "image_error"     = "circle-alert.svg"           # Lucide: circle-alert
 
 # ── Source control ───────────────────────────────────────────────────────
-"scm.icon"           = "git-branch.svg"          # Lucide: git-branch
+"scm.icon"           = "git.svg"                 # Lucide: git
+"scm.branch"         = "git-branch.svg"          # Lucide: git-branch
 "scm.diff.modified"  = "diff-modified.svg"       # Lucide: pencil-line
 "scm.diff.added"     = "diff-added.svg"          # Lucide: plus
 "scm.diff.removed"   = "diff-removed.svg"        # Lucide: minus
@@ -181,9 +182,9 @@ name = "sparrow Modern"
 "CMakeLists.txt" = "filetype-cmake.svg"
 ".env" = "filetype-env.svg"
 ".env.*" = "filetype-env.svg"
-".gitignore" = "filetype-git.svg"
-".gitattributes" = "filetype-git.svg"
-".gitmodules" = "filetype-git.svg"
+".gitignore" = "filetype-gitignore.svg"
+".gitattributes" = "filetype-gitattributes.svg"
+".gitmodules" = "filetype-gitmodules.svg"
 "AndroidManifest.xml" = "filetype-xml.svg"
 "Info.plist" = "filetype-plist.svg"
 "GoogleService-Info.plist" = "filetype-plist.svg"

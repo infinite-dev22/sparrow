@@ -70,7 +70,6 @@ impl ProjectWatch {
                         root.join(".dart_tool"),
                         root.join("android"),
                         root.join(".sparrow"),
-                        root.join(".idea"),
                     ];
                     if let Some(parent) = settings.as_ref().and_then(|p| p.parent())
                     {
@@ -114,7 +113,7 @@ impl ProjectWatch {
                                 let metadata = old == &root
                                     || old == &root.join(".dart_tool")
                                     || old == &root.join("android")
-                                    || old == &root.join(".sparrow") || old == &root.join(".idea")
+                                    || old == &root.join(".sparrow") || old == &root.join(".sparrow")
                                     || settings.as_ref().and_then(|p| p.parent())
                                         == Some(old.as_path());
                                 if !dirs.contains(old) && !metadata {
@@ -203,13 +202,11 @@ fn relevant(root: &Path, settings: Option<&Path>, event: &notify::Event) -> bool
         matches!(
             relative.to_str(),
             Some(
-                ".idea" | ".idea/workspace.xml" | ".dart_tool"
+                ".sparrow" | ".sparrow/workspace.json" | ".sparrow/settings.toml" | ".dart_tool"
                     | ".dart_tool/package_config.json"
                     | "pubspec.yaml"
                     | "pubspec.lock"
                     | "android"
-                    | ".sparrow"
-                    | ".sparrow/settings.toml"
                     | ".fvmrc"
             )
         ) || (relative.parent() == Some(Path::new("android"))
@@ -227,7 +224,7 @@ fn fingerprint(
         root.join("android"),
         root.join(".sparrow/settings.toml"),
         root.join(".fvmrc"),
-        root.join(".idea/workspace.xml"),
+        root.join(".sparrow/workspace.json"),
     ];
     paths.extend(settings.map(Path::to_path_buf));
     paths

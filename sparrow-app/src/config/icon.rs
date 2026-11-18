@@ -49,6 +49,7 @@ impl SparrowIcons {
     pub const IMAGE_ERROR: &'static str = "image_error";
 
     pub const SCM: &'static str = "scm.icon";
+    pub const SCM_BRANCH: &'static str = "scm.branch";
     pub const SCM_DIFF_MODIFIED: &'static str = "scm.diff.modified";
     pub const SCM_DIFF_ADDED: &'static str = "scm.diff.added";
     pub const SCM_DIFF_REMOVED: &'static str = "scm.diff.removed";

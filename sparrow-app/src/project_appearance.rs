@@ -25,51 +25,24 @@ fn hex(text: &str) -> Option<[u8; 3]> {
         u8::from_str_radix(&text[4..6], 16).ok()?,
     ])
 }
-pub(crate) fn idea_color(source: &str) -> Option<[u8; 3]> {
-    let xml = roxmltree::Document::parse(source).ok()?;
-    let component = xml
-        .descendants()
-        .find(|n| n.attribute("name") == Some("ProjectColorInfo"));
-    if let Some(component) = component {
-        // Current IDEs serialize this state as JSON (often CDATA). Older
-        // versions use XML options; read both without modifying .idea files.
-        let text = component
-            .children()
-            .filter_map(|n| n.text())
-            .collect::<String>();
-        let json = serde_json::from_str::<serde_json::Value>(text.trim()).ok();
-        let option = |key| {
-            component
-                .children()
-                .find(|n| n.attribute("name") == Some(key))
-                .and_then(|n| n.attribute("value"))
-        };
-        if let Some(color) = json
-            .as_ref()
-            .and_then(|v| v["customColor"].as_str())
-            .or_else(|| option("customColor"))
-            .and_then(hex)
-        {
-            return Some(color);
-        }
-        let index = json
-            .as_ref()
-            .and_then(|v| v["associatedIndex"].as_u64())
-            .or_else(|| option("associatedIndex").and_then(|v| v.parse().ok()));
-        if let Some(index) = index.and_then(|i| PALETTE.get(i as usize)) {
-            return Some(*index);
-        }
-    }
-    xml.descendants()
-        .find(|n| n.attribute("name") == Some("PROJECT_TOOLBAR_COLOR"))
-        .and_then(|n| n.attribute("value"))
-        .and_then(hex)
+pub(crate) fn workspace_color(source: &str) -> Option<[u8; 3]> {
+    let json: serde_json::Value = serde_json::from_str(source).ok()?;
+    let appearance = json.get("appearance")?;
+    appearance.get("color").and_then(|v| v.as_str()).and_then(hex)
+        .or_else(|| appearance.get("palette_index").and_then(|v| v.as_u64())
+            .and_then(|i| PALETTE.get(i as usize).copied()))
 }
 pub(crate) fn color(root: &Path) -> [u8; 3] {
-    let workspace = root.join(".idea/workspace.xml");
+    if let Ok(text) = std::fs::read_to_string(root.join(".sparrow/settings.toml")) {
+        if let Ok(settings) = toml::from_str::<toml::Value>(&text) {
+            if let Some(color) = settings.get("project").and_then(|v| v.get("color"))
+                .and_then(|v| v.as_str()).and_then(hex) { return color; }
+        }
+    }
+    let workspace = root.join(".sparrow/workspace.json");
     if std::fs::metadata(&workspace).is_ok_and(|m| m.len() <= 2 * 1024 * 1024) {
         if let Ok(text) = std::fs::read_to_string(workspace) {
-            if let Some(color) = idea_color(&text) {
+            if let Some(color) = workspace_color(&text) {
                 return color;
             }
         }
@@ -149,26 +122,10 @@ mod tests {
         assert_eq!(glow_strength(900.0, 500.0), 0.0);
     }
     #[test]
-    fn imports_idea_custom_colors_and_palette_with_safe_fallbacks() {
-        assert_eq!(
-            idea_color(
-                r##"<project><component name="ProjectColorInfo"><![CDATA[{"customColor":"#b46a38","associatedIndex":3}]]></component></project>"##
-            ),
-            Some([180, 106, 56])
-        );
-        assert_eq!(
-            idea_color(
-                r#"<project><component name="ProjectColorInfo"><option name="associatedIndex" value="1"/></component></project>"#
-            ),
-            Some(PALETTE[1])
-        );
-        assert_eq!(
-            idea_color(
-                r#"<project><component name="ProjectColorInfo">{"customColor":"oops","associatedIndex":99}</component></project>"#
-            ),
-            None
-        );
-        assert_eq!(idea_color("broken XML"), None);
-        assert!(hex("ééé").is_none());
+    fn reads_native_workspace_appearance() {
+        assert_eq!(workspace_color(r##"{"appearance":{"color":"#b46a38"}}"##), Some([180,106,56]));
+        assert_eq!(workspace_color(r#"{"appearance":{"palette_index":0}}"#), Some(PALETTE[0]));
+        assert_eq!(workspace_color(r#"{"appearance":{"palette_index":99}}"#), None);
+        assert_eq!(workspace_color("broken JSON"), None);
     }
 }

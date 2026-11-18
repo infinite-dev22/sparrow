@@ -30,7 +30,7 @@ Notifications, Pull Requests and Running Devices now use real Dart/Flutter IDE e
 
 
 Project source, test and excluded scopes now inherit through descendants. The
-`build`, `.dart_tool`, `.idea`, `target`, `.gradle` and `out` scopes carry a muted
+`build`, `.dart_tool`, `.sparrow`, `target`, `.gradle` and `out` scopes carry a muted
 brown background and orange labels and folder icons (file icons keep their normal artwork); `test` and `integration_test` carry a
 green scope background. Git changes retain their foreground status colors.
 Scope matching uses path components, so `test_helpers` does not inherit `test`.
@@ -39,7 +39,7 @@ Project identity is painted once beneath the main workbench. The title bar and
 both tool-window stripes expose this shared directional glow while editor and panel
 surfaces remain opaque. The frame has a solid base; native vector painting
 provides a horizontal amber peak near the project chip and a vertical fade ending
-at 300 px. It uses two-stop linear brushes, avoiding radial brushes and the GPU SVG icon atlas. Color comes from `.idea/workspace.xml`'s
+at 300 px. It uses two-stop linear brushes, avoiding radial brushes and the GPU SVG icon atlas. Color comes from `.sparrow/workspace.xml`'s
 `ProjectColorInfo` (custom hex color or associated palette index), including
 JSON/CDATA and legacy XML representations. Changes refresh through the project
 metadata watcher. Projects without valid color metadata receive a stable
@@ -61,3 +61,21 @@ The vector replacement was checked on the Intel i915 hardware adapter at
 100% and 200% X11 display scale. The isolated process's DRM render engine
 reported submitted GPU work, confirming this check did not use the earlier CPU
 fallback. The 200% capture is `target/appearance-hardware-2x.png`.
+
+Project appearance now reads `[project] color = "#b46a38"` from
+`.sparrow/settings.toml`, or `appearance.color` / `appearance.palette_index`
+from `.sparrow/workspace.json`. The TOML setting is preferred because session
+snapshots rewrite workspace.json. XML is no longer used for this metadata.
+
+The Project header provides a dropdown for Open Editors and refresh, New (the
+same creation/scaffold catalog as the tree context menu), Select Opened File,
+Expand Loaded Folders, Collapse All, docking options and Hide. Expanding loaded
+folders deliberately does not recursively enumerate unvisited build directories.
+The selected Project tool-window stripe uses the primary blue background.
+
+Native Wayland verification connected to `wayland-0` with no DISPLAY, renderer,
+or scale override. The compositor reported 1920x1080, 60.052 Hz, scale 1 and
+1920x1048 usable bounds. The process submitted Intel i915 render work.
+GNOME denied the automated screenshot API; no Wayland visual screenshot or
+pointer interaction verification is claimed. The preview used temporary app
+settings to avoid changing the user's normal session state.

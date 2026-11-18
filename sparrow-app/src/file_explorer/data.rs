@@ -37,6 +37,12 @@ use crate::{
     window_tab::CommonData,
 };
 
+fn set_loaded_node_open(node: &mut FileNodeItem, open: bool) {
+            if node.is_dir { node.open = open; }
+            for child in node.children.values_mut() { set_loaded_node_open(child, open); }
+            node.update_node_count(&node.path.clone());
+        }
+
 enum RenamedPath {
     NotRenaming,
     NameUnchanged,
@@ -686,33 +692,9 @@ impl FileExplorerData {
         }
     }
 
-    pub fn secondary_click(&self, path: &Path) {
-        self.select
-            .set(Some(FileNodeViewKind::Path(path.to_path_buf())));
-        self.common.focus.set(crate::window_tab::Focus::Panel(
-            crate::panel::kind::PanelKind::FileExplorer,
-        ));
+    pub fn creation_menu(&self, base_path_a: PathBuf) -> Menu {
         let common = self.common.clone();
-        let path_a = path.to_owned();
-        let left_diff_path = self.left_diff_path;
-        // TODO: should we just pass is_dir into secondary click?
-        let is_dir = self.is_dir(path);
-
-        let Some(workspace_path) = self.common.workspace.path.as_ref() else {
-            // There is no context menu if we are not in a workspace
-            return;
-        };
-
-        let is_workspace = path == workspace_path;
-
-        let base_path_a = if is_dir {
-            Some(path_a.clone())
-        } else {
-            path_a.parent().map(ToOwned::to_owned)
-        };
-        let base_path_a = base_path_a.as_ref().unwrap_or(workspace_path);
-
-        let mut menu = Menu::new("");
+        let workspace_path = self.common.workspace.path.as_deref().unwrap_or(&base_path_a);
         let mut new_menu = Menu::new("New");
 
         let base_path = base_path_a.clone();
@@ -772,7 +754,47 @@ impl FileExplorerData {
             let item=MenuItem::new(template.title.clone()).action(move ||commands.send(InternalCommand::NewScaffold{base:base.clone(),template:template.clone()}));
             if is_state {state_menu=state_menu.entry(item);} else {new_menu=new_menu.entry(item);}
         }
-        menu=menu.entry(new_menu.entry(state_menu));
+        new_menu.entry(state_menu)
+    }
+
+    pub fn set_tree_open(&self, open: bool) {
+        self.root.update(|root| {
+            set_loaded_node_open(root, open);
+            root.open = true;
+            root.update_node_count(&root.path.clone());
+        });
+    }
+
+    pub fn secondary_click(&self, path: &Path) {
+        let naming = self.naming;
+        self.select
+            .set(Some(FileNodeViewKind::Path(path.to_path_buf())));
+        self.common.focus.set(crate::window_tab::Focus::Panel(
+            crate::panel::kind::PanelKind::FileExplorer,
+        ));
+        let common = self.common.clone();
+        let path_a = path.to_owned();
+        let left_diff_path = self.left_diff_path;
+        // TODO: should we just pass is_dir into secondary click?
+        let is_dir = self.is_dir(path);
+
+        let Some(workspace_path) = self.common.workspace.path.as_ref() else {
+            // There is no context menu if we are not in a workspace
+            return;
+        };
+
+        let is_workspace = path == workspace_path;
+
+        let base_path_a = if is_dir {
+            Some(path_a.clone())
+        } else {
+            path_a.parent().map(ToOwned::to_owned)
+        };
+        let base_path_a = base_path_a.as_ref().unwrap_or(workspace_path);
+
+        let mut menu = Menu::new("");
+        menu=menu.entry(self.creation_menu(base_path_a.clone()));
+
         if is_workspace {menu=menu.entry(crate::git_actions::menu(common.internal_command,None));}
         if is_workspace && crate::dart::is_flutter_project(workspace_path) {for(title,args)in[("Build Project",vec!["build"]),("Clean Project",vec!["clean"]),("Run All Tests",vec!["test"]),("Run All Tests with Coverage",vec!["test","--coverage"])]{let commands=common.sparrow_command;menu=menu.entry(MenuItem::new(title).action(move ||commands.send(SparrowCommand{kind:CommandKind::Workbench(crate::command::SparrowWorkbenchCommand::FlutterProjectTask),data:Some(serde_json::json!(args))})));}}
 
@@ -983,6 +1005,22 @@ fn visible_project_nodes(root: &FileNodeItem) -> Vec<(PathBuf, bool, bool)> {
 #[cfg(test)]
 mod project_navigation_tests {
     use super::*;
+    #[test]
+    fn expansion_and_collapse_recount_loaded_descendants() {
+        let mut root = FileNodeItem { path: PathBuf::from("/p"), is_dir: true,
+            read: true, open: true, children: HashMap::new(), children_open_count: 0 };
+        let mut folder = root.clone(); folder.path = PathBuf::from("/p/lib");
+        let mut file = folder.clone(); file.path = PathBuf::from("/p/lib/a.dart"); file.is_dir = false;
+        folder.children.insert(file.path.clone(), file);
+        root.children.insert(folder.path.clone(), folder);
+        set_loaded_node_open(&mut root, true);
+        assert_eq!(root.children_open_count, 2);
+        set_loaded_node_open(&mut root, false);
+        root.open = true;
+        root.update_node_count(&root.path.clone());
+        assert_eq!(root.children_open_count, 1);
+        assert!(!root.children.values().next().unwrap().open);
+    }
     #[test]
     fn visible_tree_uses_explorer_order_and_skips_collapsed_descendants() {
         let node = |path: &str, is_dir: bool, open: bool| FileNodeItem {
