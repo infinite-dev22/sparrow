@@ -41,6 +41,20 @@ Import and duplicate leave their sources unchanged. Changes to copied source fil
 
 Manager validation: 295 application tests passed (9 SDK-dependent tests ignored), including lifecycle, source snapshot, overwrite protection, invalid-pack removal, symlink rejection and filtered-selection regression tests. Native desktop checks cover creation, disable, removal, undo, opening a manifest in the editor, filtered refresh, exporting to the user template root, and duplicate preview/apply/undo using keyboard navigation. Import validation and copying are covered by automated tests; the OS folder chooser uses the existing modal picker.
 
+## Built-in template editor
+
+Choose **Template Editor…** in the manager. The left pane lists `pack.yaml` and all pack files; select a file to edit it in the central multiline editor. Edit the YAML manifest to change metadata, dependencies, output paths and registration settings. **Add File** and **Remove File** update the in-memory pack. The manifest itself cannot be removed.
+
+Validation refreshes after a short typing pause. It checks manifest syntax/schema, source references, compatibility constraint syntax, template variables, duplicate outputs and path safety. **Sample name** controls the generated-file preview on the right, using the same renderer as scaffolding. Preview does not write generated application files or run registration, Dart analysis or code generation. Disabled packs can be previewed without enabling them. The display shows at most 2,000 lines; validation processes the full pack.
+
+**Preview Save** validates the current buffers and shows the proposed template-file diff. **Apply Save** commits it as one undoable transaction. Any subsequent edit invalidates the save preview. Files changed on disk since opening the draft, conflicting newly added files, and unsaved editor documents are protected by the normal transaction checks. Return to the manager and use **Undo Last Change…** to preview an inverse save.
+
+Bundled packs save as an override in the destination selected before opening the editor; an existing override is never overwritten. Open that existing project/user entry to edit it instead. Legacy single-file templates must first be duplicated into a pack. Invalid manifest-based packs can be opened and repaired.
+
+**Back to Manager** keeps unsaved buffers for the window session; **Resume Editor…** returns to that draft even if another pack is selected. **Discard Draft** explicitly drops unsaved buffers without changing saved files. Drafts are not persisted across IDE restarts. The existing **Edit Manifest** / **Edit Sources** actions still open the ordinary workbench editor.
+
+Editor validation: 303 application tests passed (9 SDK-dependent tests ignored), including byte parity with all bundled generators, invalid-pack repair, preview without application writes, added-file conflicts, save snapshots and undo. Native desktop checks verified multiline editing, live errors, file switching with document undo, save preview/apply/undo, and draft resume/discard.
+
 ## Schema 2 example
 
 ```yaml

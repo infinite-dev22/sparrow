@@ -1,4 +1,5 @@
 //! Manage template data; all mutations are previewed transactions.
+mod editor;
 use super::{catalog, engine};
 use crate::{
     command::InternalCommand, config::color::SparrowColor, window_tab::WindowTabData,
@@ -24,6 +25,7 @@ pub(super) struct State {
     query: RwSignal<String>,
     id: RwSignal<String>,
     global: RwSignal<bool>,
+    editor: editor::State,
 }
 impl State {
     pub fn new(cx: Scope) -> Self {
@@ -34,6 +36,7 @@ impl State {
             query: cx.create_rw_signal(String::new()),
             id: cx.create_rw_signal("my.custom.template".into()),
             global: cx.create_rw_signal(false),
+            editor: editor::State::new(cx),
         }
     }
     fn refresh(&self) {
@@ -95,6 +98,7 @@ impl super::State {
         self.plan.set(None);
         self.error.set(String::new());
         self.undoing.set(false);
+        self.manager.editor.open.set(false);
         self.manager_mode.set(true);
         match result {
             Ok(ctx) => {
@@ -466,6 +470,13 @@ fn stage(window: &WindowTabData, result: Result<engine::Plan, String>) {
 }
 
 pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
+    let editing = window.scaffold.manager.editor.open;
+    floem::views::dyn_container(move || editing.get(), move |editing| -> Box<dyn View> {
+        if editing { Box::new(editor::view(window.clone())) }
+        else { Box::new(manager_view(window.clone())) }
+    }).style(|s|s.absolute().size_full())
+}
+fn manager_view(window: Rc<WindowTabData>) -> impl View {
     let state = window.scaffold.clone();
     let manager = state.manager.clone();
     let config = window.common.config;
@@ -589,6 +600,8 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         }
     ).style(|s|s.flex_col())).style(|s|s.flex_grow(1.0_f32).min_width(0.0).width_full());
     let edit_window = window.clone();
+    let built_in_window = window.clone();
+    let draft = manager.editor.draft;
     let export_window = window.clone();
     let toggle_window = window.clone();
     let remove_window = window.clone();
@@ -649,6 +662,10 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         stack((list,stack((detail,preview)).style(|s|s.flex_col().flex_grow(1.0_f32).min_width(0.0).height_full())))
             .style(|s|s.height(420.0).width_full().gap(12.0)),
         stack((
+            focus.control(label(move || if draft.get().is_some_and(|d|d.dirty()) {"Resume Editor…"} else {"Template Editor…"})
+                .on_click_stop(move |_| {
+                    if let Err(e) = editor::open(&built_in_window) { error.set(e); }
+                })),
             focus.control(label(||"Edit Manifest").on_click_stop(move |_| {
                 let m = &edit_window.scaffold.manager;
                 let result = m.entry().ok_or("Select a template".to_string())

@@ -567,20 +567,9 @@ pub fn plan_sibling(
     }
     plan_pack_at(ctx, base, pack, name)
 }
-fn plan_pack_at(
-    ctx: &Context,
-    base: &Path,
-    pack: &Pack,
-    name: &str,
-) -> Result<Plan, String> {
+/// Pure rendering shared by generation and the in-manager draft preview.
+pub(crate) fn render_pack(ctx: &Context, pack: &Pack, name: &str) -> Result<Vec<(PathBuf, String)>, String> {
     validate_pack(pack)?;
-    if pack.disabled {
-        return Err("This pack is disabled".into());
-    }
-    let base = base.canonicalize().map_err(|e| e.to_string())?;
-    if !base.starts_with(&ctx.root) || !base.is_dir() {
-        return Err("Choose a directory inside the target package".into());
-    }
     let (snake, variable) = name_parts(name)?;
     let suffix = pack.suffix.as_deref().unwrap_or("");
     let suffixed_snake = if snake.ends_with(suffix) {
@@ -675,15 +664,10 @@ fn plan_pack_at(
             },
         ),
     ]);
-    let mut changes = vec![];
+    let mut files = vec![];
     let mut seen = BTreeSet::new();
     for file in &pack.files {
-        let output = relative(&substitute(&file.path, &vars)?)?;
-        let path = base.join(output);
-        let rel = path
-            .strip_prefix(&ctx.root)
-            .map_err(|_| "Output escapes target package")?
-            .to_path_buf();
+        let rel = relative(&substitute(&file.path, &vars)?)?;
         if rel.components().next().is_some_and(|c| {
             [".sparrow", ".git", ".dart_tool", "build"]
                 .iter()
@@ -695,21 +679,38 @@ fn plan_pack_at(
         if !seen.insert(rel.clone()) {
             return Err(format!("Duplicate output: {}", rel.display()));
         }
+        files.push((rel, substitute(&file.content, &vars)?));
+    }
+    Ok(files)
+}
+fn plan_pack_at(
+    ctx: &Context,
+    base: &Path,
+    pack: &Pack,
+    name: &str,
+) -> Result<Plan, String> {
+    validate_pack(pack)?;
+    if pack.disabled {
+        return Err("This pack is disabled".into());
+    }
+    let base = base.canonicalize().map_err(|e| e.to_string())?;
+    if !base.starts_with(&ctx.root) || !base.is_dir() {
+        return Err("Choose a directory inside the target package".into());
+    }
+    let mut changes = vec![];
+    for (rel, after) in render_pack(ctx, pack, name)? {
+        let path = base.join(rel);
+        let rel = path.strip_prefix(&ctx.root).map_err(|_| "Output escapes target package")?;
+        if rel.components().next().is_some_and(|c| [".sparrow", ".git", ".dart_tool", "build"].iter().any(|p| c.as_os_str() == *p)) {
+            return Err("Pack files cannot replace IDE configuration".into());
+        }
         checked_path(&ctx.root, &path)?;
-        let after = substitute(&file.content, &vars)?;
         let before = read(&path)?;
         if before.as_ref().is_some_and(|old| old != &after) {
-            return Err(format!(
-                "Already exists with different content: {}",
-                path.display()
-            ));
+            return Err(format!("Already exists with different content: {}", path.display()));
         }
         if before.as_ref() != Some(&after) {
-            changes.push(Change {
-                path,
-                before,
-                after: Some(after),
-            });
+            changes.push(Change { path, before, after: Some(after) });
         }
     }
     let path = ctx.root.join("pubspec.yaml");
