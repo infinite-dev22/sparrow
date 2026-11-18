@@ -889,12 +889,8 @@ impl FileExplorerData {
             // Delete, which can be useful for large files.
             let path = path_a.clone();
             let proxy = common.proxy.clone();
-            let trash_text = if is_dir {
-                "Move Directory to Trash"
-            } else {
-                "Move File to Trash"
-            };
-            menu = menu.entry(MenuItem::new(trash_text).action(move || {
+
+            menu = menu.entry(MenuItem::new("Delete").action(move || {
                 proxy.trash_path(path.clone(), |res| {
                     if let Err(err) = res {
                         tracing::warn!("Failed to trash path: {:?}", err);
