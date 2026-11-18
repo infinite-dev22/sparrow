@@ -173,6 +173,7 @@ mod tests {
                 direction: SplitDirection::Vertical,
             },
             panel: PanelInfo {
+                layout_version: 1,
                 panels: default_panel_order(),
                 styles: Default::default(),
                 sections: Default::default(),

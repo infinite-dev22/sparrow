@@ -1,8 +1,8 @@
 # Android Studio reference layout
 
-The reference is the supplied 1920×1048 Android Studio screenshot. The layout uses a 34 px main toolbar, 32 px editor/tool headers, 35 px side stripes, 400 px Project panel, 24 px status bar, and a Run panel spanning below both Project and editor. Run has a process tab, a left-aligned action toolbar, and a separate scrollable console.
+The reference is the supplied 1920×1048 Android Studio screenshot. The layout uses a 34 px main toolbar, 32 px editor/tool headers, 35 px side stripes, 420 px Project panel, 24 px status bar, and a Run panel spanning below both Project and editor. Run has a process tab, a left-aligned action toolbar, and a separate scrollable console.
 
-For existing installations, run **Appearance: Apply Android Studio Reference Layout** from the command palette. This deliberately replaces saved theme, font, spacing, and panel placement overrides with the reference preset. It opens Project, hides the right panels, and opens Run only when a Flutter app is running. Idle workspaces use the full editor height. Existing source files and run configurations are preserved.
+The reference layout is the default. Existing workspaces receive a one-time upgrade of theme, font, spacing and panel placement; later personal layout changes are preserved. **Appearance: Apply Android Studio Reference Layout** remains available to reset those changes. It opens Project, hides the right panels, and opens Run only when a Flutter app is running. Idle workspaces use the full editor height. Existing source files and run configurations are preserved.
 
 Inter Regular/Semibold and JetBrains Mono Regular/Italic are bundled under their SIL Open Font Licenses in `extra/fonts`. The standard `vendored-fonts` build feature loads them into Floem's font database. Built-in Dart and Flutter file icons resolve from the embedded icon assets.
 
@@ -31,14 +31,24 @@ Notifications, Pull Requests and Running Devices now use real Dart/Flutter IDE e
 
 Project source, test and excluded scopes now inherit through descendants. The
 `build`, `.dart_tool`, `.idea`, `target`, `.gradle` and `out` scopes carry a muted
-brown background and orange labels/icons; `test` and `integration_test` carry a
+brown background and orange labels and folder icons (file icons keep their normal artwork); `test` and `integration_test` carry a
 green scope background. Git changes retain their foreground status colors.
 Scope matching uses path components, so `test_helpers` does not inherit `test`.
 
 Project identity is painted once beneath the main workbench. The title bar and
-both tool-window stripes expose this shared radial glow while editor and panel
-surfaces remain opaque. Color comes from `.idea/workspace.xml`'s
+both tool-window stripes expose this shared directional glow while editor and panel
+surfaces remain opaque. The frame has a solid base; a transparent SVG underlay
+provides a horizontal amber peak near the project chip and a vertical fade ending
+at 300 px. It works on both GPU and software renderers, since Vger does not support
+direct radial background brushes. Color comes from `.idea/workspace.xml`'s
 `ProjectColorInfo` (custom hex color or associated palette index), including
 JSON/CDATA and legacy XML representations. Changes refresh through the project
 metadata watcher. Projects without valid color metadata receive a stable
 path-derived palette color; no JetBrains configuration is written.
+
+The directional glow was checked in the native renderer against the supplied
+2026-11-18 16:44 reference. At (100, 1), reference RGB is (94, 67, 49)
+and Sparrow is (94, 67, 50); at (500, 1), they are (56, 49, 45) and
+(56, 49, 46). Both return to frame RGB (38, 40, 44) at (700, 1)
+and (30, 300). These samples check the backdrop, not a pixel-perfect match
+of the entire IDE. Custom project colors use the same directional falloff.

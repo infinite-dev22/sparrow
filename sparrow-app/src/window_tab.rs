@@ -341,7 +341,7 @@ impl WindowTabData {
         let mut all_disabled_volts = disabled_volts.clone();
         all_disabled_volts.extend(workspace_disabled_volts.clone());
 
-        let workspace_info = if workspace.path.is_some() {
+        let mut workspace_info = if workspace.path.is_some() {
             db.get_workspace_info(&workspace).ok()
         } else {
             let mut info = db.get_workspace_info(&workspace).ok();
@@ -350,6 +350,14 @@ impl WindowTabData {
             }
             info
         };
+
+        // Upgrade pre-reference workspaces once; subsequent resizing and panel
+        // choices remain workspace preferences, rather than resetting each launch.
+        if workspace_info.as_mut().is_some_and(|info| info.panel.upgrade_reference_layout()) {
+            for (section, key, value) in Self::reference_appearance_values() {
+                SparrowConfig::update_file(section, key, value);
+            }
+        }
 
         let config = SparrowConfig::load(
             &workspace,
@@ -553,9 +561,7 @@ impl WindowTabData {
                 }
             })
             .unwrap_or_else(|| {
-                let panel_order = db
-                    .get_panel_orders()
-                    .unwrap_or_else(|_| default_panel_order());
+                let panel_order = default_panel_order();
                 PanelData::new(
                     cx,
                     panel_order,
@@ -4310,8 +4316,8 @@ impl WindowTabData {
         );
     }
 
-    fn apply_android_studio_layout(&self) {
-        let values: Vec<(&str, &str, toml_edit::Value)> = vec![
+    fn reference_appearance_values() -> Vec<(&'static str, &'static str, toml_edit::Value)> {
+        vec![
             ("core", "color-theme", "Islands Dark".into()),
             ("core", "icon-theme", "sparrow Modern".into()),
             ("ui", "font-family", "Inter, Noto Sans, sans-serif".into()),
@@ -4334,7 +4340,11 @@ impl WindowTabData {
             ("terminal", "font-family", "JetBrains Mono, Noto Sans Mono, monospace".into()),
             ("terminal", "font-size", 13.into()),
             ("terminal", "line-height", 1.4.into()),
-        ];
+        ]
+    }
+
+    fn apply_android_studio_layout(&self) {
+        let values = Self::reference_appearance_values();
         for (section, key, value) in values {
             if SparrowConfig::update_file(section, key, value).is_none() {
                 self.show_alert(
@@ -4348,7 +4358,7 @@ impl WindowTabData {
         self.reload_config();
         let available = self.common.workbench_size.get_untracked();
         self.panel.size.update(|size| {
-            size.left = 400.0_f64.min((available.width * 0.4).max(150.0));
+            size.left = 420.0_f64.min((available.width * 0.4).max(150.0));
             size.right =
                 (self.layout_rect.get_untracked().width() * 0.243).max(250.0);
             size.bottom = (self.layout_rect.get_untracked().height() * 342.0

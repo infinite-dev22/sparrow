@@ -872,7 +872,7 @@ pub fn title(
     .style(move |s| {
         let config = config.get();
         s.width_pct(100.0)
-            .height(config.ui.header_height().max(38) as f32)
+            .height(config.ui.header_height().max(34) as f32)
             .flex_shrink(0.0_f32)
             .items_center()
             .background(Color::TRANSPARENT)

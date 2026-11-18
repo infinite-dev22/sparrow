@@ -427,11 +427,11 @@ fn file_explorer_view(
                                             kind_for_style.path().and_then(|path| {
                                                 if is_root && project_info.with(|p| p.flutter) {
                                                     None
-                                                } else if role == Some("source") {
+                                                } else if is_dir && role == Some("source") {
                                                     Some(config.color(SparrowColor::EDITOR_LINK))
-                                                } else if role == Some("test") {
+                                                } else if is_dir && role == Some("test") {
                                                     Some(Color::from_rgb8(109, 161, 107))
-                                                } else if role == Some("excluded") {
+                                                } else if is_dir && role == Some("excluded") {
                                                     Some(Color::from_rgb8(184, 133, 88))
                                                 } else if is_dir {
                                                     config.folder_svg(path).1
@@ -481,7 +481,7 @@ fn file_explorer_view(
                                             .unwrap_or_default(),
                                         |x| {
                                             x.background(config.get().color(
-                                            SparrowColor::PANEL_CURRENT_BACKGROUND,
+                                            SparrowColor::PANEL_SELECTION_BACKGROUND,
                                         ))
                                         },
                                     )

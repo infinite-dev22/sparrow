@@ -3643,6 +3643,9 @@ fn window_tab(
     let project_color = window_tab_data.common.project_color;
     let view = stack((
         stack((
+            svg(move || crate::project_appearance::glow_svg(project_color.get()))
+                .style(|s| s.absolute().width(700.0).height(300.0)
+                    .pointer_events_none().set(floem::style::TextColor, None)),
             title(
                 window_tab_data.clone(),
                 window_tabs,
@@ -3666,9 +3669,9 @@ fn window_tab(
             window_origin.set(point);
         })
         .style(move |s| {
-            s.size_full().flex_col().background(crate::project_appearance::backdrop(
-                config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND), project_color.get(),
-            ))
+            s.size_full().flex_col().background(
+                config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
+            )
         })
         .disabled(modal_open)
         .debug_name("Base Layer"),

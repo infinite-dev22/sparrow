@@ -94,10 +94,29 @@ pub struct PanelSize {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PanelInfo {
+    #[serde(default)]
+    pub layout_version: u32,
     pub panels: PanelOrder,
     pub styles: im::HashMap<PanelPosition, PanelStyle>,
     pub size: PanelSize,
     pub sections: im::HashMap<PanelSection, bool>,
+}
+
+impl PanelInfo {
+    /// Migrate once, preserving user changes made after the reference defaults.
+    pub fn upgrade_reference_layout(&mut self) -> bool {
+        if self.layout_version >= 1 { return false; }
+        self.layout_version = 1;
+        self.size.left = 420.0;
+        self.size.right = 466.0;
+        self.size.bottom = 342.0;
+        self.panels = default_panel_order();
+        self.styles.clear();
+        self.styles.insert(PanelPosition::LeftTop, PanelStyle {
+            active: 0, shown: true, maximized: false,
+        });
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -210,6 +229,7 @@ impl PanelData {
 
     pub fn panel_info(&self) -> PanelInfo {
         PanelInfo {
+            layout_version: 1,
             panels: self.panels.get_untracked(),
             styles: self.styles.get_untracked(),
             size: self.size.get_untracked(),
@@ -780,5 +800,27 @@ mod tool_window_tests {
                 (expected.active, expected.shown, expected.maximized)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reference_layout_tests {
+    use super::*;
+    #[test]
+    fn legacy_layout_migrates_once_then_preserves_resizing() {
+        let legacy = serde_json::json!({
+            "panels": {}, "styles": {}, "sections": {},
+            "size": {"left":250.0,"right":250.0,"bottom":250.0,
+                "left_split":0.5,"right_split":0.5,"bottom_split":0.5}
+        });
+        let mut info: PanelInfo = serde_json::from_value(legacy).unwrap();
+        assert!(info.upgrade_reference_layout());
+        assert_eq!(info.size.left, 420.0);
+        assert!(info.styles[&PanelPosition::LeftTop].shown);
+        info.size.left = 510.0;
+        let mut restored: PanelInfo = serde_json::from_str(
+            &serde_json::to_string(&info).unwrap()).unwrap();
+        assert!(!restored.upgrade_reference_layout());
+        assert_eq!(restored.size.left, 510.0);
     }
 }

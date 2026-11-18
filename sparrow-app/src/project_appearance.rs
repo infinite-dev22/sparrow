@@ -1,8 +1,7 @@
 //! Project identity is a shared backdrop, not separately tinted chrome widgets.
-use floem::peniko::{Color, Gradient};
 use std::path::Path;
 const PALETTE: [[u8; 3]; 9] = [
-    [206, 68, 60],
+    [224, 130, 61],
     [226, 114, 55],
     [45, 188, 173],
     [56, 149, 225],
@@ -80,24 +79,23 @@ pub(crate) fn color(root: &Path) -> [u8; 3] {
         });
     PALETTE[hash as usize % PALETTE.len()]
 }
-fn mix(base: Color, accent: [u8; 3], amount: f32) -> Color {
-    let b = base.to_rgba8();
-    let blend = |b: u8, a: u8| {
-        ((b as f32) * (1.0 - amount) + a as f32 * amount).round() as u8
-    };
-    Color::from_rgb8(
-        blend(b.r, accent[0]),
-        blend(b.g, accent[1]),
-        blend(b.b, accent[2]),
-    )
-}
-pub(crate) fn backdrop(base: Color, accent: Option<[u8; 3]>) -> Gradient {
-    let accent = accent.unwrap_or([65, 77, 104]);
-    Gradient::new_radial((130.0, 0.0), 620.0).with_stops([
-        (0.0, mix(base, accent, 0.26)),
-        (0.45, mix(base, accent, 0.12)),
-        (1.0, base),
-    ])
+/// Rasterized by Floem's SVG renderer on both GPU and software backends.
+/// Direct gradient background brushes are unsupported by Vger, so the frame must
+/// keep a solid background and composite this transparent underlay over it.
+pub(crate) fn glow_svg(accent: Option<[u8; 3]>) -> String {
+    let [r, g, b] = accent.unwrap_or([65, 77, 104]);
+    format!(r##"<svg xmlns="http://www.w3.org/2000/svg" width="700" height="300" viewBox="0 0 700 300">
+<defs>
+<linearGradient id="glow" gradientUnits="userSpaceOnUse" x1="0" x2="700">
+<stop offset="0" stop-color="rgb({r},{g},{b})" stop-opacity="0"/>
+<stop offset="0.12857143" stop-color="rgb({r},{g},{b})" stop-opacity="0.3"/>
+<stop offset="1" stop-color="rgb({r},{g},{b})" stop-opacity="0"/>
+</linearGradient>
+<linearGradient id="fade" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="300">
+<stop offset="0" stop-color="white"/><stop offset="1" stop-color="black"/>
+</linearGradient>
+<mask id="vertical" maskUnits="userSpaceOnUse" x="0" y="0" width="700" height="300"><rect width="700" height="300" fill="url(#fade)"/></mask>
+</defs><rect width="700" height="300" fill="url(#glow)" mask="url(#vertical)"/></svg>"##)
 }
 #[cfg(test)]
 mod tests {
