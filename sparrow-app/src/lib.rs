@@ -25,11 +25,14 @@ pub mod listener;
 pub mod lsp;
 pub mod main_split;
 pub mod markdown;
+pub mod menus;
+pub mod modal_focus;
 pub mod palette;
 pub mod panel;
 pub mod plugin;
 pub mod proxy;
 pub mod rename;
+pub mod workspace_undo;
 pub mod settings;
 pub mod snippet;
 pub mod source_control;
@@ -45,6 +48,30 @@ pub mod web_link;
 pub mod window;
 pub mod window_tab;
 pub mod workspace;
+pub mod widget_kind;
+pub mod widget_tree;
+pub mod dart;
+pub mod outline;
 
 #[cfg(windows)]
 extern crate windows_sys as windows;
+
+mod persistence;
+
+pub mod code_action_preview;
+
+pub mod popup_menu;
+
+pub mod project_session;
+
+pub mod markdown_preview;
+
+pub mod file_refactor;
+
+pub mod scaffold;
+
+pub mod formatting;
+
+pub mod project_search;
+
+pub mod git_actions;

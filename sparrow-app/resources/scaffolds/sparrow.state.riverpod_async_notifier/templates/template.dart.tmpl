@@ -1,0 +1,11 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+class {{name}} extends AsyncNotifier<int> {
+  @override
+  Future<int> build() async => 0;
+  Future<void> refresh() async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(build);
+  }
+}
+final {{variable}}Provider = AsyncNotifierProvider<{{name}}, int>({{name}}.new);

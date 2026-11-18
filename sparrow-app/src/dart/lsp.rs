@@ -1,0 +1,1953 @@
+//! Persistent `dart language-server` client.
+//!
+//! Spawns one server per workspace, keeps it warm, sends incremental
+//! `didChange` notifications on a 150 ms debounce, and routes
+//! `publishDiagnostics` back to the UI.
+//!
+//! ## Wire diagram
+//!
+//! ```text
+//!  [UI thread]                    [writer thread]              [dart language-server]
+//!  send_change ──► Command::Change ──► debounce ──► didChange ──►
+//!                                                                  ──► publishDiagnostics
+//!  [UI thread]                    [reader thread]              ◄──
+//!  effect ◄── Notification ◄───── LSP response / notif
+//! ```
+//!
+//! ## Performance
+//!
+//! - Server boot:      ~500 ms (once per workspace)
+//! - First didOpen:    immediate (no debounce)
+//! - Debounced change: 150 ms
+//! - Round-trip:       20–100 ms on warm summaries
+//! - Old approach:     500 ms – 2 s **per keystroke**
+
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
+use lsp_types::{CompletionItem, CompletionResponse, Diagnostic};
+use parking_lot::Mutex;
+use serde_json::{Value, json};
+use std::io::BufWriter;
+use std::process::Command;
+use std::{
+    collections::HashMap,
+    io::{BufRead, BufReader, Write},
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicI64, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+
+/// A one-shot callback invoked from the reader thread when a response arrives.
+/// `FnOnce + Send` is enough; nothing ever blocks on it.
+type ResponseCallback = Box<dyn FnOnce(serde_json::Value) + Send + 'static>;
+
+/// `create_signal_from_channel` in this floem rev is typed to
+/// `std::sync::mpsc::Receiver`. The LSP's notification channel therefore
+/// uses `std::sync::mpsc`, not the crossbeam channel used elsewhere.
+type NotifSender = std::sync::mpsc::Sender<Notification>;
+type NotifReceiver = std::sync::mpsc::Receiver<Notification>;
+
+/// How long to wait after the last keystroke before sending `didChange`.
+/// 150 ms is invisible to the human eye and far enough below the server's
+/// own debounce that we don't fight it.
+const DEBOUNCE: Duration = Duration::from_millis(150);
+
+/// Upper bound on how long we block waiting for `initialize` to answer.
+const INIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+// ─────────────────────────────────────────────────────────────────────
+//  Public API
+// ─────────────────────────────────────────────────────────────────────
+
+use super::closing_labels::ClosingLabel;
+
+/// Events emitted from the server to the UI.
+#[derive(Debug, Clone)]
+pub enum Notification {
+    PackageResolution {id:u64,result:Result<(),String>},
+    /// Fired exactly once, shortly after the server's `initialize`
+    /// handshake completes. Consumers use it to kick off requests that
+    /// would fail if sent before the server is initialized (e.g.
+    /// semantic tokens for open files).
+    Ready,
+    ApplyEdit { id: Value, edit: Option<lsp_types::WorkspaceEdit> },
+    /// Diagnostics for a single file. `version` is the LSP document version
+    /// we sent, or `-1` if the server didn't include one.
+    Diagnostics {
+        path: PathBuf,
+        version: i64,
+        diagnostics: Vec<Diagnostic>,
+    },
+    /// Closing labels notification from Dart LSP (`dart/textDocument/publishClosingLabels`).
+    ClosingLabels {
+        path: PathBuf,
+        labels: Vec<ClosingLabel>,
+    },
+    /// Flutter outline notification from Dart LSP (`dart/textDocument/publishFlutterOutline`).
+    FlutterOutline {
+        path: PathBuf,
+        outline: Value,
+    },
+    /// Standard Dart outline notification (`dart/textDocument/publishOutline`).
+    Outline {
+        path: PathBuf,
+        outline: Value,
+    },
+    /// `window/logMessage` or parse noise.
+    Log(String),
+    /// Fatal — the server exited unexpectedly.
+    Error(String),
+}
+
+/// Handle to the persistent Dart language server. Cheap to clone.
+#[derive(Clone)]
+pub struct DartLspService {
+    tx: Sender<LspCommand>,
+    state: Arc<SharedState>,
+    last_sent: Arc<Mutex<HashMap<PathBuf, i64>>>,
+    /// Refcount guard. `Command::Shutdown` is only sent when the *last*
+    /// clone of this handle drops. Transient clones (e.g. the ones
+    /// captured into `schedule_refresh` timer closures) would otherwise
+    /// kill the language server ~300 ms after every edit.
+    alive: Arc<()>,
+}
+
+impl DartLspService {
+    /// Spawn a server for `workspace_root`. Returns `(service, receiver)`;
+    /// the receiver should be handed to `floem::ext_event::create_signal_from_channel`
+    /// **exactly once**.
+    ///
+    /// If `dart` is not on PATH the service is returned in the "unavailable"
+    /// state and every method is a no-op — the caller never needs to check.
+    pub fn spawn(workspace_root: PathBuf) -> (Self, NotifReceiver) {
+        Self::spawn_inner(workspace_root,true)
+    }
+
+    /// Isolated, read-only analysis session for unsaved scaffold projections.
+    /// Does not bootstrap packages or run pub get in the user's workspace.
+    pub(crate) fn spawn_for_templates(workspace_root: PathBuf) -> (Self, NotifReceiver) {
+        Self::spawn_inner(workspace_root,false)
+    }
+
+    /// End a private template session even if an asynchronous callback still
+    /// holds a service clone. Ordinary workbench sessions use last-clone Drop.
+    pub(crate) fn shutdown_template_session(&self) {
+        let _ = self.tx.send(LspCommand::Shutdown);
+    }
+
+    fn spawn_inner(workspace_root: PathBuf, bootstrap: bool) -> (Self, NotifReceiver) {
+        let (cmd_tx, cmd_rx) = unbounded();
+        let (notif_tx, notif_rx) = std::sync::mpsc::channel();
+        let last_sent = Arc::new(Mutex::new(HashMap::new()));
+        let state = Arc::new(SharedState {
+            next_id: AtomicI64::new(1),
+            pending_requests: Mutex::new(HashMap::new()),
+            open_files: Mutex::new(HashMap::new()),
+            shutting_down: AtomicBool::new(false),
+            semantic_tokens_legend: Mutex::new(None),
+            completion_trigger_characters: Mutex::new(Vec::new()),
+            is_running: AtomicBool::new(false),
+            startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
+        });
+
+        let dart_bin = match crate::dart::sdk::find_dart_binary(Some(&workspace_root)) {
+            Some(bin) => bin,
+            None => {
+                *state.startup_error.lock()=Some("No Dart SDK was found. Configure the Dart or Flutter SDK in Settings.".into());
+                tracing::warn!(
+                    "`dart` not found in SDK or PATH — Dart LSP disabled. \
+                     Install the Dart/Flutter SDK to enable."
+                );
+                return (
+                    Self {
+                        tx: cmd_tx,
+                        state: state.clone(),
+                        last_sent,
+                        alive: Arc::new(()),
+                    },
+                    notif_rx,
+                );
+            }
+        };
+
+        *state.client_tx.lock()=Some(cmd_tx.clone());
+        // Bootstrap workspace in background (detect SDK, run pub get if needed)
+        if bootstrap {
+        let resolution_notifications=notif_tx.clone();
+        crate::dart::bootstrap::bootstrap_workspace_observed(&workspace_root,Some(Box::new(move |id,result|{
+            let _=resolution_notifications.send(Notification::PackageResolution{id,result});
+        })));
+
+        }
+
+        let mut child = match analysis_server_command(&dart_bin)
+            .current_dir(&workspace_root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                *state.startup_error.lock()=Some(format!("Could not launch Dart analysis: {e}"));
+                tracing::error!("failed to spawn `dart language-server` ({:?}): {e}", dart_bin);
+                return (
+                    Self {
+                        tx: cmd_tx,
+                        state: state.clone(),
+                        last_sent,
+                        alive: Arc::new(()),
+                    },
+                    notif_rx,
+                );
+            }
+        };
+
+        let stdin = child.stdin.take().expect("child stdin");
+        let stdout = child.stdout.take().expect("child stdout");
+        let stderr = child.stderr.take().expect("child stderr");
+
+        // Publish liveness before workers can report an early exit.
+        state.is_running.store(true, Ordering::Relaxed);
+        // Writer
+        {
+            let state = state.clone();
+            let notif_tx = notif_tx.clone();
+            let root = workspace_root.clone();
+            thread::Builder::new()
+                .name("DartLspWriter".into())
+                .spawn(move || {
+                    if let Err(e) = run_writer(
+                        state.clone(),
+                        BufWriter::new(stdin),
+                        cmd_rx,
+                        &root,
+                        notif_tx.clone(),
+                    ) {
+                        *state.startup_error.lock()=Some(e.clone());
+                        fail_pending_requests(&state,&e);
+                        let _ = notif_tx.send(Notification::Error(e));
+                    }
+                })
+                .expect("spawn DartLspWriter");
+        }
+
+        // Reader
+        {
+            let state = state.clone();
+            thread::Builder::new()
+                .name("DartLspReader".into())
+                .spawn(move || {
+                    run_reader(state, BufReader::new(stdout), notif_tx);
+                })
+                .expect("spawn DartLspReader");
+        }
+
+        // Stderr drain
+        thread::Builder::new()
+            .name("DartLspStderr".into())
+            .spawn(move || {
+                let mut reader = BufReader::new(stderr);
+                let mut line = String::new();
+                while matches!(reader.read_line(&mut line),Ok(n) if n>0) {
+                    if !line.trim().is_empty() {
+                        tracing::debug!("dart language-server: {}", line.trim_end());
+                    }
+                    line.clear();
+                }
+            })
+            .expect("spawn DartLspStderr");
+
+        // Reaper
+        thread::Builder::new()
+            .name("DartLspReaper".into())
+            .spawn(move || {
+                let _ = child.wait();
+                tracing::debug!("dart language-server exited");
+            })
+            .expect("spawn DartLspReaper");
+
+        (
+            Self {
+                tx: cmd_tx,
+                state: state.clone(),
+                last_sent,
+                alive: Arc::new(()),
+            },
+            notif_rx,
+        )
+    }
+
+    /// A service that does nothing. Used for remote workspaces, projectless
+    /// workspaces, or when `dart` is not on PATH.
+    pub fn spawn_unavailable() -> (Self, NotifReceiver) {
+        let (tx, _rx) = unbounded();
+        let (notif_tx, notif_rx) = std::sync::mpsc::channel();
+        drop(notif_tx);
+        (
+            Self {
+                tx,
+                state: Arc::new(SharedState {
+                    next_id: AtomicI64::new(1),
+                    pending_requests: Mutex::new(HashMap::new()),
+                    open_files: Mutex::new(HashMap::new()),
+                    shutting_down: AtomicBool::new(false),
+                    semantic_tokens_legend: Mutex::new(None),
+                    completion_trigger_characters: Mutex::new(Vec::new()),
+                    is_running: AtomicBool::new(false),
+            startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
+                }),
+                last_sent: Arc::new(Mutex::new(HashMap::new())),
+                alive: Arc::new(()),
+            },
+            notif_rx,
+        )
+    }
+
+    /// None means the editor buffer is still loading, not an empty Dart file.
+    pub fn sync_document(&self, path: PathBuf, snapshot: Option<(String, i64)>) {
+        if let Some((content, version)) = snapshot {
+            self.send_change(path, content, version);
+        }
+    }
+
+    pub fn send_change(&self, path: PathBuf, content: String, version: i64) {
+        if !self.state.is_running.load(Ordering::Relaxed) {
+            return;
+        }
+        let mut last = self.last_sent.lock();
+        if let Some(&prev) = last.get(&path) {
+            if prev >= version {
+                return;
+            }
+        }
+        last.insert(path.clone(), version);
+        drop(last);
+        let _ = self.tx.send(LspCommand::Change {
+            path,
+            content,
+            version,
+        });
+    }
+
+    pub fn send_close(&self, path: PathBuf) {
+        self.last_sent.lock().remove(&path);
+        if self.state.is_running.load(Ordering::Relaxed) {
+            let _ = self.tx.send(LspCommand::Close { path });
+        }
+    }
+
+    pub fn unavailable_reason(&self) -> String {
+        self.state.startup_error.lock().clone().unwrap_or_else(||"Dart analysis is not running. Check the SDK selection and restart the project.".into())
+    }
+
+    pub fn is_available(&self) -> bool {
+        self.state.is_running.load(Ordering::Relaxed)
+    }
+
+    // ── generic request plumbing ──────────────────────────────────
+
+    /// Send an LSP request. The callback fires from the reader thread
+    /// with the full JSON-RPC response object (`{ result, error? }`), so
+    /// callers can distinguish success from failure. Returns the request
+    /// id (useful for logging).
+    ///
+    /// No timeout is applied. If the server never responds, the callback
+    /// never fires — the caller's closure captures whatever it needs, and
+    /// gets dropped when `WindowTabData` tears down (closing the pipe
+    /// causes the reader thread to exit).
+    pub fn request_async<F>(
+        &self,
+        method: impl Into<String>,
+        params: Value,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Value) + Send + 'static,
+    {
+        let id = self.state.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut pending=self.state.pending_requests.lock();
+        if !self.is_available() { drop(pending); cb(json!({"error":{"code":-32002,"message":self.unavailable_reason()}}));return id; }
+        pending.insert(id, Box::new(cb));drop(pending);
+        if self.tx.send(LspCommand::Request {
+            id,
+            method: method.into(),
+            params,
+        }).is_err() {fail_pending_requests(&self.state,"Dart analysis connection is closed.");}
+        id
+    }
+
+    // ── typed methods ─────────────────────────────────────────────
+
+    /// `textDocument/documentSymbol` — returns the hierarchical symbol
+    /// tree for `path`. Empty vec if the server errors or the file isn't
+    /// known.
+    pub fn document_symbols<F>(&self, path: &Path, cb: F) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::DocumentSymbol>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/documentSymbol",
+            json!({ "textDocument": { "uri": uri } }),
+            move |resp| {
+                let symbols = resp
+                    .get("result")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                cb(symbols);
+            },
+        )
+    }
+
+    /// `textDocument/hover`. Positions are 0-based (LSP convention).
+    pub fn hover<F>(&self, path: &Path, line: u32, character: u32, cb: F) -> i64
+    where
+        F: FnOnce(Option<lsp_types::Hover>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/hover",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character }
+            }),
+            move |resp| {
+                let hover = resp
+                    .get("result")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                cb(hover);
+            },
+        )
+    }
+
+    /// `textDocument/definition`. Handles all three LSP shapes
+    /// (Location, Location[], LocationLink[]) transparently.
+    pub fn definition<F>(&self, path: &Path, line: u32, character: u32, cb: F) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::Location>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character }
+            }),
+            move |resp| {
+                cb(parse_definition_response(
+                    resp.get("result").cloned().unwrap_or(Value::Null),
+                ));
+            },
+        )
+    }
+
+    /// `textDocument/references`. Returns all locations the server knows about
+    /// (may span multiple files). `include_declaration: true` matches the
+    /// behavior of every other IDE.
+    pub fn references<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        include_declaration: bool,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::Location>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "context": { "includeDeclaration": include_declaration }
+            }),
+            move |resp| {
+                let locations = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<Vec<lsp_types::Location>>(v.clone())
+                            .ok()
+                    })
+                    .unwrap_or_default();
+                cb(locations);
+            },
+        )
+    }
+
+    /// `textDocument/prepareRename`. `Some(_)` means "the server has a name
+    /// at this position and will accept a rename"; `None` means "cursor isn't
+    /// on an identifier" (or a transport error).
+    pub fn prepare_rename<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Option<lsp_types::PrepareRenameResponse>) + Send + 'static,
+    {
+        self.prepare_rename_result(path, line, character, move |result| {
+            cb(result.ok().flatten())
+        })
+    }
+
+    pub fn prepare_rename_result<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Result<Option<lsp_types::PrepareRenameResponse>, String>)
+            + Send
+            + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/prepareRename",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character }
+            }),
+            move |resp| {
+                cb(parse_rename_result(&resp));
+            },
+        )
+    }
+
+    /// `textDocument/rename`. Returns a `WorkspaceEdit` that must be applied
+    /// via [`crate::main_split::MainSplitData::apply_workspace_edit`].
+    pub fn rename<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        new_name: &str,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Option<lsp_types::WorkspaceEdit>) + Send + 'static,
+    {
+        self.rename_result(path, line, character, new_name, move |result| {
+            cb(result.ok().flatten())
+        })
+    }
+
+    pub fn rename_result<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        new_name: &str,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Result<Option<lsp_types::WorkspaceEdit>, String>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        let new_name = new_name.to_string();
+        self.request_async(
+            "textDocument/rename",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "newName": new_name
+            }),
+            move |resp| {
+                cb(parse_rename_result(&resp));
+            },
+        )
+    }
+
+    /// `textDocument/completion` with full trigger context.
+    ///
+    /// `trigger_kind` per LSP spec:
+    ///   1 = Invoked (Ctrl+Space) — "give me everything relevant here"
+    ///   2 = TriggerCharacter — "user typed a char / trigger char"
+    ///   3 = TriggerForIncompleteCompletions (not used here)
+    ///
+    /// `trigger_character` should only be set when the server's
+    /// `completionProvider.triggerCharacters` contains it — otherwise
+    /// the server may reject the request.
+    ///
+    /// Returns `(items, is_incomplete)`. `is_incomplete = true` means
+    /// the server has more items for this prefix than it sent; a
+    /// follow-up request with trigger_kind=3 would fetch more. We
+    /// currently ignore that case (Dart rarely triggers it).
+    pub fn completion_with_trigger<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        trigger_kind: u32,
+        trigger_character: Option<&str>,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Option<Vec<CompletionItem>>, bool) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        let mut context = json!({ "triggerKind": trigger_kind });
+        if let Some(ch) = trigger_character {
+            context["triggerCharacter"] = json!(ch);
+        }
+        self.request_async(
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "context": context
+            }),
+            move |resp| {
+                let (items, is_incomplete) = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<CompletionResponse>(v.clone()).ok()
+                    })
+                    .map(|r| match r {
+                        CompletionResponse::Array(items) => (items, false),
+                        CompletionResponse::List(list) => {
+                            (list.items, list.is_incomplete)
+                        }
+                    })
+                    .unwrap_or((Vec::new(), false));
+                cb(Some(items), is_incomplete);
+            },
+        )
+    }
+
+    /// `completionItem/resolve`. Returns the item with `documentation`,
+    /// `detail`, `textEdit`, and `additionalTextEdits` filled in.
+    ///
+    /// This is **required** for Dart auto-imports: Flutter/Dart items
+    /// only carry `data` in the initial `completion` response; the
+    /// `additionalTextEdits` that insert `import 'package:flutter/…';`
+    /// only come back from resolve.
+    pub fn resolve_completion<F>(&self, item: CompletionItem, cb: F) -> i64
+    where
+        F: FnOnce(Option<CompletionItem>) + Send + 'static,
+    {
+        let label = item.label.clone();
+        self.request_async(
+            "completionItem/resolve",
+            serde_json::to_value(&item).unwrap_or(Value::Null),
+            move |resp| {
+                let resolved = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<CompletionItem>(v.clone()).ok()
+                    });
+                // Diagnostic: shows what the server actually sent for this item.
+                if let Some(ref r) = resolved {
+                    let text_edit_summary = match &r.text_edit {
+                        Some(lsp_types::CompletionTextEdit::Edit(e)) => format!(
+                            "Edit({:?} range={:?}..{:?})",
+                            e.new_text,
+                            (e.range.start.line, e.range.start.character),
+                            (e.range.end.line, e.range.end.character),
+                        ),
+                        Some(lsp_types::CompletionTextEdit::InsertAndReplace(ir)) => {
+                            format!("InsertAndReplace({:?})", ir.new_text)
+                        }
+                        None => "none".to_string(),
+                    };
+                    tracing::debug!(
+                        "dart resolve `{label}`: kind={:?} fmt={:?} insert_text={:?} text_edit={} additional_edits={}",
+                        r.kind,
+                        r.insert_text_format,
+                        r.insert_text.as_deref(),
+                        text_edit_summary,
+                        r.additional_text_edits.as_ref().map(|v| v.len()).unwrap_or(0),
+                    );
+                } else {
+                    tracing::debug!("dart resolve `{label}`: no result");
+                }
+                cb(resolved);
+            },
+        )
+    }
+
+    /// `textDocument/signatureHelp`. `trigger_kind`:
+    ///   1 = Invoked (Ctrl+Space, programmatic)
+    ///   2 = TriggerCharacter (typed `(` or `,`)
+    ///   3 = ContentChange (typed any other char while popup is visible)
+    pub fn signature_help<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        trigger_kind: u32,
+        trigger_character: Option<&str>,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Option<lsp_types::SignatureHelp>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        let mut context = json!({
+            "triggerKind": trigger_kind,
+            "isRetrigger": false,
+        });
+        if let Some(ch) = trigger_character {
+            context["triggerCharacter"] = json!(ch);
+        }
+        self.request_async(
+            "textDocument/signatureHelp",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "context": context
+            }),
+            move |resp| {
+                let help = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<lsp_types::SignatureHelp>(v.clone())
+                            .ok()
+                    });
+                cb(help);
+            },
+        )
+    }
+
+    /// Trigger characters advertised by the server (`[".", ":"]` for
+    /// Dart). Empty until the `initialize` handshake completes.
+    pub fn trigger_characters(&self) -> Vec<String> {
+        self.state.completion_trigger_characters.lock().clone()
+    }
+
+    /// `textDocument/codeAction`. Returns refactorings, quick-fixes, etc.
+    /// for the given position + diagnostics.
+    pub fn code_actions<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        diagnostics: &[lsp_types::Diagnostic],
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::CodeActionOrCommand>) + Send + 'static,
+    {
+        self.code_actions_with_kind(path, line, character, diagnostics, None, cb)
+    }
+
+    pub fn code_actions_with_kind<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        diagnostics: &[lsp_types::Diagnostic],
+        kind: Option<&str>,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::CodeActionOrCommand>) + Send + 'static,
+    {
+        self.code_actions_result(path, line, character, diagnostics, kind, move |result| cb(result.unwrap_or_default()))
+    }
+
+    /// Preserve server failures so the actions popup can distinguish them from an empty result.
+    pub fn code_actions_result<F>(
+        &self,
+        path: &Path,
+        line: u32,
+        character: u32,
+        diagnostics: &[lsp_types::Diagnostic],
+        kind: Option<&str>,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Result<Vec<lsp_types::CodeActionOrCommand>, String>)
+            + Send
+            + 'static,
+    {
+        self.code_actions_range_result(path,lsp_types::Range::new(lsp_types::Position::new(line,character),lsp_types::Position::new(line,character)),diagnostics,kind,cb)
+    }
+    pub fn code_actions_range_result<F>(&self,path:&Path,range:lsp_types::Range,diagnostics:&[lsp_types::Diagnostic],kind:Option<&str>,cb:F)->i64
+    where F:FnOnce(Result<Vec<lsp_types::CodeActionOrCommand>,String>)+Send+'static {
+        let uri = path_to_uri(path);
+        let mut context = json!({ "diagnostics": diagnostics, "triggerKind": 1 });
+        if let Some(kind) = kind {
+            context["only"] = json!([kind]);
+        }
+        self.request_async(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": { "uri": uri },
+                "range": range,
+                "context": context
+            }),
+            move |resp| {
+                cb(parse_code_action_result(&resp));
+            },
+        )
+    }
+
+    pub fn execute_command(&self, command: lsp_types::Command) {
+        self.request_async("workspace/executeCommand", json!({
+            "command": command.command, "arguments": command.arguments.unwrap_or_default(),
+        }), |response| {
+            if let Some(error) = response.get("error") {
+                tracing::warn!("Dart command failed: {error}");
+            }
+        });
+    }
+
+    pub fn respond_to_edit(&self, id: Value, applied: bool) {
+        let result = if applied { json!({ "applied": true }) }
+            else { json!({ "applied": false, "failureReason": "The edit contains unsupported file operations, closed documents, or stale versions." }) };
+        let _ = self.tx.send(LspCommand::Response { id, result });
+    }
+
+    /// `codeAction/resolve`. Some actions only provide their `edit` after
+    /// explicit resolution.
+    pub fn resolve_code_action<F>(&self, action: lsp_types::CodeAction, cb: F) -> i64
+    where F: FnOnce(Option<lsp_types::WorkspaceEdit>) + Send + 'static {
+        self.resolve_code_action_full(action, move |result| cb(result.ok().and_then(|a|a.edit)))
+    }
+
+    /// Resolve for a preview without executing the action or losing its command.
+    pub fn resolve_code_action_full<F>(&self, action: lsp_types::CodeAction, cb: F) -> i64
+    where F: FnOnce(Result<lsp_types::CodeAction,String>) + Send + 'static {
+        self.request_async("codeAction/resolve", serde_json::to_value(&action).unwrap_or(Value::Null), move |response| {
+            let result = response.get("result").filter(|v|!v.is_null())
+                .ok_or_else(|| response.get("error").and_then(|v|v.get("message")).and_then(|v|v.as_str()).unwrap_or("Could not resolve this quick fix.").to_string())
+                .and_then(|value|serde_json::from_value(value.clone()).map_err(|e|e.to_string()));
+            cb(result);
+        })
+    }
+
+    /// `textDocument/semanticTokens/full`. Returns the raw token array;
+    /// use [`crate::dart::semantic_tokens::decode`] to convert it into
+    /// byte-range spans.
+    pub fn semantic_tokens<F>(&self, path: &Path, cb: F) -> i64
+    where
+        F: FnOnce(Option<lsp_types::SemanticTokens>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/semanticTokens/full",
+            json!({ "textDocument": { "uri": uri } }),
+            move |resp| {
+                let tokens = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<lsp_types::SemanticTokens>(v.clone())
+                            .ok()
+                    });
+                cb(tokens);
+            },
+        )
+    }
+
+    /// The legend captured from `initialize`. `None` until the handshake
+    /// completes or if the server doesn't support semantic tokens.
+    pub fn semantic_tokens_legend(&self) -> Option<lsp_types::SemanticTokensLegend> {
+        self.state.semantic_tokens_legend.lock().clone()
+    }
+
+    /// `textDocument/formatting`. Returns the edits that apply the Dart
+    /// formatter. Returns an empty vec if the file is already formatted
+    /// or the server declines (e.g. syntax errors present).
+    pub fn formatting<F>(
+        &self,
+        path: &Path,
+        tab_size: u32,
+        insert_spaces: bool,
+        cb: F,
+    ) -> i64
+    where
+        F: FnOnce(Vec<lsp_types::TextEdit>) + Send + 'static,
+    {
+        let uri = path_to_uri(path);
+        self.request_async(
+            "textDocument/formatting",
+            json!({
+                "textDocument": { "uri": uri },
+                "options": {
+                    "tabSize": tab_size,
+                    "insertSpaces": insert_spaces
+                }
+            }),
+            move |resp| {
+                let edits = resp
+                    .get("result")
+                    .filter(|v| !v.is_null())
+                    .and_then(|v| {
+                        serde_json::from_value::<Vec<lsp_types::TextEdit>>(
+                            v.clone(),
+                        )
+                        .ok()
+                    })
+                    .unwrap_or_default();
+                cb(edits);
+            },
+        )
+    }
+}
+
+impl Drop for DartLspService {
+    fn drop(&mut self) {
+        // Only the *last* clone fires Shutdown. Every transient clone
+        // (e.g. inside `schedule_refresh` timer closures) would otherwise
+        // kill the server after the timer fires.
+        if Arc::strong_count(&self.alive) == 1 {
+            let _ = self.tx.send(LspCommand::Shutdown);
+        }
+    }
+}
+
+fn parse_definition_response(value: Value) -> Vec<lsp_types::Location> {
+    if value.is_null() {
+        return Vec::new();
+    }
+    if let Ok(loc) = serde_json::from_value::<lsp_types::Location>(value.clone()) {
+        return vec![loc];
+    }
+    if let Ok(locs) =
+        serde_json::from_value::<Vec<lsp_types::Location>>(value.clone())
+    {
+        return locs;
+    }
+    if let Ok(links) = serde_json::from_value::<Vec<lsp_types::LocationLink>>(value)
+    {
+        return links
+            .into_iter()
+            .map(|link| lsp_types::Location {
+                uri: link.target_uri,
+                range: link.target_selection_range,
+            })
+            .collect();
+    }
+    Vec::new()
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Commands (UI → writer)
+// ─────────────────────────────────────────────────────────────────────
+
+enum LspCommand {
+    Change {
+        path: PathBuf,
+        content: String,
+        version: i64,
+    },
+    Close {
+        path: PathBuf,
+    },
+    /// A JSON-RPC *request* to the server. Response is delivered to the
+    /// callback registered under `id` in `SharedState::pending_requests`.
+    Request {
+        id: i64,
+        method: String,
+        params: Value,
+    },
+    Response { id: Value, result: Value },
+    Shutdown,
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Shared between threads
+// ─────────────────────────────────────────────────────────────────────
+
+struct SharedState {
+    next_id: AtomicI64,
+    pending_requests: Mutex<HashMap<i64, ResponseCallback>>,
+    open_files: Mutex<HashMap<PathBuf, i64>>,
+    shutting_down: AtomicBool,
+    semantic_tokens_legend: Mutex<Option<lsp_types::SemanticTokensLegend>>,
+    /// Trigger characters advertised by the server (`[".", ":"]` for Dart).
+    /// Empty until `initialize` returns.
+    completion_trigger_characters: Mutex<Vec<String>>,
+    /// True while the server process is alive. Set true after successful
+    /// spawn; cleared by the writer and reader threads on exit.
+    is_running: AtomicBool,
+    startup_error: Mutex<Option<String>>,
+    client_tx: Mutex<Option<Sender<LspCommand>>>,
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Writer thread
+// ─────────────────────────────────────────────────────────────────────
+
+fn run_writer(
+    state: Arc<SharedState>,
+    mut out: impl Write,
+    rx: Receiver<LspCommand>,
+    workspace_root: &Path,
+    notif_tx: NotifSender,
+) -> Result<(), String> {
+    // Clear is_running when this function exits, whatever the reason.
+    struct ClearOnDrop(Arc<SharedState>);
+    impl Drop for ClearOnDrop {
+        fn drop(&mut self) {
+            self.0.is_running.store(false, Ordering::Relaxed);
+        }
+    }
+    let _clear = ClearOnDrop(state.clone());
+
+    initialize(&state, &mut out, workspace_root)?;
+    let _ = notif_tx.send(Notification::Ready);
+
+    loop {
+        // First command of a burst
+        let first = match rx.recv() {
+            Ok(c) => c,
+            Err(_) => return Ok(()),
+        };
+        let mut pending: HashMap<PathBuf, (String, i64)> = HashMap::new();
+        match first {
+            LspCommand::Request { id, method, params } => {
+                // Flush any queued didChanges BEFORE the request. Otherwise
+                // the server processes completion at position (line, char)
+                // against stale content — positions don't line up, and Dart
+                // returns empty/no-op for parameter completions.
+                for (path, (content, version)) in pending.drain() {
+                    apply_change(&state, &mut out, &path, content, version);
+                }
+
+                let msg = json!({
+                    "jsonrpc": "2.0", "id": id, "method": method, "params": params
+                });
+                if write_lsp_message(&mut out, &msg).is_err() {
+                    if let Some(cb) = state.pending_requests.lock().remove(&id) {
+                        cb(
+                            json!({"error": {"code": -1, "message": "write failed"}}),
+                        );
+                    }
+                }
+            }
+            LspCommand::Change {
+                path,
+                content,
+                version,
+            } => {
+                // First ever change for a file: send didOpen immediately
+                // so the server starts analyzing without our debounce on top.
+                let is_open = state.open_files.lock().contains_key(&path);
+                if !is_open {
+                    apply_change(&state, &mut out, &path, content, version);
+                    continue;
+                }
+                pending.insert(path, (content, version));
+            }
+            LspCommand::Close { path } => {
+                close_file(&state, &mut out, &path);
+                continue;
+            }
+            LspCommand::Response { id, result } => {
+                write_lsp_message(&mut out, &json!({ "jsonrpc": "2.0", "id": id, "result": result })).map_err(|error| error.to_string())?;
+                continue;
+            }
+            LspCommand::Shutdown => {
+                shutdown(&state, &mut out);
+                return Ok(());
+            }
+        }
+
+        // Debounce: keep collecting until 150 ms of quiet.
+        loop {
+            match rx.recv_timeout(DEBOUNCE) {
+                Ok(LspCommand::Request { id, method, params }) => {
+                    // Flush pending changes first — same reason as above.
+                    for (path, (content, version)) in pending.drain() {
+                        apply_change(&state, &mut out, &path, content, version);
+                    }
+
+                    let msg = json!({
+                        "jsonrpc": "2.0", "id": id, "method": method, "params": params
+                    });
+                    if write_lsp_message(&mut out, &msg).is_err() {
+                        if let Some(cb) = state.pending_requests.lock().remove(&id) {
+                            cb(
+                                json!({"error": {"code": -1, "message": "write failed"}}),
+                            );
+                        }
+                    }
+                }
+                Ok(LspCommand::Change {
+                    path,
+                    content,
+                    version,
+                }) => {
+                    pending.insert(path, (content, version));
+                }
+                Ok(LspCommand::Close { path }) => {
+                    pending.remove(&path);
+                    close_file(&state, &mut out, &path);
+                }
+                Ok(LspCommand::Response { id, result }) => {
+                    write_lsp_message(&mut out, &json!({ "jsonrpc": "2.0", "id": id, "result": result })).map_err(|error| error.to_string())?;
+                }
+                Ok(LspCommand::Shutdown) => {
+                    shutdown(&state, &mut out);
+                    return Ok(());
+                }
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+            }
+        }
+
+        for (path, (content, version)) in pending.drain() {
+            apply_change(&state, &mut out, &path, content, version);
+        }
+    }
+}
+
+fn initialize(
+    state: &SharedState,
+    out: &mut impl Write,
+    workspace_root: &Path,
+) -> Result<(), String> {
+    let id = state.next_id.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    state.pending_requests.lock().insert(
+        id,
+        Box::new(move |v| {
+            let _ = tx.send(v);
+        }),
+    );
+
+    let root_uri = path_to_uri(workspace_root);
+    let params = json!({
+        "processId": std::process::id(),
+        "clientInfo": { "name": "sparrow", "version": env!("CARGO_PKG_VERSION") },
+        "rootUri": root_uri,
+        "workspaceFolders": [{ "uri": root_uri, "name": workspace_root
+            .file_name().and_then(|s| s.to_str()).unwrap_or("workspace") }],
+        "initializationOptions": {
+            "onlyAnalyzeProjectsWithOpenFiles": false,
+            "suggestFromUnimportedLibraries": true,
+            "closingLabels": true,
+            "flutterOutline": true,
+            "outline": true
+        },
+        "capabilities": {
+            "textDocument": {
+                "synchronization": {
+                    "dynamicRegistration": false,
+                    "didSave": false, "willSave": false, "willSaveWaitUntil": false
+                },
+                "publishDiagnostics": {
+                    "relatedInformation": true, "versionSupport": true,
+                    "tagSupport": { "valueSet": [1, 2] }
+                },
+                "documentSymbol": {
+                    "hierarchicalDocumentSymbolSupport": true,
+                    "symbolKind": { "valueSet": [1,2,3,4,5,6,7,8,9,10,11,12,
+                        13,14,15,16,17,18,19,20,21,22,23,24,25,26] }
+                },
+                "hover": { "contentFormat": ["markdown", "plaintext"] },
+                "definition": { "linkSupport": true },
+                "typeDefinition": { "linkSupport": true },
+                "implementation": { "linkSupport": true },
+                "formatting": { "dynamicRegistration": false },
+                "rangeFormatting": { "dynamicRegistration": false },
+                "rename": { "dynamicRegistration": false, "prepareSupport": true },
+                "codeAction": {
+                    "dynamicRegistration": false,
+                    "codeActionLiteralSupport": {
+                        "codeActionKind": {
+                            "valueSet": [
+                                "",
+                                "quickfix",
+                                "refactor",
+                                "refactor.extract",
+                                "refactor.inline",
+                                "refactor.rewrite",
+                                "source",
+                                "source.organizeImports",
+                                "source.fixAll"
+                            ]
+                        }
+                    },
+                    "isPreferredSupport": true,
+                    "dataSupport": true,
+                    "resolveSupport": {
+                        "properties": ["edit", "command"]
+                    }
+                },
+                "inlayHint": {
+                    "dynamicRegistration": false,
+                    "resolveSupport": {
+                        "properties": ["textEdits", "tooltip", "location", "command"]
+                    }
+                },
+                "signatureHelp": {
+                    "contextSupport": true,
+                    "signatureInformation": {
+                        "documentationFormat": ["markdown", "plaintext"],
+                        "parameterInformation": {
+                            "labelOffsetSupport": true
+                        },
+                        "activeParameterSupport": true
+                    }
+                },
+                "completion": {
+                    "dynamicRegistration": false,
+                    "contextSupport": true,
+                    "completionItem": {
+                        "snippetSupport": true,
+                        "documentationFormat": ["markdown", "plaintext"],
+                        "resolveSupport": {
+                            "properties": [
+                                "documentation",
+                                "detail",
+                                "additionalTextEdits",
+                                "textEdit"
+                            ]
+                        },
+                        "insertReplaceSupport": true,
+                        "labelDetailsSupport": false
+                    }
+                },
+                "semanticTokens": {
+                    "dynamicRegistration": false,
+                    "requests": { "full": true, "range": false },
+                    "tokenTypes": [
+                        "namespace", "type", "class", "enum", "interface", "struct",
+                        "typeParameter", "parameter", "variable", "property", "enumMember",
+                        "event", "function", "method", "macro", "keyword", "modifier",
+                        "comment", "string", "number", "regexp", "operator", "decorator"
+                    ],
+                    "tokenModifiers": [
+                        "declaration", "definition", "readonly", "static", "deprecated",
+                        "abstract", "async", "modification", "documentation",
+                        "defaultLibrary"
+                    ],
+                    "formats": ["relative"],
+                    "overlappingTokenSupport": false,
+                    "multilineTokenSupport": false
+                }
+            },
+            "workspace": {"fileOperations":{"willRename":true}, "workspaceFolders": true, "configuration": false, "applyEdit": true, "workspaceEdit": { "documentChanges": true } },
+            "window": { "workDoneProgress": true }
+        }
+    });
+
+    write_lsp_message(
+        out,
+        &json!({ "jsonrpc": "2.0", "id": id, "method": "initialize", "params": params }),
+    )
+        .map_err(|e| format!("write initialize: {e}"))?;
+
+    match rx.recv_timeout(INIT_TIMEOUT) {
+        Ok(resp) => {
+            if let Some(err) = resp.get("error") {
+                return Err(format!("initialize error: {err}"));
+            }
+            // Capture the semantic-tokens legend if the server advertises
+            // support. Also handles the rare case where the legend lives in
+            // the `capabilities` object of the response's `result`.
+            if let Some(legend) = resp
+                .get("result")
+                .and_then(|v| v.get("capabilities"))
+                .and_then(|v| v.get("semanticTokensProvider"))
+                .and_then(|v| v.get("legend"))
+                .and_then(|v| {
+                    serde_json::from_value::<lsp_types::SemanticTokensLegend>(
+                        v.clone(),
+                    )
+                    .ok()
+                })
+            {
+                *state.semantic_tokens_legend.lock() = Some(legend);
+            }
+            // Capture completion trigger characters (".", ":", etc.).
+            if let Some(triggers) = resp
+                .get("result")
+                .and_then(|v| v.get("capabilities"))
+                .and_then(|v| v.get("completionProvider"))
+                .and_then(|v| v.get("triggerCharacters"))
+                .and_then(|v| serde_json::from_value::<Vec<String>>(v.clone()).ok())
+            {
+                *state.completion_trigger_characters.lock() = triggers;
+            }
+        }
+        Err(_) => return Err("initialize timed out".into()),
+    }
+
+    write_lsp_message(
+        out,
+        &json!({ "jsonrpc": "2.0", "method": "initialized", "params": {} }),
+    )
+    .map_err(|e| format!("write initialized: {e}"))?;
+
+    tracing::debug!("dart language-server initialized");
+    Ok(())
+}
+
+fn apply_change(
+    state: &SharedState,
+    out: &mut impl Write,
+    path: &Path,
+    content: String,
+    version: i64,
+) {
+    let uri = path_to_uri(path);
+    let mut open = state.open_files.lock();
+    let is_open = open.get(path).copied();
+    match is_open {
+        Some(prev) if prev >= version => return,
+        Some(_) => {
+            open.insert(path.to_path_buf(), version);
+            drop(open);
+            let _ = write_lsp_message(
+                out,
+                &json!({
+                    "jsonrpc": "2.0", "method": "textDocument/didChange",
+                    "params": {
+                        "textDocument": { "uri": uri, "version": version },
+                        "contentChanges": [{ "text": content }]
+                    }
+                }),
+            );
+        }
+        None => {
+            open.insert(path.to_path_buf(), version);
+            drop(open);
+            let _ = write_lsp_message(
+                out,
+                &json!({
+                    "jsonrpc": "2.0", "method": "textDocument/didOpen",
+                    "params": {
+                        "textDocument": {
+                            "uri": uri, "languageId": "dart",
+                            "version": version, "text": content
+                        }
+                    }
+                }),
+            );
+        }
+    }
+}
+
+fn close_file(state: &SharedState, out: &mut impl Write, path: &Path) {
+    if state.open_files.lock().remove(path).is_some() {
+        let _ = write_lsp_message(
+            out,
+            &json!({
+                "jsonrpc": "2.0", "method": "textDocument/didClose",
+                "params": { "textDocument": { "uri": path_to_uri(path) } }
+            }),
+        );
+    }
+}
+
+fn shutdown(state: &SharedState, out: &mut impl Write) {
+    state.shutting_down.store(true, Ordering::Relaxed);
+    let id = state.next_id.fetch_add(1, Ordering::Relaxed);
+    let _ = write_lsp_message(
+        out,
+        &json!({
+            "jsonrpc": "2.0", "id": id, "method": "shutdown", "params": null
+        }),
+    );
+    let _ = write_lsp_message(
+        out,
+        &json!({
+            "jsonrpc": "2.0", "method": "exit", "params": null
+        }),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Reader thread
+// ─────────────────────────────────────────────────────────────────────
+
+fn run_reader(
+    state: Arc<SharedState>,
+    mut input: impl BufRead,
+    notif_tx: NotifSender,
+) {
+    struct ClearOnDrop(Arc<SharedState>);
+    impl Drop for ClearOnDrop {
+        fn drop(&mut self) {
+            self.0.is_running.store(false, Ordering::Relaxed);
+        }
+    }
+    let _clear = ClearOnDrop(state.clone());
+
+    loop {
+        let msg = match read_lsp_message(&mut input) {
+            Ok(m) => m,
+            Err(_) => {
+                if !state.shutting_down.load(Ordering::Relaxed) {
+                    let error="Dart analysis server exited unexpectedly. Check Notifications and the configured SDK.";
+                    state.is_running.store(false,Ordering::Relaxed);
+                    state.startup_error.lock().get_or_insert_with(||error.into());
+                    fail_pending_requests(&state,error);
+                    let _ = notif_tx.send(Notification::Error(error.into()));
+                }
+                return;
+            }
+        };
+        let value: Value = match serde_json::from_str(&msg) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("malformed LSP message: {e}");
+                continue;
+            }
+        };
+        dispatch(state.as_ref(), &notif_tx, value);
+    }
+}
+
+fn dispatch(state: &SharedState, notif_tx: &NotifSender, msg: Value) {
+    // Response?
+    if msg.get("method").is_none() {
+        if let Some(id) = msg.get("id").and_then(Value::as_i64) {
+            if let Some(cb) = state.pending_requests.lock().remove(&id) {
+                // Pass the full message so callbacks can inspect `error`.
+                cb(msg);
+            }
+        }
+        return;
+    }
+
+    let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
+    let params = msg.get("params").cloned().unwrap_or(Value::Null);
+
+    match method {
+        "window/workDoneProgress/create" => {
+            if let Some(id)=msg.get("id") {
+                if let Some(tx)=state.client_tx.lock().as_ref(){let _=tx.send(LspCommand::Response{id:id.clone(),result:Value::Null});}
+            }
+        }
+        "workspace/applyEdit" => {
+            if let Some(id) = msg.get("id") {
+                let edit = serde_json::from_value::<lsp_types::WorkspaceEdit>(params["edit"].clone()).ok();
+                let _ = notif_tx.send(Notification::ApplyEdit { id: id.clone(), edit });
+            }
+        }
+        "textDocument/publishDiagnostics" => {
+            let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(path) = uri_to_path(uri) else { return };
+            let version =
+                params.get("version").and_then(Value::as_i64).unwrap_or(-1);
+            let diagnostics = params
+                .get("diagnostics")
+                .and_then(|v| {
+                    serde_json::from_value::<Vec<Diagnostic>>(v.clone()).ok()
+                })
+                .unwrap_or_default();
+            let _ = notif_tx.send(Notification::Diagnostics {
+                path,
+                version,
+                diagnostics,
+            });
+        }
+        "dart/textDocument/publishClosingLabels" => {
+            let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(path) = uri_to_path(uri) else { return };
+            let labels = params
+                .get("labels")
+                .and_then(|v| {
+                    serde_json::from_value::<Vec<ClosingLabel>>(v.clone()).ok()
+                })
+                .unwrap_or_default();
+            let _ = notif_tx.send(Notification::ClosingLabels { path, labels });
+        }
+        "dart/textDocument/publishFlutterOutline" => {
+            let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(path) = uri_to_path(uri) else { return };
+            let outline = params.get("outline").cloned().unwrap_or(Value::Null);
+            let _ = notif_tx.send(Notification::FlutterOutline { path, outline });
+        }
+        "dart/textDocument/publishOutline" => {
+            let Some(uri) = params.get("uri").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(path) = uri_to_path(uri) else { return };
+            let outline = params.get("outline").cloned().unwrap_or(Value::Null);
+            let _ = notif_tx.send(Notification::Outline { path, outline });
+        }
+        "window/logMessage" | "window/showMessage" => {
+            let text = params
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if !text.is_empty() {
+                let _ = notif_tx.send(Notification::Log(text));
+            }
+        }
+        // Ignored: $/progress, window/workDoneProgress/create, telemetry, etc.
+        _ => {}
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Wire protocol
+// ─────────────────────────────────────────────────────────────────────
+
+fn write_lsp_message(out: &mut impl Write, msg: &Value) -> std::io::Result<()> {
+    let body = serde_json::to_string(msg)?;
+    write!(out, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
+    out.flush()
+}
+
+fn read_lsp_message(input: &mut impl BufRead) -> std::io::Result<String> {
+    let mut content_length: usize = 0;
+    loop {
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "server closed stdout",
+            ));
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(rest) = trimmed.strip_prefix("Content-Length: ") {
+            content_length = rest.parse().unwrap_or(0);
+        }
+    }
+    let mut buf = vec![0u8; content_length];
+    input.read_exact(&mut buf)?;
+    String::from_utf8(buf)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
+fn path_to_uri(path: &Path) -> String {
+    url::Url::from_file_path(path)
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| format!("file://{}", path.display()))
+}
+
+fn uri_to_path(uri: &str) -> Option<PathBuf> {
+    url::Url::parse(uri).ok()?.to_file_path().ok()
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Tests
+// ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wire_round_trip() {
+        let mut buf = Vec::new();
+        let msg = json!({"jsonrpc": "2.0", "method": "test", "params": {"x": 1}});
+        write_lsp_message(&mut buf, &msg).unwrap();
+
+        // Round-trip through the reader
+        let mut cursor = std::io::Cursor::new(buf);
+        let parsed = read_lsp_message(&mut cursor).unwrap();
+        let parsed: Value = serde_json::from_str(&parsed).unwrap();
+        assert_eq!(parsed, msg);
+    }
+
+    #[test]
+    fn uri_round_trip() {
+        let path = PathBuf::from("/tmp/hello.dart");
+        let uri = path_to_uri(&path);
+        assert_eq!(uri_to_path(&uri), Some(path));
+    }
+
+    #[test]
+    fn uri_handles_spaces() {
+        let path = PathBuf::from("/tmp/hello world.dart");
+        let uri = path_to_uri(&path);
+        assert!(uri.contains("%20"));
+        assert_eq!(uri_to_path(&uri), Some(path));
+    }
+
+    #[test]
+    fn unavailable_service_is_inert() {
+        let (tx, _rx) = unbounded();
+        let svc = DartLspService {
+            tx,
+            state: Arc::new(SharedState {
+                next_id: AtomicI64::new(1),
+                pending_requests: Mutex::new(HashMap::new()),
+                open_files: Mutex::new(HashMap::new()),
+                shutting_down: AtomicBool::new(false),
+                semantic_tokens_legend: Mutex::new(None),
+                completion_trigger_characters: Mutex::new(Vec::new()),
+                is_running: AtomicBool::new(false),
+            startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
+            }),
+            last_sent: Arc::new(Mutex::new(HashMap::new())),
+            alive: Arc::new(()),
+        };
+        svc.send_change(PathBuf::from("/x.dart"), String::new(), 1);
+        svc.send_close(PathBuf::from("/x.dart"));
+        assert!(!svc.is_available());
+    }
+
+    #[test]
+    fn initial_load_never_publishes_a_placeholder_at_the_real_documents_version() {
+        let (tx, rx) = unbounded();
+        let service = DartLspService {
+            tx,
+            state: Arc::new(SharedState {
+                next_id: AtomicI64::new(1),
+                pending_requests: Mutex::new(HashMap::new()),
+                open_files: Mutex::new(HashMap::new()),
+                shutting_down: AtomicBool::new(false),
+                semantic_tokens_legend: Mutex::new(None),
+                completion_trigger_characters: Mutex::new(Vec::new()),
+                is_running: AtomicBool::new(true),
+                startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
+            }),
+            last_sent: Arc::new(Mutex::new(HashMap::new())),
+            alive: Arc::new(()),
+        };
+        let path = PathBuf::from("/project/lib/main.dart");
+        service.sync_document(path.clone(), None);
+        assert!(rx.try_recv().is_err());
+        service.sync_document(path.clone(), Some(("void main() {}".into(), 0)));
+        match rx.try_recv().unwrap() {
+            LspCommand::Change {
+                content, version, ..
+            } => {
+                assert_eq!(content, "void main() {}");
+                assert_eq!(version, 0);
+            }
+            _ => panic!("Expected didOpen content"),
+        }
+        service.sync_document(path.clone(), Some(("void main() {}".into(), 0)));
+        assert!(rx.try_recv().is_err());
+        service.sync_document(path, Some(("void main() { print(1); }".into(), 1)));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            LspCommand::Change { version: 1, .. }
+        ));
+    }
+    #[test]
+    fn request_id_is_monotonic() {
+        let (tx, _rx) = unbounded();
+        let state = Arc::new(SharedState {
+            next_id: AtomicI64::new(1),
+            pending_requests: Mutex::new(HashMap::new()),
+            open_files: Mutex::new(HashMap::new()),
+            shutting_down: AtomicBool::new(false),
+            semantic_tokens_legend: Mutex::new(None),
+            completion_trigger_characters: Mutex::new(Vec::new()),
+            is_running: AtomicBool::new(true),
+                startup_error: Mutex::new(None),
+            client_tx: Mutex::new(None),
+        });
+        let svc = DartLspService {
+            tx,
+            state: state.clone(),
+            last_sent: Arc::new(Mutex::new(HashMap::new())),
+            alive: Arc::new(()),
+        };
+        let a = svc.request_async("a", Value::Null, |_| {});
+        let b = svc.request_async("b", Value::Null, |_| {});
+        assert!(b > a);
+    }
+
+    #[test]
+    fn parse_definition_handles_all_shapes() {
+        use lsp_types::Url;
+
+        // Scalar
+        let scalar = json!({
+            "uri": "file:///a.dart",
+            "range": { "start": {"line":0,"character":0}, "end": {"line":0,"character":5} }
+        });
+        let scalar_clone = scalar.clone();
+        assert_eq!(parse_definition_response(scalar_clone).len(), 1);
+
+        // Array
+        let array = json!([scalar.clone(), scalar.clone()]);
+        assert_eq!(parse_definition_response(array).len(), 2);
+
+        // LocationLink
+        let link = json!({
+            "targetUri": "file:///b.dart",
+            "targetRange": { "start": {"line":0,"character":0}, "end": {"line":0,"character":5} },
+            "targetSelectionRange": { "start": {"line":0,"character":0}, "end": {"line":0,"character":5} }
+        });
+        let links = parse_definition_response(json!([link]));
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].uri, Url::parse("file:///b.dart").unwrap());
+
+        // Null / unknown
+        assert!(parse_definition_response(Value::Null).is_empty());
+        assert!(parse_definition_response(json!({})).is_empty());
+    }
+
+    #[test]
+    fn parse_completion_handles_both_shapes() {
+        use lsp_types::CompletionResponse;
+
+        let array: CompletionResponse = serde_json::from_value(json!([
+            { "label": "print" },
+            { "label": "printf" }
+        ]))
+        .unwrap();
+        let items = match array {
+            CompletionResponse::Array(v) => v,
+            _ => panic!("expected array"),
+        };
+        assert_eq!(items.len(), 2);
+
+        let list: CompletionResponse = serde_json::from_value(json!({
+            "isIncomplete": false,
+            "items": [{ "label": "print" }]
+        }))
+        .unwrap();
+        let items = match list {
+            CompletionResponse::List(l) => l.items,
+            _ => panic!("expected list"),
+        };
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn references_parses_location_array() {
+        let locations: Vec<lsp_types::Location> = serde_json::from_value(json!([
+            { "uri": "file:///a.dart", "range": { "start": {"line":0,"character":0},
+                "end": {"line":0,"character":5} } },
+            { "uri": "file:///b.dart", "range": { "start": {"line":2,"character":3},
+                "end": {"line":2,"character":8} } }
+        ]))
+        .unwrap();
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[1].range.start.line, 2);
+    }
+
+    #[test]
+    fn prepare_rename_parses_all_shapes() {
+        use lsp_types::PrepareRenameResponse;
+
+        // Range
+        let r: PrepareRenameResponse = serde_json::from_value(json!({
+            "start": {"line":0,"character":0}, "end": {"line":0,"character":5}
+        }))
+        .unwrap();
+        assert!(matches!(r, PrepareRenameResponse::Range(_)));
+
+        // Range with placeholder
+        let r: PrepareRenameResponse = serde_json::from_value(json!({
+            "range": { "start": {"line":0,"character":0},
+                "end": {"line":0,"character":5} },
+            "placeholder": "foo"
+        }))
+        .unwrap();
+        assert!(matches!(
+            r,
+            PrepareRenameResponse::RangeWithPlaceholder { .. }
+        ));
+
+        // Default behavior
+        let r: PrepareRenameResponse = serde_json::from_value(json!({
+            "defaultBehavior": true
+        }))
+        .unwrap();
+        assert!(matches!(r, PrepareRenameResponse::DefaultBehavior { .. }));
+    }
+
+    #[test]
+    fn rename_parses_workspace_edit() {
+        let edit: lsp_types::WorkspaceEdit = serde_json::from_value(json!({
+            "changes": {
+                "file:///a.dart": [{
+                    "range": { "start": {"line":0,"character":0},
+                        "end": {"line":0,"character":5} },
+                    "newText": "bar"
+                }]
+            }
+        }))
+        .unwrap();
+        assert!(edit.changes.is_some());
+    }
+}
+
+fn parse_code_action_result(
+    response: &Value,
+) -> Result<Vec<lsp_types::CodeActionOrCommand>, String> {
+    if let Some(error) = response.get("error") {
+        return Err(error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("The Dart analyzer could not fetch quick fixes.")
+            .to_string());
+    }
+    match response.get("result") {
+        Some(Value::Null) => Ok(Vec::new()),
+        Some(result) => serde_json::from_value(result.clone()).map_err(|_| {
+            "The Dart analyzer returned an invalid quick-fix response.".to_string()
+        }),
+        None => Err("The Dart analyzer did not return a quick-fix result.".into()),
+    }
+}
+#[cfg(test)]
+mod action_result_tests {
+    use super::*;
+    #[test]
+    fn empty_results_are_distinct_from_failures_and_malformed_responses() {
+        assert!(
+            parse_code_action_result(&json!({"result":null}))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            parse_code_action_result(&json!({"result":[]}))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            parse_code_action_result(
+                &json!({"error":{"code":-32800,"message":"Request cancelled"}})
+            )
+            .unwrap_err(),
+            "Request cancelled"
+        );
+        assert!(parse_code_action_result(&json!({"result":{}})).is_err());
+        assert!(parse_code_action_result(&json!({})).is_err());
+        assert_eq!(
+            parse_code_action_result(
+                &json!({"result":[{"title":"Create variable","kind":"quickfix"}]})
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+    }
+}
+
+fn parse_rename_result<T: serde::de::DeserializeOwned>(
+    response: &Value,
+) -> Result<Option<T>, String> {
+    if let Some(error) = response.get("error") {
+        return Err(error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("The analyzer could not rename this symbol.")
+            .into());
+    }
+    match response.get("result") {
+        Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|_| "The analyzer returned an invalid rename response.".into()),
+        None => Err("The analyzer did not return a rename result.".into()),
+    }
+}
+#[cfg(test)]
+mod rename_result_tests {
+    use super::*;
+    #[test]
+    fn rename_failures_are_not_empty_results() {
+        assert!(
+            parse_rename_result::<lsp_types::WorkspaceEdit>(&json!({"result":null}))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            parse_rename_result::<lsp_types::WorkspaceEdit>(
+                &json!({"error":{"message":"Name already exists"}})
+            )
+            .unwrap_err(),
+            "Name already exists"
+        );
+        assert!(
+            parse_rename_result::<lsp_types::WorkspaceEdit>(&json!({"result":2}))
+                .is_err()
+        );
+        assert!(
+            parse_rename_result::<lsp_types::WorkspaceEdit>(&json!({})).is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod live_startup_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires SPARROW_TEST_DART_SDK"]
+    fn real_analyzer_initializes_and_prepares_rename() {
+        let _=tracing_subscriber::fmt().with_max_level(tracing::Level::DEBUG).try_init();
+        let sdk=std::env::var("SPARROW_TEST_DART_SDK").expect("set SPARROW_TEST_DART_SDK");
+        let root=tempfile::Builder::new().prefix("sparrow-analyzer-").tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".sparrow")).unwrap();
+        std::fs::write(root.path().join(".sparrow/settings.toml"),format!("[core]\ndart-sdk-path = {:?}\n",sdk)).unwrap();
+        std::fs::write(root.path().join("pubspec.yaml"),"name: startup_probe\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n").unwrap();
+        std::fs::create_dir(root.path().join(".dart_tool")).unwrap();
+        std::fs::write(root.path().join(".dart_tool/package_config.json"),r#"{"configVersion":2,"packages":[{"name":"startup_probe","rootUri":"../","packageUri":"lib/","languageVersion":"3.0"}]}"#).unwrap();
+        let path=root.path().join("main.dart");
+        let source="int sampleValue(int value) => value + 1;\n";
+        std::fs::write(&path,source).unwrap();
+        let (service,notifications)=DartLspService::spawn(root.path().to_path_buf());
+        loop {match notifications.recv_timeout(Duration::from_secs(35)).unwrap(){Notification::Ready=>break,Notification::Error(error)=>panic!("{error}"),_=>{}}}
+        service.send_change(path.clone(),source.into(),1);
+        loop {match notifications.recv_timeout(Duration::from_secs(20)).unwrap(){Notification::Diagnostics{path:ready,..} | Notification::Outline{path:ready,..} if ready==path=>break,Notification::Error(error)=>panic!("{error}"),_=>{}}}
+        let (tx,rx)=std::sync::mpsc::channel();
+        service.prepare_rename_result(&path,0,7,move |result|{let _=tx.send(result);});
+        assert!(rx.recv_timeout(Duration::from_secs(20)).unwrap().unwrap().is_some());
+    }
+}
+
+/// Prefer the SDK server entry point: dartdev's telemetry/session setup is not
+/// required for LSP and can prevent startup in a read-only home directory.
+fn analysis_server_command(dart:&Path)->Command {
+    let resolved=dart.canonicalize().unwrap_or_else(|_|dart.to_path_buf());
+    let bin=resolved.parent().unwrap_or(Path::new("."));
+    let runtime=bin.join(if cfg!(windows){"dartaotruntime.exe"}else{"dartaotruntime"});
+    let aot=bin.join("snapshots/analysis_server_aot.dart.snapshot");
+    if runtime.is_file() && aot.is_file(){let mut command=Command::new(runtime);command.arg(aot).arg("--lsp");return command;}
+    let snapshot=bin.join("snapshots/analysis_server.dart.snapshot");
+    let mut command=Command::new(dart);
+    if snapshot.is_file(){command.arg(snapshot).arg("--lsp");}else{command.arg("language-server").arg("--protocol=lsp");}
+    command
+}
+fn fail_pending_requests(state:&SharedState,message:&str){
+    let pending=std::mem::take(&mut *state.pending_requests.lock());
+    for (_,callback) in pending{callback(json!({"error":{"code":-32002,"message":message}}));}
+}
+#[cfg(test)] mod startup_regression_tests {
+ use super::*;
+ #[test] fn progress_creation_gets_a_response_with_the_original_id() {
+  let (svc,_)=DartLspService::spawn_unavailable();let (tx,rx)=unbounded();*svc.state.client_tx.lock()=Some(tx);
+  let (notifications,_)=std::sync::mpsc::channel();
+  dispatch(&svc.state,&notifications,json!({"jsonrpc":"2.0","id":"progress-1","method":"window/workDoneProgress/create","params":{"token":"analysis"}}));
+  assert!(matches!(rx.try_recv().unwrap(),LspCommand::Response{id,result} if id==json!("progress-1") && result.is_null()));
+ }
+ #[test] fn failure_completes_callbacks_without_holding_the_request_lock() {
+  let (svc,_)=DartLspService::spawn_unavailable();let state=svc.state.clone();let (tx,rx)=std::sync::mpsc::channel();
+  svc.state.pending_requests.lock().insert(1,Box::new(move |response|{assert!(state.pending_requests.lock().is_empty());tx.send(response).unwrap();}));
+  fail_pending_requests(&svc.state,"server exited");assert_eq!(rx.recv().unwrap()["error"]["message"],"server exited");
+ }
+ #[test] fn selects_bundled_server_and_preserves_cli_fallback() {
+  let root=tempfile::tempdir().unwrap();let bin=root.path();let dart=bin.join("dart");std::fs::write(&dart,"").unwrap();
+  assert_eq!(analysis_server_command(&dart).get_args().next().unwrap(),"language-server");
+  std::fs::create_dir(bin.join("snapshots")).unwrap();std::fs::write(bin.join("snapshots/analysis_server.dart.snapshot"),"").unwrap();
+  assert!(analysis_server_command(&dart).get_args().next().unwrap().to_string_lossy().ends_with("analysis_server.dart.snapshot"));
+  let runtime=bin.join(if cfg!(windows){"dartaotruntime.exe"}else{"dartaotruntime"});std::fs::write(&runtime,"").unwrap();std::fs::write(bin.join("snapshots/analysis_server_aot.dart.snapshot"),"").unwrap();
+  assert_eq!(analysis_server_command(&dart).get_program(),runtime.as_os_str());
+ }
+}

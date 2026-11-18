@@ -1,0 +1,40 @@
+import 'package:flutter/foundation.dart';
+import 'package:{{package}}/{{model_import}}/{{snake}}_item.dart';
+import 'package:{{package}}/{{repository_import}}/{{snake}}_repository.dart';
+
+class {{name}}ViewModel extends ChangeNotifier {
+  {{name}}ViewModel(this._repository);
+  final {{name}}Repository _repository;
+  List<{{name}}Item> _items = const [];
+  bool _loading = false;
+  bool _disposed = false;
+  String? _error;
+
+  List<{{name}}Item> get items => _items;
+  bool get loading => _loading;
+  String? get error => _error;
+
+  Future<void> load() async {
+    if (_loading || _disposed) return;
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final items = await _repository.load();
+      if (!_disposed) _items = List.unmodifiable(items);
+    } catch (error) {
+      if (!_disposed) _error = error.toString();
+    } finally {
+      if (!_disposed) {
+        _loading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+}

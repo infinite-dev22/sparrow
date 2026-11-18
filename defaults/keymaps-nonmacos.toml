@@ -247,6 +247,10 @@ mode = "i"
 key = "ctrl+."
 command = "show_code_actions"
 
+[[keymaps]]
+key = "alt+enter"
+command = "show_code_actions"
+
 # --------------------------------- Display -------------------------------------------
 
 [[keymaps]]
@@ -255,7 +259,7 @@ command = "toggle_file_explorer_focus"
 
 [[keymaps]]
 key = "ctrl+shift+f"
-command = "toggle_search_focus"
+command = "find_in_files"
 
 [[keymaps]]
 key = "ctrl+shift+x"
@@ -308,3 +312,43 @@ command = "palette.workspace_symbol"
 [[keymaps]]
 key = "ctrl+g"
 command = "palette.line"
+
+# Android Studio tool-window navigation (available from editor and tool windows).
+[[keymaps]]
+key = "alt+1"
+command = "toggle_file_explorer_focus"
+[[keymaps]]
+key = "alt+4"
+command = "activate_run_tool_window"
+[[keymaps]]
+key = "alt+5"
+command = "activate_debug_tool_window"
+[[keymaps]]
+key = "alt+6"
+command = "activate_problems_tool_window"
+[[keymaps]]
+key = "alt+7"
+command = "activate_structure_tool_window"
+[[keymaps]]
+key = "alt+9"
+command = "activate_git_tool_window"
+[[keymaps]]
+key = "alt+0"
+command = "toggle_source_control_focus"
+[[keymaps]]
+key = "alt+F12"
+command = "toggle_terminal_focus"
+[[keymaps]]
+key = "shift+esc"
+command = "hide_panel"
+[[keymaps]]
+key = "ctrl+shift+F12"
+command = "toggle_all_tool_windows"
+[[keymaps]]
+key = "esc"
+command = "focus_editor"
+when = "panel_focus && !modal_focus && !search_active && !search_focus"
+
+[[keymaps]]
+key = "ctrl+shift+r"
+command = "replace_in_files"

@@ -85,6 +85,7 @@ pub fn terminal_view(
     launch_error: RwSignal<Option<String>>,
     internal_command: Listener<InternalCommand>,
     workspace: Arc<SparrowWorkspace>,
+    focus_panel: PanelKind,
 ) -> TerminalView {
     let id = ViewId::new();
 
@@ -110,7 +111,7 @@ pub fn terminal_view(
         let focus = terminal_panel_data.common.focus.get();
 
         let mut is_focused = false;
-        if let Focus::Panel(PanelKind::Terminal) = focus {
+        if focus == Focus::Panel(focus_panel) {
             let tab = terminal_panel_data.active_tab(true);
             if let Some(tab) = tab {
                 let terminal = tab.active_terminal(true);
@@ -125,8 +126,8 @@ pub fn terminal_view(
         is_focused
     });
 
-    // for rust
-    let reg = regex::Regex::new("[\\w\\\\/-]+\\.(rs)?(toml)?:\\d+(:\\d+)?").unwrap();
+    // for rust, dart, toml, etc.
+    let reg = regex::Regex::new(r"[\w\\/.-]+\.(?:dart|rs|toml|js|ts|json):\d+(?::\d+)?").unwrap();
 
     TerminalView {
         id,
@@ -485,12 +486,8 @@ impl TerminalView {
     }
 }
 
-impl Drop for TerminalView {
-    fn drop(&mut self) {
-        self.proxy.terminal_close(self.term_id);
-    }
-}
-
+// Closing a terminal is owned by TerminalPanelData. Recreating/moving a
+// console view must not kill the process that supplies it.
 impl View for TerminalView {
     fn id(&self) -> ViewId {
         self.id

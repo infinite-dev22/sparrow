@@ -14,8 +14,17 @@ use super::raw::RawTerminal;
 
 /// The notifications for terminals to send back to main thread
 pub enum TermNotification {
-    SetTitle { term_id: TermId, title: String },
+    SetTitle {
+        term_id: TermId,
+        title: String,
+    },
     RequestPaint,
+    /// Emitted when the terminal output contains a Dart VM service URL
+    /// (i.e. `flutter run` printed its banner).
+    VmServiceUrl {
+        term_id: TermId,
+        url: String,
+    },
 }
 
 pub enum TermEvent {
@@ -48,6 +57,16 @@ pub fn terminal_update_process(
                 terminals.insert(term_id, raw);
             }
             TermEvent::UpdateContent(content) => {
+                // Detect the VM service banner before we hand the bytes to the
+                // terminal emulator — the URL is plaintext so no ANSI parsing
+                // needed.
+                if let Some(url) = scan_vm_service_url(&content) {
+                    if let Err(err) = term_notification_tx
+                        .send(TermNotification::VmServiceUrl { term_id, url })
+                    {
+                        tracing::error!("{:?}", err);
+                    }
+                }
                 if let Some(raw) = terminals.get(&term_id) {
                     {
                         raw.write().update_content(content);
@@ -74,4 +93,23 @@ pub fn terminal_update_process(
             }
         }
     }
+}
+
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+/// Matches the banner line printed by `flutter run`:
+///   http://127.0.0.1:12345/ABCdefGHIjkl=/
+static VM_URL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"http://(?:127\.0\.0\.1|localhost|0\.0\.0\.0|[\d.:]+):\d+/[A-Za-z0-9_\-=]+/",
+    )
+        .expect("VM service URL regex")
+});
+
+fn scan_vm_service_url(content: &[u8]) -> Option<String> {
+    // `flutter run`'s URL is printable ASCII; escape codes around it
+    // don't affect the match. Lossy decode is safe here.
+    let text = String::from_utf8_lossy(content);
+    VM_URL_RE.find(&text).map(|m| m.as_str().to_string())
 }

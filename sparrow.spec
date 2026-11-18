@@ -1,7 +1,7 @@
 Name:           sparrow-git
 Version:        0.4.6.{{{ git_dir_version }}}
 Release:        1
-Summary:        Lightning-fast and Powerful Code Editor written in Rust
+Summary:        Dart and Flutter IDE
 License:        Apache-2.0
 URL:            https://github.com/infinite-dev22/sparrow
 
@@ -11,15 +11,15 @@ Source:        	{{{ git_dir_pack }}}
 BuildRequires:  cargo libxkbcommon-x11-devel libxcb-devel vulkan-loader-devel wayland-devel openssl-devel pkgconf libxkbcommon-x11-devel
 
 %description
-sparrow is written in pure Rust, with a UI in Floem (also written in Rust).
-It is designed with Rope Science from the Xi-Editor, enabling lightning-fast computation, and leverages wgpu for rendering.
+Sparrow is a native Dart and Flutter IDE with SDK analysis, testing, debugging,
+project tools, an integrated terminal, and local appearance themes.
 
 %prep
 {{{ git_dir_setup_macro }}}
 cargo fetch --locked
 
 %build
-cargo build --profile release-lto --package sparrow-app --frozen
+cargo build --profile release-lto --package sparrow --bin sparrow --frozen
 
 %install
 install -Dm755 target/release-lto/sparrow %{buildroot}%{_bindir}/sparrow

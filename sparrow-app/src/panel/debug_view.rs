@@ -352,7 +352,9 @@ fn variables_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                             .and_then(|t| {
                                 t.run_debug.with(|r| r.as_ref().map(|r| r.stopped))
                             })
-                            .unwrap_or(true);
+                            .unwrap_or(
+                                terminal.debug.active_dap.get() != Some(dap.dap_id),
+                            );
                         if process_stopped {
                             return DapVariable::default();
                         }
@@ -419,7 +421,13 @@ fn variables_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                                         t.run_debug
                                             .with(|r| r.as_ref().map(|r| r.stopped))
                                     })
-                                    .unwrap_or(true);
+                                    .unwrap_or(
+                                        local_terminal
+                                            .debug
+                                            .active_dap
+                                            .get_untracked()
+                                            != Some(dap.dap_id),
+                                    );
                                 if !process_stopped {
                                     dap.toggle_expand(
                                         node.parent.clone(),
@@ -584,7 +592,10 @@ fn debug_stack_traces(
                             .and_then(|t| {
                                 t.run_debug.with(|r| r.as_ref().map(|r| r.stopped))
                             })
-                            .unwrap_or(true);
+                            .unwrap_or(
+                                local_terminal.debug.active_dap.get()
+                                    != Some(dap.dap_id),
+                            );
                         if process_stopped {
                             return Vec::new();
                         }

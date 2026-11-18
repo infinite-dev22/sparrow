@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.signals
+version: 1.0.0
+title: "Signals"
+category: state
+target: sibling
+suffix: "_model"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: signals
+    version: "any"

@@ -1,0 +1,8 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+class {{name}} extends Notifier<int> {
+  @override
+  int build() => 0;
+  void increment() => state++;
+}
+final {{variable}}Provider = NotifierProvider<{{name}}, int>({{name}}.new);

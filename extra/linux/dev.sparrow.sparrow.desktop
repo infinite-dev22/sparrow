@@ -3,15 +3,15 @@ Version=1.0
 Type=Application
 
 Name=Sparrow
-Comment=Lightning-fast and powerful code editor written in Rust
+Comment=Dart and Flutter IDE
 Categories=Development;IDE;
-GenericName=Code Editor
+GenericName=Dart and Flutter IDE
 StartupWMClass=sparrow
 
 Icon=dev.sparrow.sparrow
 Exec=sparrow %F
 Terminal=false
-MimeType=text/plain;inode/directory;
+MimeType=text/x-dart;application/x-dart;inode/directory;
 Actions=new-window;
 
 [Desktop Action new-window]

@@ -801,3 +801,12 @@ impl View for TextInput {
         });
     }
 }
+
+/// Native dialog inputs own focus after a click; never leave typing routed
+/// through the IDE's code-editor command dispatcher.
+pub fn modal_text_input(value: floem::reactive::RwSignal<String>) -> impl floem::View {
+    use floem::{View, views::Decorators};
+    let input = floem::views::text_input(value);
+    let id = input.id();
+    input.on_click_stop(move |_| id.request_focus())
+}

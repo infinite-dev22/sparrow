@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.getx
+version: 1.0.0
+title: "GetX Controller"
+category: state
+target: sibling
+suffix: "_controller"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: get
+    version: "any"

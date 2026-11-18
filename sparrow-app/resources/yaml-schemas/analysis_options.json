@@ -1,0 +1,208 @@
+{
+  "type": [
+    "object",
+    "null"
+  ],
+  "properties": {
+    "include": {
+      "type": [
+        "string",
+        "array"
+      ],
+      "items": {
+        "type": "string",
+        "description": "",
+        "examples": [
+          "package:flutter_lints/flutter.yaml",
+          "package:lints/recommended.yaml"
+        ]
+      },
+      "description": "Shared options URI, or an ordered list of URIs.",
+      "examples": [
+        "package:flutter_lints/flutter.yaml",
+        "package:lints/recommended.yaml"
+      ]
+    },
+    "analyzer": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "enable-experiment": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "errors": {
+          "type": "object",
+          "additionalProperties": {
+            "enum": [
+              "error",
+              "warning",
+              "info",
+              "ignore"
+            ]
+          },
+          "description": "Diagnostic names mapped to severity levels.",
+          "x-key-suggestions": [
+            "dead_code",
+            "unused_import",
+            "unused_local_variable",
+            "invalid_assignment",
+            "missing_return",
+            "todo"
+          ]
+        },
+        "language": {
+          "type": "object",
+          "properties": {
+            "strict-casts": {
+              "type": "boolean",
+              "description": ""
+            },
+            "strict-inference": {
+              "type": "boolean",
+              "description": ""
+            },
+            "strict-raw-types": {
+              "type": "boolean",
+              "description": ""
+            }
+          },
+          "additionalProperties": false
+        },
+        "strong-mode": {
+          "type": "object",
+          "properties": {
+            "implicit-casts": {
+              "type": "boolean",
+              "description": ""
+            },
+            "implicit-dynamic": {
+              "type": "boolean",
+              "description": ""
+            }
+          },
+          "additionalProperties": false
+        },
+        "plugins": {
+          "type": [
+            "array",
+            "object"
+          ],
+          "items": {
+            "type": "string",
+            "description": ""
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "linter": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "rules": {
+          "type": [
+            "array",
+            "object"
+          ],
+          "items": {
+            "type": "string",
+            "description": "",
+            "examples": [
+              "always_declare_return_types",
+              "avoid_dynamic_calls",
+              "avoid_empty_else",
+              "avoid_print",
+              "avoid_redundant_argument_values",
+              "avoid_unnecessary_containers",
+              "cancel_subscriptions",
+              "close_sinks",
+              "directives_ordering",
+              "discarded_futures",
+              "prefer_const_constructors",
+              "prefer_final_fields",
+              "prefer_final_locals",
+              "unawaited_futures",
+              "unnecessary_lambdas",
+              "use_build_context_synchronously",
+              "use_key_in_widget_constructors"
+            ]
+          },
+          "additionalProperties": {
+            "type": "boolean",
+            "description": ""
+          },
+          "description": "A list of lint names or a map of lint names to true/false.",
+          "x-key-suggestions": [
+            "always_declare_return_types",
+            "avoid_dynamic_calls",
+            "avoid_empty_else",
+            "avoid_print",
+            "avoid_redundant_argument_values",
+            "avoid_unnecessary_containers",
+            "cancel_subscriptions",
+            "close_sinks",
+            "directives_ordering",
+            "discarded_futures",
+            "prefer_const_constructors",
+            "prefer_final_fields",
+            "prefer_final_locals",
+            "unawaited_futures",
+            "unnecessary_lambdas",
+            "use_build_context_synchronously",
+            "use_key_in_widget_constructors"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "formatter": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "page_width": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Preferred formatter line width."
+        },
+        "trailing_commas": {
+          "enum": [
+            "automate",
+            "preserve"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "plugins": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {},
+      "description": "Analyzer plugin packages and their package-specific configuration."
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "analysis_options.yaml",
+  "x-sources": [
+    "https://dart.dev/tools/analysis",
+    "https://dart.dev/tools/analyzer-plugins"
+  ]
+}

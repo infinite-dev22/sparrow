@@ -16,7 +16,7 @@ use sparrow_rpc::{
 use super::{data::TerminalData, tab::TerminalTabData};
 use crate::{
     debug::{
-        DapData, DapVariable, RunDebugConfigs, RunDebugData, RunDebugMode,
+        DapData, DapVariable, RunDebugData, RunDebugMode,
         RunDebugProcess, ScopeOrVar,
     },
     id::TerminalTabId,
@@ -27,6 +27,7 @@ use crate::{
     workspace::SparrowWorkspace,
 };
 
+#[derive(Clone)]
 pub struct TerminalTabInfo {
     pub active: usize,
     pub tabs: im::Vector<(RwSignal<usize>, TerminalTabData)>,
@@ -63,9 +64,16 @@ impl TerminalPanelData {
         let debug = RunDebugData::new(cx, common.breakpoints);
 
         let breakline = {
+            let adapter_dap = debug.active_dap;
             let active_term = debug.active_term;
             let daps = debug.daps;
             cx.create_memo(move |_| {
+                if let Some(id) = adapter_dap.get() {
+                    return daps
+                        .with(|daps| daps.get(&id).cloned())
+                        .filter(|dap| dap.stopped.get())
+                        .and_then(|dap| dap.breakline.get());
+                }
                 let active_term = active_term.get();
                 let active_term = match active_term {
                     Some(active_term) => active_term,
@@ -245,7 +253,7 @@ impl TerminalPanelData {
                 } else {
                     let active = info.active.min(info.tabs.len().saturating_sub(1));
                     if !info.tabs.is_empty() {
-                        info.tabs.remove(active);
+                        close_tab = Some(info.tabs.remove(active).1.terminals.get_untracked());
                     }
                 }
                 let new_active = info.active.min(info.tabs.len().saturating_sub(1));
@@ -354,7 +362,8 @@ impl TerminalPanelData {
     }
 
     pub fn close_terminal(&self, term_id: &TermId) {
-        if let Some((_, tab, index, _)) = self.get_terminal_in_tab(term_id) {
+        if let Some((_, tab, index, terminal)) = self.get_terminal_in_tab(term_id) {
+            terminal.stop();
             let active = tab.active.get_untracked();
             let len = tab
                 .terminals
@@ -388,29 +397,32 @@ impl TerminalPanelData {
                     .run_debug
                     .try_update(|run_debug| {
                         if let Some(run_debug) = run_debug.as_mut() {
-                            if run_debug.is_prelaunch
-                                && run_debug.config.prelaunch.is_some()
-                            {
-                                run_debug.is_prelaunch = false;
-                                if run_debug.mode == RunDebugMode::Debug {
-                                    // set it to be stopped so that the dap can pick the same terminal session
-                                    run_debug.stopped = true;
-                                }
-                                Some(true)
-                            } else {
-                                run_debug.stopped = true;
-                                Some(false)
-                            }
+                            let prelaunch = run_debug.is_prelaunch && run_debug.config.prelaunch.is_some();
+                            run_debug.is_prelaunch = false;
+                            run_debug.stopped = true;
+                            Some(prelaunch)
                         } else {
                             None
                         }
                     })
                     .unwrap();
-                let exit_code = exit_code.unwrap_or(0);
+                let exit_code = exit_code.unwrap_or(-1);
                 if was_prelaunch == Some(true) && exit_code == 0 {
                     let run_debug = terminal.run_debug.get_untracked();
-                    if let Some(run_debug) = run_debug {
-                        if run_debug.mode == RunDebugMode::Debug {
+                    if let Some(mut run_debug) = run_debug {
+                        run_debug.stopped = false;
+                        if run_debug.config.advance_before_launch() {
+                            run_debug.is_prelaunch = true;
+                            terminal.new_process(Some(run_debug));
+                        } else if run_debug.mode == RunDebugMode::Debug {
+                            // A completed task's PTY is not the debugger session.
+                            // Keep one adapter-owned process alive even before
+                            // the SDK requests an optional runInTerminal console.
+                            self.debug.adapter_sessions.update(|sessions| {
+                                sessions.insert(run_debug.config.dap_id, (*term_id, run_debug.clone()));
+                            });
+                            self.debug.active_term.set(Some(*term_id));
+                            self.debug.active_dap.set(Some(run_debug.config.dap_id));
                             self.common.proxy.dap_start(
                                 run_debug.config,
                                 self.debug.source_breakpoints(),
@@ -466,77 +478,19 @@ impl TerminalPanelData {
 
     /// Return whether it is in debug mode.
     pub fn restart_run_debug(&self, term_id: TermId) -> Option<bool> {
-        let (_, terminal_tab, index, terminal) =
-            self.get_terminal_in_tab(&term_id)?;
-        let mut run_debug = terminal.run_debug.get_untracked()?;
-        if run_debug.config.config_source.from_palette() {
-            if let Some(new_config) =
-                self.get_run_config_by_name(&run_debug.config.name)
-            {
-                run_debug.config = new_config;
-            }
-        }
-        let mut is_debug = false;
-        let new_term_id = match run_debug.mode {
-            RunDebugMode::Run => {
-                self.common.proxy.terminal_close(term_id);
-                let mut run_debug = run_debug;
-                run_debug.stopped = false;
-                run_debug.is_prelaunch = true;
-                let new_terminal = TerminalData::new_run_debug(
-                    terminal_tab.scope,
-                    self.workspace.clone(),
-                    Some(run_debug),
-                    None,
-                    self.common.clone(),
-                );
-                let new_term_id = new_terminal.term_id;
-                terminal_tab.terminals.update(|terminals| {
-                    terminals[index] =
-                        (new_terminal.scope.create_rw_signal(0), new_terminal);
-                });
-                self.debug.active_term.set(Some(new_term_id));
-                new_term_id
-            }
-            RunDebugMode::Debug => {
-                is_debug = true;
-                let dap_id =
-                    terminal.run_debug.get_untracked().as_ref()?.config.dap_id;
-                let daps = self.debug.daps.get_untracked();
-                let dap = daps.get(&dap_id)?;
-                self.common
-                    .proxy
-                    .dap_restart(dap.dap_id, self.debug.source_breakpoints());
-                term_id
-            }
-        };
-
-        self.focus_terminal(new_term_id);
-
-        Some(is_debug)
-    }
-
-    fn get_run_config_by_name(&self, name: &str) -> Option<RunDebugConfig> {
-        if let Some(workspace) = self.common.workspace.path.as_deref() {
-            let run_toml = workspace.join(".sparrow").join("run.toml");
-            let (doc, new_doc) = self.main_split.get_doc(run_toml.clone(), None);
-            if !new_doc {
-                let content = doc.buffer.with_untracked(|b| b.to_string());
-                match toml::from_str::<RunDebugConfigs>(&content) {
-                    Ok(configs) => {
-                        return configs.configs.into_iter().find(|x| x.name == name);
-                    }
-                    Err(err) => {
-                        // todo show message window
-                        tracing::error!("deser fail {:?}", err);
-                    }
-                }
-            }
-        }
-        None
+        let process = self.run_debug_process(false).into_iter().find(|(id,_)| *id==term_id)?.1;
+        let config = self.workspace.path.as_deref().and_then(crate::dart::run_config::load)
+            .and_then(|configs|configs.into_iter().find(|config|config.name==process.config.name)).unwrap_or(process.config);
+        self.stop_run_debug(term_id);
+        self.common.internal_command.send(crate::command::InternalCommand::RunAndDebug {mode:process.mode,config});
+        Some(process.mode==RunDebugMode::Debug)
     }
 
     pub fn focus_terminal(&self, term_id: TermId) {
+        self.focus_terminal_in_panel(term_id, PanelKind::Terminal);
+    }
+
+    pub fn focus_terminal_in_panel(&self, term_id: TermId, panel: PanelKind) {
         if let Some((tab_index, terminal_tab, index, _terminal)) =
             self.get_terminal_in_tab(&term_id)
         {
@@ -544,7 +498,7 @@ impl TerminalPanelData {
                 info.active = tab_index;
             });
             terminal_tab.active.set(index);
-            self.common.focus.set(Focus::Panel(PanelKind::Terminal));
+            self.common.focus.set(Focus::Panel(panel));
 
             self.update_debug_active_term();
         }
@@ -573,8 +527,23 @@ impl TerminalPanelData {
     }
 
     pub fn stop_run_debug(&self, term_id: TermId) -> Option<()> {
+        if let Some(id) = self.debug.adapter_sessions.with_untracked(|sessions| sessions.iter()
+            .find(|(_, (id, _))| *id == term_id).map(|(dap, _)| *dap)) {
+            self.common.proxy.dap_stop(id);
+            return Some(());
+        }
         let terminal = self.get_terminal(&term_id)?;
         let run_debug = terminal.run_debug.get_untracked()?;
+
+        if run_debug.is_prelaunch && run_debug.config.prelaunch.is_some() {
+            // Cancel the task before closing its PTY, so its exit notification
+            // cannot start the application after the user pressed Stop.
+            terminal.run_debug.update(|process| {
+                if let Some(process) = process { process.is_prelaunch = false; process.stopped = true; }
+            });
+            self.common.proxy.terminal_close(term_id);
+            return Some(());
+        }
 
         match run_debug.mode {
             RunDebugMode::Run => {
@@ -614,7 +583,7 @@ impl TerminalPanelData {
                 for (_, tab) in &info.tabs {
                     tab.terminals.with_untracked(|terminals| {
                         for (_, terminal) in terminals {
-                            if let Some(run_debug) = terminal.run_debug.get() {
+                            if let Some(run_debug) = terminal.run_debug.get_untracked() {
                                 processes.push((terminal.term_id, run_debug));
                             }
                         }
@@ -622,8 +591,8 @@ impl TerminalPanelData {
                 }
             });
         }
-        processes.sort_by_key(|(_, process)| process.created);
-        processes
+        let adapters = if tracked { self.debug.adapter_sessions.get() } else { self.debug.adapter_sessions.get_untracked() };
+        merge_processes(processes, adapters)
     }
 
     pub fn set_process_id(&self, term_id: &TermId, process_id: Option<u32>) {
@@ -670,10 +639,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_continue(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -684,10 +650,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_pause(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -698,10 +661,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_step_over(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -712,10 +672,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_step_into(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -726,10 +683,7 @@ impl TerminalPanelData {
     }
 
     pub fn dap_step_out(&self, term_id: TermId) -> Option<()> {
-        let terminal = self.get_terminal(&term_id)?;
-        let dap_id = terminal
-            .run_debug
-            .with_untracked(|r| r.as_ref().map(|r| r.config.dap_id))?;
+        let dap_id = self.get_dap(term_id, false)?.dap_id;
         let thread_id = self.debug.daps.with_untracked(|daps| {
             daps.get(&dap_id)
                 .and_then(|dap| dap.thread_id.get_untracked())
@@ -740,6 +694,20 @@ impl TerminalPanelData {
     }
 
     pub fn get_active_dap(&self, tracked: bool) -> Option<DapData> {
+        let adapter = if tracked {
+            self.debug.active_dap.get()
+        } else {
+            self.debug.active_dap.get_untracked()
+        };
+        if let Some(id) = adapter {
+            return if tracked {
+                self.debug.daps.with(|daps| daps.get(&id).cloned())
+            } else {
+                self.debug
+                    .daps
+                    .with_untracked(|daps| daps.get(&id).cloned())
+            };
+        }
         let active_term = if tracked {
             self.debug.active_term.get()?
         } else {
@@ -749,6 +717,11 @@ impl TerminalPanelData {
     }
 
     pub fn get_dap(&self, term_id: TermId, tracked: bool) -> Option<DapData> {
+        let adapters = if tracked { self.debug.adapter_sessions.get() } else { self.debug.adapter_sessions.get_untracked() };
+        if let Some((id, _)) = adapters.iter().find(|(_, (id, _))| *id == term_id) {
+            return self.debug.daps.with(|daps| daps.get(id).cloned());
+        }
+
         let terminal = self.get_terminal(&term_id)?;
         let dap_id = if tracked {
             terminal
@@ -816,5 +789,35 @@ impl TerminalPanelData {
                     send(result);
                 });
         }
+    }
+}
+
+fn merge_processes(mut terminals: Vec<(TermId, RunDebugProcess)>, adapters: HashMap<DapId, (TermId, RunDebugProcess)>) -> Vec<(TermId, RunDebugProcess)> {
+    // runInTerminal may reuse the task's PTY; the adapter owns that session.
+    terminals.retain(|(_, process)| !adapters.contains_key(&process.config.dap_id));
+    terminals.extend(adapters.into_values());
+    terminals.sort_by_key(|(_, process)| process.created);
+    terminals
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+    #[test]
+    fn completed_task_is_replaced_by_live_adapter_without_hiding_other_launches() {
+        let make = |mode, stopped| RunDebugProcess {
+            mode, stopped, created: std::time::Instant::now(), is_prelaunch: false,
+            config: serde_json::from_value(serde_json::json!({"name":"app", "program":"flutter", "args":["run"]})).unwrap(),
+        };
+        let task_id = TermId::next();
+        let task = make(RunDebugMode::Debug, true);
+        let mut adapter = task.clone(); adapter.stopped = false;
+        let other_id = TermId::next();
+        let other = make(RunDebugMode::Run, false);
+        let processes = merge_processes(vec![(task_id, task.clone()), (other_id, other)], HashMap::from([(task.config.dap_id, (task_id, adapter))]));
+        assert_eq!(processes.len(), 2);
+        assert!(processes.iter().all(|(_, process)| !process.stopped));
+        assert_eq!(processes.iter().filter(|(id, _)| *id == task_id).count(), 1);
+        assert!(processes.iter().any(|(id, _)| *id == other_id));
     }
 }

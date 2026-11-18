@@ -44,6 +44,18 @@ pub struct RunDebugProgram {
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "kebab-case")]
+pub struct BeforeLaunchTask {
+    pub program: String,
+    pub args: Option<Vec<String>>,
+    #[serde(default = "enabled_task")]
+    pub enabled: bool,
+}
+fn enabled_task() -> bool {
+    true
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "kebab-case")]
 pub struct RunDebugConfig {
     #[serde(rename = "type")]
     pub ty: Option<String>,
@@ -53,6 +65,14 @@ pub struct RunDebugConfig {
     pub cwd: Option<String>,
     pub env: Option<HashMap<String, String>>,
     pub prelaunch: Option<RunDebugProgram>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before_launch: Vec<BeforeLaunchTask>,
+    #[serde(default)]
+    pub store_in_project: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug_adapter: Option<RunDebugProgram>,
+    #[serde(default)]
+    pub flutter_options: FlutterRunOptions,
     #[serde(skip)]
     pub debug_command: Option<Vec<String>>,
     #[serde(skip)]
@@ -61,6 +81,92 @@ pub struct RunDebugConfig {
     pub tracing_output: bool,
     #[serde(default)]
     pub config_source: ConfigSource,
+}
+
+/// IDE run/debug targets are Dart or Flutter SDK invocations. Auxiliary
+/// terminal/pre-launch commands are separate from language integrations.
+impl RunDebugConfig {
+    /// Promote the first enabled task. Legacy prelaunch runs before the new list.
+    pub fn begin_before_launch(&mut self) -> bool {
+        if self.prelaunch.is_some() {
+            return true;
+        }
+        while !self.before_launch.is_empty() {
+            let task = self.before_launch.remove(0);
+            if task.enabled {
+                self.prelaunch = Some(RunDebugProgram {
+                    program: task.program,
+                    args: task.args,
+                });
+                return true;
+            }
+        }
+        false
+    }
+    pub fn advance_before_launch(&mut self) -> bool {
+        self.prelaunch = None;
+        self.begin_before_launch()
+    }
+
+    pub fn is_dart_flutter(&self) -> bool {
+        let sdk = |program: &str| {
+            std::path::Path::new(program)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| {
+                    matches!(s.to_ascii_lowercase().as_str(), "dart" | "flutter")
+                })
+        };
+        if self
+            .ty
+            .as_deref()
+            .is_some_and(|ty| !matches!(ty, "dart" | "flutter" | "flutter-test" | "dart-test"))
+        {
+            return false;
+        }
+        if self
+            .debug_adapter
+            .as_ref()
+            .is_some_and(|adapter| !sdk(&adapter.program))
+        {
+            return false;
+        }
+        sdk(&self.program)
+            || (self.is_test()
+                && std::path::Path::new(&self.program)
+                    .extension()
+                    .is_some_and(|e| e == "dart")
+                && self.debug_adapter.is_some())
+    }
+    pub fn is_test(&self)->bool{matches!(self.ty.as_deref(),Some("flutter-test"|"dart-test"))}
+    pub fn dart_debug_adapter(&self) -> Option<RunDebugProgram> {
+        if !self.is_dart_flutter() {
+            return None;
+        }
+        self.debug_adapter.clone().or_else(|| {
+            Some(RunDebugProgram {
+                program: self.program.clone(),
+                args: Some({let mut args=vec![if std::path::Path::new(&self.program).file_stem().is_some_and(|p|p=="flutter"){"debug-adapter"}else{"debug_adapter"}.into()];if self.is_test(){args.push("--test".into());}args}),
+            })
+        })
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct FlutterRunOptions {
+    pub attach_args: Vec<String>,
+    pub activate_tool_window: bool,
+    pub focus_tool_window: bool,
+}
+impl Default for FlutterRunOptions {
+    fn default() -> Self {
+        Self {
+            attach_args: Vec::new(),
+            activate_tool_window: true,
+            focus_tool_window: false,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, Default, PartialEq, Eq)]
@@ -114,6 +220,8 @@ pub enum DapEvent {
         thread_id: ThreadId,
     },
     Output(Output),
+    #[serde(rename = "dart.testNotification")]
+    DartTestNotification(Value),
     Breakpoint {
         reason: String,
         breakpoint: Breakpoint,
@@ -493,6 +601,21 @@ pub struct Memory {
     pub count: usize,
 }
 
+pub enum FlutterHotReload {}
+impl Request for FlutterHotReload {
+    type Arguments = Value;
+    type Result = Value;
+    const COMMAND: &'static str = "hotReload";
+}
+pub enum FlutterHotRestart {}
+impl Request for FlutterHotRestart {
+    type Arguments = Value;
+    type Result = Value;
+    const COMMAND: &'static str = "hotRestart";
+}
+
+pub enum Attach {}
+impl Request for Attach {type Arguments=Value;type Result=Value;const COMMAND:&'static str="attach";}
 pub enum Launch {}
 
 impl Request for Launch {
@@ -874,3 +997,106 @@ impl Request for StepOut {
     type Result = ();
     const COMMAND: &'static str = "stepOut";
 }
+
+#[cfg(test)]
+mod flutter_test_protocol_tests {
+    use super::*;
+    #[test]
+    fn decodes_sdk_test_notifications() {
+        let event: DapEvent = serde_json::from_value(serde_json::json!({
+            "event":"dart.testNotification", "body":{"type":"done","success":true}
+        }))
+        .unwrap();
+        assert!(
+            matches!(event, DapEvent::DartTestNotification(v) if v["success"] == true)
+        );
+    }
+    #[test]
+    fn existing_launch_configs_need_no_adapter_field() {
+        let config: RunDebugConfig = serde_json::from_value(serde_json::json!({
+            "name":"Example", "program":"app", "tracing-output":false
+        }))
+        .unwrap();
+        assert!(config.debug_adapter.is_none());
+        assert!(
+            serde_json::to_value(config)
+                .unwrap()
+                .get("debug-adapter")
+                .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod dart_scope_tests {
+    use super::*;
+    fn config(program: &str) -> RunDebugConfig {
+        serde_json::from_value(
+            serde_json::json!({"name":"target","program":program}),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn sdk_adapters_are_resolved_without_plugins() {
+        let dart = config("/sdk/bin/dart");
+        assert!(dart.is_dart_flutter());
+        assert_eq!(
+            dart.dart_debug_adapter().unwrap().args,
+            Some(vec!["debug_adapter".into()])
+        );
+        assert!(config("flutter.bat").is_dart_flutter());
+    }
+    #[test]
+    fn unrelated_tools_and_adapters_are_rejected() {
+        assert!(!config("cargo").is_dart_flutter());
+        assert!(!config("python").is_dart_flutter());
+        let mut dart = config("dart");
+        dart.debug_adapter = Some(RunDebugProgram {
+            program: "lldb-vscode".into(),
+            args: None,
+        });
+        assert!(!dart.is_dart_flutter());
+        assert!(dart.dart_debug_adapter().is_none());
+    }
+    #[test]
+    fn flutter_test_entrypoints_keep_native_adapter() {
+        let mut test = config("test/widget_test.dart");
+        test.ty = Some("flutter-test".into());
+        test.debug_adapter = Some(RunDebugProgram {
+            program: "flutter".into(),
+            args: Some(vec!["debug-adapter".into(), "--test".into()]),
+        });
+        assert!(test.is_dart_flutter());
+        assert_eq!(test.dart_debug_adapter(), test.debug_adapter);
+    }
+}
+
+#[cfg(test)]
+mod ordered_task_tests {
+    use super::*;
+    #[test]
+    fn legacy_task_then_enabled_tasks_in_order_without_changing_saved_source() {
+        let original: RunDebugConfig = serde_json::from_value(serde_json::json!({"program":"flutter","name":"test","prelaunch":{"program":"legacy","args":[]},"before-launch":[{"program":"first","args":["one"]},{"program":"disabled","enabled":false},{"program":"last"}]})).unwrap();
+        let mut launch = original.clone();
+        assert!(launch.begin_before_launch());
+        assert_eq!(launch.prelaunch.as_ref().unwrap().program, "legacy");
+        assert!(launch.advance_before_launch());
+        assert_eq!(launch.prelaunch.as_ref().unwrap().program, "first");
+        assert!(launch.advance_before_launch());
+        assert_eq!(launch.prelaunch.as_ref().unwrap().program, "last");
+        assert!(!launch.advance_before_launch());
+        assert!(launch.prelaunch.is_none());
+        assert_eq!(original.before_launch.len(), 3);
+        assert_eq!(original.prelaunch.unwrap().program, "legacy");
+    }
+    #[test]
+    fn all_disabled_tasks_do_not_delay_launch_and_roundtrip_disabled_state() {
+        let mut launch: RunDebugConfig = serde_json::from_value(serde_json::json!({"program":"dart","name":"test","before-launch":[{"program":"skip","enabled":false}]})).unwrap();
+        let restored: RunDebugConfig =
+            serde_json::from_value(serde_json::to_value(&launch).unwrap()).unwrap();
+        assert!(!restored.before_launch[0].enabled);
+        assert!(!launch.begin_before_launch());
+    }
+}
+
+#[cfg(test)]mod preset_adapter_tests {use super::*;#[test]fn test_adapters_use_the_sdk_test_mode(){for (kind,program,command)in[("flutter-test","flutter","debug-adapter"),("dart-test","dart","debug_adapter")]{let config:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":kind,"name":"Tests","program":program,"args":["test"]})).unwrap();assert!(config.is_dart_flutter());assert_eq!(config.dart_debug_adapter().unwrap().args.unwrap(),vec![command.to_string(),"--test".to_string()]);}}}

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use tracing::{Level, event};
 use url::Url;
 
-// Rust-analyzer returns paths in the form of "file:///<drive>:/...", which gets parsed into URL
+// Language-server file URIs can contain paths in the form of "file:///<drive>:/...", which gets parsed into URL
 // as "/<drive>://" which is then interpreted by PathBuf::new() as a UNIX-like path from root.
 // This function strips the additional / from the beginning, if the first segment is a drive letter.
 #[cfg(windows)]

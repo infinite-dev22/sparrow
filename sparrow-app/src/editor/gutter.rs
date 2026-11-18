@@ -17,19 +17,32 @@ pub struct EditorGutterView {
     editor: EditorData,
     width: f64,
     gutter_padding_right: Memo<f32>,
+    lanes: Memo<GutterLanes>,
+    previews: Memo<(Vec<crate::dart::ColorSwatch>, Vec<crate::dart::IconSwatch>)>,
 }
 
-pub fn editor_gutter_view(
+pub(crate) fn editor_gutter_view(
     editor: EditorData,
     gutter_padding_right: Memo<f32>,
+    lanes: Memo<GutterLanes>,
+    previews: Memo<(Vec<crate::dart::ColorSwatch>, Vec<crate::dart::IconSwatch>)>,
 ) -> EditorGutterView {
     let id = ViewId::new();
+    let bookmarks = editor.common.bookmarks;
+    floem::reactive::create_effect(move |_| {
+        bookmarks.get();
+        lanes.get();
+        previews.get();
+        id.request_paint();
+    });
 
     EditorGutterView {
         id,
         editor,
         width: 0.0,
         gutter_padding_right,
+        lanes,
+        previews,
     }
 }
 
@@ -48,7 +61,6 @@ impl EditorGutterView {
 
         let changes = e_data.doc().head_changes().get_untracked();
         let line_height = config.editor.line_height() as f64;
-        let gutter_padding_right = self.gutter_padding_right.get_untracked() as f64;
 
         let changes = changes_colors_screen(config, &e_data.editor, changes);
         for (y, height, removed, color) in changes {
@@ -62,10 +74,9 @@ impl EditorGutterView {
                 y -= 5.0;
             }
             cx.fill(
-                &Size::new(3.0, height).to_rect().with_origin(Point::new(
-                    self.width + 5.0 - gutter_padding_right,
-                    y,
-                )),
+                &Size::new(3.0, height)
+                    .to_rect()
+                    .with_origin(Point::new(self.width - 3.0, y)),
                 color,
                 0.0,
             )
@@ -105,6 +116,97 @@ impl EditorGutterView {
             config.color(SparrowColor::EDITOR_STICKY_HEADER_BACKGROUND),
             0.0,
         );
+    }
+
+    fn paint_flutter_swatches(
+        &self,
+        cx: &mut floem::context::PaintCx,
+        viewport: Rect,
+        is_normal: bool,
+        config: &SparrowConfig,
+    ) {
+        if !is_normal {
+            return;
+        }
+
+        let doc = self.editor.doc();
+        let path = doc.content.with_untracked(|c| c.path().cloned());
+        let Some(path) = path else { return };
+        let (colors, icons) = self.previews.get_untracked();
+        let lanes = self.lanes.get_untracked();
+        let origin = self.width - self.gutter_padding_right.get_untracked() as f64;
+        let line_height = config.editor.line_height() as f64;
+        let bookmarks =
+            self.editor.common.bookmarks.with_untracked(|items| {
+                items.get(&path).cloned().unwrap_or_default()
+            });
+        self.editor.screen_lines().with_untracked(|lines| {
+            for (line, y) in lines.iter_lines_y() {
+                let top = y - viewport.y0;
+                if bookmarks.contains(&line) {
+                    let x = origin + lanes.bookmark as f64 + 2.0;
+                    let y = top + (line_height - 13.0) / 2.0;
+                    let mut shape = floem::peniko::kurbo::BezPath::new();
+                    shape.move_to((x, y));
+                    shape.line_to((x + 10.0, y));
+                    shape.line_to((x + 10.0, y + 13.0));
+                    shape.line_to((x + 5.0, y + 9.0));
+                    shape.line_to((x, y + 13.0));
+                    shape.close_path();
+                    cx.fill(
+                        &shape,
+                        floem::peniko::Color::from_rgb8(230, 189, 96),
+                        0.0,
+                    );
+                }
+                for (slot, swatch) in
+                    colors.iter().filter(|c| c.line == line).enumerate()
+                {
+                    let rect = Rect::from_origin_size(
+                        (
+                            (origin + lanes.colors as f64 + slot as f64 * 14.0 + 1.0).round(),
+                            (top + (line_height - 12.0) / 2.0).round(),
+                        ),
+                        (12.0, 12.0),
+                    );
+                    let [r, g, b, a] = swatch.rgba;
+                    cx.fill(
+                        &rect,
+                        floem::peniko::Color::from_rgba8(r, g, b, a),
+                        0.0,
+                    );
+                }
+                for (slot, icon) in
+                    icons.iter().filter(|i| i.line == line).enumerate()
+                {
+                    if let Some(glyph) = icon.codepoint.and_then(char::from_u32) {
+                        let family = FamilyOwned::parse_list(if icon.is_cupertino {
+                            "CupertinoIcons"
+                        } else {
+                            "Material Icons"
+                        })
+                        .collect::<Vec<_>>();
+                        let mut layout = TextLayout::new();
+                        layout.set_text(
+                            &glyph.to_string(),
+                            AttrsList::new(
+                                Attrs::new().family(&family).font_size(14.0).color(
+                                    config.color(SparrowColor::EDITOR_FOREGROUND),
+                                ),
+                            ),
+                            None,
+                        );
+                        cx.draw_text(
+                            &layout,
+                            Point::new(
+                                origin + lanes.icons as f64 + slot as f64 * 16.0,
+                                top + (line_height - layout.size().height) / 2.0,
+                            ),
+                        );
+                    }
+                }
+            }
+        });
     }
 }
 
@@ -164,6 +266,8 @@ impl View for EditorGutterView {
                 if line > last_line {
                     break;
                 }
+                let marked=self.editor.doc().content.with_untracked(|c|c.path().is_some_and(|path|self.editor.common.breakpoints.with_untracked(|all|all.get(path).is_some_and(|points|points.contains_key(&line)))));
+                if marked {continue;}
 
                 let text = if show_relative {
                     if line == current_line {
@@ -203,6 +307,7 @@ impl View for EditorGutterView {
         });
 
         self.paint_head_changes(cx, &self.editor, viewport, kind_is_normal, &config);
+        self.paint_flutter_swatches(cx, viewport, kind_is_normal, &config);
         self.paint_sticky_headers(cx, kind_is_normal, &config);
     }
 
@@ -398,5 +503,57 @@ impl From<lsp_types::FoldingRangeKind> for FoldingRangeKind {
             lsp_types::FoldingRangeKind::Imports => FoldingRangeKind::Imports,
             lsp_types::FoldingRangeKind::Region => FoldingRangeKind::Region,
         }
+    }
+}
+
+/// Positions relative to the right edge of the line-number column.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GutterLanes {
+    pub breakpoint: f32,
+    pub bookmark: f32,
+    pub colors: f32,
+    pub icons: f32,
+    pub run: f32,
+    pub padding: f32,
+}
+impl GutterLanes {
+    pub fn new(
+        colors: usize,
+        icons: usize,
+        bookmarks: bool,
+        run: bool,
+        tests: bool,
+    ) -> Self {
+        let breakpoint = -12.0;
+        let icons_x = 4.0;
+        let colors_x = icons_x + icons as f32 * 16.0;
+        let bookmark = colors_x + colors as f32 * 14.0;
+        let run_x = bookmark + if bookmarks {14.0} else {0.0};
+        let padding = run_x
+            + if run { 24.0 } else { 0.0 }
+            + if tests { 48.0 } else { 0.0 }
+            + 6.0;
+        Self {
+            breakpoint,
+            bookmark,
+            colors: colors_x,
+            icons: icons_x,
+            run: run_x,
+            padding,
+        }
+    }
+}
+#[cfg(test)]
+mod lane_tests {
+    use super::*;
+    #[test]
+    fn simultaneous_decorations_have_independent_nonoverlapping_space() {
+        let minimal = GutterLanes::new(0, 0, false, false, false);
+        let full = GutterLanes::new(2, 2, true, true, true);
+        assert!(full.breakpoint < 0.0);
+        assert_eq!(full.colors, full.icons + 32.0);
+        assert_eq!(full.bookmark, full.colors + 28.0);
+        assert_eq!(full.run, full.bookmark + 14.0);
+        assert!(full.padding > minimal.padding + 100.0);
     }
 }

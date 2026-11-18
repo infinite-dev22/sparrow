@@ -1,0 +1,6 @@
+import 'package:flutter/material.dart';
+import 'package:{{package}}/{{repository_import}}/{{snake}}_repository.dart';
+import '{{snake}}_screen.dart';
+
+Route<void> create{{name}}Route({{{name}}Repository? repository}) =>
+    MaterialPageRoute<void>(builder: (_) => {{name}}Screen(repository: repository));

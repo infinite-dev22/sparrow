@@ -621,6 +621,10 @@ impl MainSplitData {
         let cx = self.scope;
         let doc = self.docs.with_untracked(|docs| docs.get(&path).cloned());
         if let Some(doc) = doc {
+            if matches!(self.common.workspace.kind, crate::workspace::SparrowWorkspaceType::Local)
+                && crate::dart::library_access::read_only(&path, self.common.workspace.path.as_deref()) {
+                doc.content.update(|content| { if let DocContent::File {read_only,..}=content { *read_only=true; } });
+            }
             (doc, false)
         } else {
             let diagnostic_data = self.get_diagnostic_data(&path);
@@ -654,7 +658,17 @@ impl MainSplitData {
                                 }
                             });
                         } else if let Some(unsaved) = unsaved {
+                            // Saved marker lines already refer to the unsaved text.
+                            let path=local_doc.content.with_untracked(|c|c.path().cloned());
+                            let markers=path.as_ref().map(|path| (
+                                local_doc.common.breakpoints.with_untracked(|all|all.get(path).cloned()),
+                                local_doc.common.bookmarks.with_untracked(|all|all.get(path).cloned()),
+                            ));
                             local_doc.reload(Rope::from(unsaved), false);
+                            if let (Some(path),Some((points,marks)))=(path,markers) {
+                                if let Some(points)=points {local_doc.common.breakpoints.update(|all|{all.insert(path.clone(),points);});}
+                                if let Some(marks)=marks {local_doc.common.bookmarks.update(|all|{all.insert(path,marks);});}
+                            }
                         }
                     }
                 });
@@ -667,7 +681,6 @@ impl MainSplitData {
             }
             doc.get_code_lens();
             doc.get_folding_range();
-            doc.get_document_symbol();
             (doc, true)
         }
     }
@@ -726,6 +739,22 @@ impl MainSplitData {
             false,
             false,
         );
+    }
+
+    pub fn open_revision_diff(&self,path:PathBuf,revision:String,root:PathBuf) {
+        let revision_for_read=revision.clone();
+        let data=self.clone();let relative=path.strip_prefix(&root).unwrap_or(&path).to_string_lossy().replace('\\',"/");
+        let send=create_ext_action(self.scope,move |(before,after):(String,String)|{
+            let left=Rc::new(Doc::new_history(data.scope,DocContent::History(DocHistory{path:path.clone(),version:format!("{revision}^")}),data.editors,data.common.clone()));
+            let right=Rc::new(Doc::new_history(data.scope,DocContent::History(DocHistory{path:path.clone(),version:revision.clone()}),data.editors,data.common.clone()));
+            left.init_content(Rope::from(before));right.init_content(Rope::from(after));
+            data.get_editor_tab_child(EditorTabChildSource::DiffEditor{left,right},false,false);
+        });
+        let parent=format!("{revision_for_read}^:{relative}");let current=format!("{revision_for_read}:{relative}");
+        std::thread::spawn(move ||{
+            let read=|object:&str|std::process::Command::new("git").current_dir(&root).args(["show",object]).output().ok().filter(|out|out.status.success()).map(|out|String::from_utf8_lossy(&out.stdout).to_string()).unwrap_or_default();
+            send((read(&parent),read(&current)));
+        });
     }
 
     pub fn open_diff_files(&self, left_path: PathBuf, right_path: PathBuf) {
@@ -1961,6 +1990,40 @@ impl MainSplitData {
             let editor_tab = editor_tabs.get(&editor_tab_id).copied()?;
             let editor_tab = editor_tab.get_untracked();
             match kind {
+                TabCloseKind::CloseUnmodified => editor_tab
+                    .children
+                    .iter()
+                    .filter_map(|(_, _, child)| {
+                        let pristine = match child {
+                            EditorTabChild::Editor(id) => self
+                                .editors
+                                .editor_untracked(*id)
+                                .is_some_and(|editor| {
+                                    editor.doc().buffer.with_untracked(|buffer| {
+                                        buffer.is_pristine()
+                                    })
+                                }),
+                            EditorTabChild::DiffEditor(id) => {
+                                self.diff_editors.with_untracked(|editors| {
+                                    editors.get(id).is_some_and(|editor| {
+                                        editor
+                                            .left
+                                            .doc()
+                                            .buffer
+                                            .with_untracked(|b| b.is_pristine())
+                                            && editor
+                                                .right
+                                                .doc()
+                                                .buffer
+                                                .with_untracked(|b| b.is_pristine())
+                                    })
+                                })
+                            }
+                            _ => true,
+                        };
+                        pristine.then(|| child.clone())
+                    })
+                    .collect(),
                 TabCloseKind::CloseOther => editor_tab
                     .children
                     .iter()
@@ -2185,19 +2248,37 @@ impl MainSplitData {
     pub fn run_code_action(&self, plugin_id: PluginId, action: CodeActionOrCommand) {
         match action {
             CodeActionOrCommand::Command(command) => {
-                self.run_code_lens(
-                    &command.command,
-                    command.arguments.unwrap_or_default(),
-                );
+                if plugin_id == PluginId(0) && self.common.dart_lsp.is_available()
+                    && command.command != "dart.edit.codeAction.apply" {
+                    self.common.dart_lsp.execute_command(command);
+                } else {
+                    self.run_code_lens(&command.command, command.arguments.unwrap_or_default());
+                }
             }
             CodeActionOrCommand::CodeAction(action) => {
                 if let Some(edit) = action.edit.as_ref() {
                     self.apply_workspace_edit(edit);
-                } else {
-                    self.resolve_code_action(plugin_id, action);
+                } else if action.command.is_none() {
+                    self.resolve_code_action(plugin_id, action.clone());
+                }
+                if let Some(command) = action.command {
+                    if plugin_id == PluginId(0) && self.common.dart_lsp.is_available() {
+                        self.common.dart_lsp.execute_command(command);
+                    } else {
+                        self.run_code_lens(&command.command, command.arguments.unwrap_or_default());
+                    }
                 }
             }
         }
+    }
+
+    /// Acknowledge only edits that can be applied synchronously to loaded documents.
+    pub fn apply_dart_server_edit(&self, edit: &WorkspaceEdit) -> bool {
+        if !dart_server_edit_is_valid(edit, |path| {
+            self.docs.with_untracked(|docs| docs.get(path).filter(|doc| doc.loaded() && !doc.content.with_untracked(|c| c.read_only())).map(|doc| doc.rev()))
+        }) { return false; }
+        self.apply_workspace_edit(edit);
+        true
     }
 
     pub fn run_code_lens(&self, command: &str, args: Vec<Value>) {
@@ -2206,6 +2287,24 @@ impl MainSplitData {
 
     /// Resolve a code action and apply its held workspace edit
     fn resolve_code_action(&self, plugin_id: PluginId, action: CodeAction) {
+        // ── Dart fast path ─────────────────────────────────────────
+        if plugin_id == PluginId(0) && self.common.dart_lsp.is_available() {
+            let main_split = self.clone();
+            let trigger = floem::ext_event::create_ext_action(
+                self.scope,
+                move |edit: Option<WorkspaceEdit>| {
+                    if let Some(edit) = edit {
+                        main_split.apply_workspace_edit(&edit);
+                    }
+                },
+            );
+            self.common
+                .dart_lsp
+                .resolve_code_action(action, move |edit| trigger(edit));
+            return;
+        }
+
+        // ── Existing proxy path ────────────────────────────────────
         let main_split = self.clone();
         let send = create_ext_action(self.scope, move |edit| {
             main_split.apply_workspace_edit(&edit);
@@ -2213,8 +2312,7 @@ impl MainSplitData {
         self.common
             .proxy
             .code_action_resolve(action, plugin_id, move |result| {
-                if let Ok(ProxyResponse::CodeActionResolveResponse { item }) = result
-                {
+                if let Ok(ProxyResponse::CodeActionResolveResponse { item }) = result {
                     if let Some(edit) = item.edit {
                         send(edit);
                     }
@@ -2231,29 +2329,60 @@ impl MainSplitData {
         }
 
         if let Some(edits) = workspace_edits(edit) {
+            // Check every target before applying any part of a multi-file edit.
+            if edits.keys().any(|uri| {
+                uri.to_file_path().map_or(true, |path| {
+                    crate::dart::library_access::read_only(
+                        &path,
+                        self.common.workspace.path.as_deref(),
+                    ) || self.docs.with_untracked(|docs| {
+                        docs.get(&path).is_some_and(|doc| {
+                            doc.content.with_untracked(|c| c.read_only())
+                        })
+                    })
+                })
+            }) {
+                self.common.internal_command.send(InternalCommand::ShowAlert {title:"Read-only source".into(),msg:"This edit targets read-only library source. No changes were applied.".into(),buttons:Vec::new()});
+                return;
+            }
             for (url, edits) in edits {
                 if let Ok(path) = url.to_file_path() {
-                    let active_path = self
-                        .active_editor
-                        .get_untracked()
-                        .map(|editor| editor.doc())
-                        .map(|doc| doc.content.get_untracked())
-                        .and_then(|content| content.path().cloned());
-                    let position = if active_path.as_ref() == Some(&path) {
-                        None
+                    let (doc, _) = self.get_doc(path, None);
+                    let editors = self.editors;
+                    let target = doc.clone();
+                    let apply = move || {
+                        let editor = editors.with_editors_untracked(|editors| {
+                            editors
+                                .values()
+                                .find(|editor| {
+                                    editor
+                                        .doc_signal()
+                                        .try_get_untracked()
+                                        .is_some_and(|current| {
+                                            Rc::ptr_eq(&current, &doc)
+                                        })
+                                })
+                                .cloned()
+                        });
+                        if let Some(editor) = editor {
+                            editor.do_text_edit(&edits);
+                        } else {
+                            doc.do_text_edit(&edits);
+                        }
+                    };
+                    // Previewed edits are already loaded. Other LSP edits may need
+                    // a buffer first, without opening a tab or moving the caret.
+                    if target.loaded() {
+                        apply();
                     } else {
-                        edits
-                            .first()
-                            .map(|edit| EditorPosition::Position(edit.range.start))
-                    };
-                    let location = EditorLocation {
-                        path,
-                        position,
-                        scroll_offset: None,
-                        ignore_unconfirmed: true,
-                        same_editor_tab: false,
-                    };
-                    self.jump_to_location(location, Some(edits));
+                        let scope = self.scope.create_child();
+                        scope.create_effect(move |_| {
+                            if target.loaded.get() {
+                                apply();
+                                scope.dispose();
+                            }
+                        });
+                    }
                 }
             }
         }
@@ -2278,6 +2407,35 @@ impl MainSplitData {
             });
         let (path, position) =
             next_in_file_errors_offset(active_path, &file_diagnostics);
+        let location = EditorLocation {
+            path,
+            position: Some(position),
+            scroll_offset: None,
+            ignore_unconfirmed: false,
+            same_editor_tab: false,
+        };
+        self.jump_to_location(location, None);
+    }
+
+    pub fn previous_error(&self) {
+        let file_diagnostics =
+            self.file_diagnostics_items(DiagnosticSeverity::ERROR);
+        if file_diagnostics.is_empty() {
+            return;
+        }
+        let active_editor = self.active_editor.get_untracked();
+        let active_path = active_editor
+            .map(|editor| (editor.doc(), editor.cursor()))
+            .and_then(|(doc, cursor)| {
+                let offset = cursor.with_untracked(|c| c.offset());
+                let (path, position) = (
+                    doc.content.get_untracked().path().cloned(),
+                    doc.buffer.with_untracked(|b| b.offset_to_position(offset)),
+                );
+                path.map(|path| (path, offset, position))
+            });
+        let (path, position) =
+            previous_in_file_errors_offset(active_path, &file_diagnostics);
         let location = EditorLocation {
             path,
             position: Some(position),
@@ -2996,6 +3154,25 @@ impl MainSplitData {
     }
 }
 
+fn dart_server_edit_is_valid(edit: &WorkspaceEdit, revision: impl Fn(&Path) -> Option<u64>) -> bool {
+    let valid_document = |uri: &Url, version: Option<i32>| {
+        let Ok(path) = uri.to_file_path() else { return false; };
+        revision(&path).is_some_and(|current| version.is_none_or(|version| i64::try_from(current).ok() == Some(i64::from(version))))
+    };
+    if edit.changes.is_some() && edit.document_changes.is_some() { return false; }
+    if let Some(changes) = &edit.changes {
+        if !changes.keys().all(|uri| valid_document(uri, None)) { return false; }
+    }
+    match &edit.document_changes {
+        Some(DocumentChanges::Edits(edits)) => edits.iter().all(|edit| valid_document(&edit.text_document.uri, edit.text_document.version)),
+        Some(DocumentChanges::Operations(ops)) => ops.iter().all(|op| match op {
+            DocumentChangeOperation::Edit(edit) => valid_document(&edit.text_document.uri, edit.text_document.version),
+            DocumentChangeOperation::Op(_) => false,
+        }),
+        None => true,
+    }
+}
+
 fn workspace_edits(edit: &WorkspaceEdit) -> Option<HashMap<Url, Vec<TextEdit>>> {
     if let Some(changes) = edit.changes.as_ref() {
         return Some(changes.clone());
@@ -3036,6 +3213,23 @@ fn workspace_edits(edit: &WorkspaceEdit) -> Option<HashMap<Url, Vec<TextEdit>>> 
             .collect::<HashMap<Url, Vec<TextEdit>>>(),
     };
     Some(edits)
+}
+
+fn previous_in_file_errors_offset(
+    active_path: Option<(PathBuf, usize, Position)>,
+    file_diagnostics: &[(PathBuf, Vec<EditorDiagnostic>)],
+) -> (PathBuf, EditorPosition) {
+    let previous = file_diagnostics.iter().rev().flat_map(|(path, diagnostics)|
+        diagnostics.iter().rev().map(move |diagnostic| (path, diagnostic)))
+        .find(|(path, diagnostic)| active_path.as_ref().is_some_and(|(active, offset, position)|
+            *path < active || (*path == active && diagnostic.range.map(|(start, _)| start < *offset)
+                .unwrap_or_else(|| diagnostic.diagnostic.range.start < *position))));
+    let (path, diagnostic) = previous.unwrap_or_else(|| {
+        let (path, diagnostics) = file_diagnostics.last().expect("nonempty error list");
+        (path, diagnostics.last().expect("nonempty file errors"))
+    });
+    (path.clone(), diagnostic.range.map(|(start, _)| EditorPosition::Offset(start))
+        .unwrap_or(EditorPosition::Position(diagnostic.diagnostic.range.start)))
 }
 
 fn next_in_file_errors_offset(
@@ -3099,7 +3293,55 @@ fn next_in_file_errors_offset(
 
 #[derive(Clone, Copy, Debug)]
 pub enum TabCloseKind {
+    CloseUnmodified,
     CloseOther,
     CloseToLeft,
     CloseToRight,
+}
+
+#[cfg(test)]
+mod server_edit_tests {
+    use super::*;
+    #[test]
+    fn server_edit_rejects_stale_versions_missing_documents_and_file_operations() {
+        let edit: WorkspaceEdit = serde_json::from_value(serde_json::json!({
+            "documentChanges": [{ "textDocument": {"uri":"file:///tmp/imports.dart", "version":7}, "edits":[] }]
+        })).unwrap();
+        assert!(dart_server_edit_is_valid(&edit, |_| Some(7)));
+        assert!(!dart_server_edit_is_valid(&edit, |_| Some(8)));
+        assert!(!dart_server_edit_is_valid(&edit, |_| None));
+        let operation: WorkspaceEdit = serde_json::from_value(serde_json::json!({
+            "documentChanges": [{ "kind":"delete", "uri":"file:///tmp/imports.dart" }]
+        })).unwrap();
+        assert!(!dart_server_edit_is_valid(&operation, |_| Some(7)));
+    }
+    #[test]
+    fn multi_file_edits_validate_every_document_before_applying() {
+        let edit: WorkspaceEdit = serde_json::from_value(serde_json::json!({
+            "changes": {"file:///tmp/a.dart":[], "file:///tmp/b.dart":[]}
+        })).unwrap();
+        assert!(!dart_server_edit_is_valid(&edit, |path| (path == Path::new("/tmp/a.dart")).then_some(1)));
+        assert!(dart_server_edit_is_valid(&edit, |_| Some(1)));
+    }
+}
+
+#[cfg(test)]
+mod previous_error_tests {
+    use super::*;
+    #[test]
+    fn previous_error_moves_back_skips_current_and_wraps_across_files() {
+        let diagnostic = |line, offset: Option<usize>| EditorDiagnostic {
+            range: offset.map(|start| (start, start + 1)),
+            diagnostic: lsp_types::Diagnostic { range: lsp_types::Range::new(Position::new(line, 0), Position::new(line, 1)), ..Default::default() },
+        };
+        let a = PathBuf::from("/a.dart");
+        let b = PathBuf::from("/b.dart");
+        let diagnostics = vec![(a.clone(), vec![diagnostic(1, Some(10)), diagnostic(3, Some(30))]), (b.clone(), vec![diagnostic(2, None)])];
+        let (path, position) = previous_in_file_errors_offset(Some((a.clone(), 30, Position::new(3, 0))), &diagnostics);
+        assert_eq!(path, a);
+        assert!(matches!(position, EditorPosition::Offset(10)));
+        let (path, position) = previous_in_file_errors_offset(Some((a.clone(), 10, Position::new(1, 0))), &diagnostics);
+        assert_eq!(path, b);
+        assert!(matches!(position, EditorPosition::Position(Position { line: 2, .. })));
+    }
 }

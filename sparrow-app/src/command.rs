@@ -6,7 +6,7 @@ use floem::{
     views::editor::command::Command,
 };
 use indexmap::IndexMap;
-use lsp_types::{CodeActionOrCommand, Position, WorkspaceEdit};
+use lsp_types::{CodeActionOrCommand, WorkspaceEdit};
 use serde_json::Value;
 use sparrow_core::command::{
     EditCommand, FocusCommand, MotionModeCommand, MoveCommand,
@@ -286,7 +286,7 @@ pub enum SparrowWorkbenchCommand {
     OpenThemesDirectory,
 
     #[strum(serialize = "open_plugins_directory")]
-    #[strum(message = "Open Plugins Directory")]
+    #[strum(message = "Open Local Themes Directory")]
     OpenPluginsDirectory,
 
     #[strum(serialize = "open_grammars_directory")]
@@ -356,6 +356,42 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "New File")]
     #[strum(serialize = "new_file")]
     NewFile,
+    #[strum(message = "Scaffold: New Feature…")]
+    #[strum(serialize = "scaffold_new_feature")]
+    ScaffoldNewFeature,
+    #[strum(message = "Scaffold: New From Pack…")]
+    #[strum(serialize = "scaffold_from_pack")]
+    ScaffoldFromPack,
+    #[strum(message = "Scaffold: Manage Templates…")]
+    #[strum(serialize = "scaffold_manage_templates")]
+    ScaffoldManageTemplates,
+    #[strum(message = "Scaffold: Export Bundled Template…")]
+    #[strum(serialize = "scaffold_export_pack")]
+    ScaffoldExportPack,
+    #[strum(message = "Scaffold: Undo Last Scaffold…")]
+    #[strum(serialize = "scaffold_undo")]
+    ScaffoldUndo,
+    #[strum(message = "Reformat Code…")]
+    #[strum(serialize = "reformat_code_options")]
+    ReformatCodeOptions,
+    #[strum(message = "Replace in Editor")]
+    #[strum(serialize = "replace_in_editor")]
+    ReplaceInEditor,
+    #[strum(message = "Search Everywhere")]
+    #[strum(serialize = "search_everywhere")]
+    SearchEverywhere,
+    #[strum(message = "Find in Files…")]
+    #[strum(serialize = "find_in_files")]
+    FindInFiles,
+    #[strum(message = "Replace in Files…")]
+    #[strum(serialize = "replace_in_files")]
+    ReplaceInFiles,
+    #[strum(message = "Git Command…")]
+    #[strum(serialize = "git_command")]
+    GitCommand,
+    #[strum(message = "Flutter Project Task")]
+    #[strum(serialize = "flutter_project_task")]
+    FlutterProjectTask,
 
     #[strum(serialize = "connect_ssh_host")]
     #[strum(message = "Connect to SSH Host")]
@@ -377,6 +413,58 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "palette")]
     #[strum(message = "Go to File")]
     Palette,
+
+    #[strum(message = "Run Selected Configuration")]
+    #[strum(serialize = "run_selected_configuration")]
+    RunSelectedConfiguration,
+
+    #[strum(serialize = "edit_run_configurations")]
+    #[strum(message = "Edit Run/Debug Configurations")]
+    EditRunConfigurations,
+
+    #[strum(serialize = "run_current_file")]
+    #[strum(message = "Run Current Dart File")]
+    RunCurrentFile,
+
+    #[strum(serialize = "debug_current_file")]
+    #[strum(message = "Debug Current Dart File")]
+    DebugCurrentFile,
+    #[strum(message = "Profile Current Flutter File")]
+    ProfileCurrentFile,
+
+    #[strum(serialize = "optimize_imports")]
+    #[strum(message = "Optimize Dart Imports")]
+    OptimizeImports,
+
+    #[strum(serialize = "rename_active_file")]
+    #[strum(message = "Rename Active File")]
+    RenameActiveFile,
+    #[strum(message = "Move File…")]
+    #[strum(serialize = "move_active_file")]
+    MoveActiveFile,
+    #[strum(message = "Safe Delete File…")]
+    #[strum(serialize = "safe_delete_file")]
+    SafeDeleteFile,
+    #[strum(message = "Copy File…")]
+    #[strum(serialize = "copy_active_file")]
+    CopyActiveFile,
+    #[strum(message = "Extract / Introduce…")]
+    #[strum(serialize = "refactor_extract")]
+    RefactorExtract,
+    #[strum(message = "Inline…")]
+    #[strum(serialize = "refactor_inline")]
+    RefactorInline,
+
+    #[strum(serialize = "toggle_breakpoint")]
+    #[strum(message = "Toggle Breakpoint")]
+    ToggleBreakpoint,
+    #[strum(serialize = "toggle_bookmark")]
+    #[strum(message = "Toggle Bookmark")]
+    ToggleBookmark,
+
+    #[strum(message = "Debug Selected Configuration")]
+    #[strum(serialize = "debug_selected_configuration")]
+    DebugSelectedConfiguration,
 
     #[strum(message = "Go To Symbol In File")]
     #[strum(serialize = "palette.symbol")]
@@ -424,8 +512,13 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "toggle_maximized_panel")]
     ToggleMaximizedPanel,
 
+    #[strum(message = "Hide Active Tool Window")]
     #[strum(serialize = "hide_panel")]
     HidePanel,
+
+    #[strum(message = "Hide/Restore All Tool Windows")]
+    #[strum(serialize = "toggle_all_tool_windows")]
+    ToggleAllToolWindows,
 
     #[strum(serialize = "show_panel")]
     ShowPanel,
@@ -458,7 +551,7 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "toggle_source_control_focus")]
     ToggleSourceControlFocus,
 
-    #[strum(message = "Toggle Plugin Focus")]
+    #[strum(message = "Toggle Themes Focus")]
     #[strum(serialize = "toggle_plugin_focus")]
     TogglePluginFocus,
 
@@ -473,6 +566,32 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "Toggle Search Focus")]
     #[strum(serialize = "toggle_search_focus")]
     ToggleSearchFocus,
+
+    #[strum(
+        message = "Activate Run Tool Window",
+        serialize = "activate_run_tool_window"
+    )]
+    ActivateRunToolWindow,
+    #[strum(
+        message = "Activate Debug Tool Window",
+        serialize = "activate_debug_tool_window"
+    )]
+    ActivateDebugToolWindow,
+    #[strum(
+        message = "Activate Problems Tool Window",
+        serialize = "activate_problems_tool_window"
+    )]
+    ActivateProblemsToolWindow,
+    #[strum(
+        message = "Activate Structure Tool Window",
+        serialize = "activate_structure_tool_window"
+    )]
+    ActivateStructureToolWindow,
+    #[strum(
+        message = "Activate Git Tool Window",
+        serialize = "activate_git_tool_window"
+    )]
+    ActivateGitToolWindow,
 
     // Visual toggle commands
     #[strum(serialize = "toggle_terminal_visual")]
@@ -533,7 +652,7 @@ pub enum SparrowWorkbenchCommand {
     InstallTheme,
 
     #[strum(serialize = "change_file_language")]
-    #[strum(message = "Change current file language")]
+    #[strum(message = "Change file syntax (Dart / Flutter project files)")]
     ChangeFileLanguage,
 
     #[strum(serialize = "change_file_line_ending")]
@@ -616,16 +735,79 @@ pub enum SparrowWorkbenchCommand {
     #[strum(serialize = "jump_highlight_prev")]
     #[strum(message = "Jump to previous document highlight")]
     JumpHighlightPrev,
+
+    #[strum(serialize = "dart.pub.get")]
+    #[strum(message = "Pub Get")]
+    DartPubGet,
+
+    #[strum(serialize = "flutter_run")]
+    #[strum(message = "Flutter: Run")]
+    FlutterRun,
+
+    #[strum(serialize = "flutter_hot_reload")]
+    #[strum(message = "Flutter: Hot Reload")]
+    FlutterHotReload,
+
+    #[strum(serialize = "flutter_hot_restart")]
+    #[strum(message = "Flutter: Hot Restart")]
+    FlutterHotRestart,
+
+    #[strum(serialize = "flutter_stop")]
+    #[strum(message = "Flutter: Stop")]
+    FlutterStop,
+
+    #[strum(serialize = "flutter_run_test_at_cursor")]
+    #[strum(message = "Flutter: Run Test at Cursor")]
+    FlutterRunTestAtCursor,
+
+    #[strum(serialize = "flutter_debug_test_at_cursor")]
+    #[strum(message = "Flutter: Debug Test at Cursor")]
+    FlutterDebugTestAtCursor,
+
+    #[strum(serialize = "flutter_run_test_file")]
+    #[strum(message = "Flutter: Run Test File")]
+    FlutterRunTestFile,
+
+    #[strum(serialize = "flutter_rerun_failed_tests")]
+    #[strum(message = "Flutter: Re-run Failed Tests")]
+    FlutterRerunFailedTests,
+
+    #[strum(serialize = "pub_add")]
+    #[strum(message = "Flutter: Add Package")]
+    PubAdd,
+    #[strum(serialize = "flutter_new_project")]
+    #[strum(message = "Flutter: New Project")]
+    FlutterNewProject,
+    #[strum(serialize = "android_studio_reference_layout")]
+    #[strum(message = "Appearance: Apply Android Studio Reference Layout")]
+    AndroidStudioReferenceLayout,
+    #[strum(serialize = "flutter_open_devtools")]
+    #[strum(message = "Flutter: Open DevTools")]
+    FlutterOpenDevTools,
+    #[strum(serialize = "flutter_devtools_memory")]
+    #[strum(message = "Flutter: Profile Memory")]
+    FlutterDevToolsMemory,
+    #[strum(serialize = "flutter_devtools_network")]
+    #[strum(message = "Flutter: Profile Network")]
+    FlutterDevToolsNetwork,
 }
 
 #[derive(Clone, Debug)]
 pub enum InternalCommand {
+    GitAction {title:String,args:Vec<String>},
+    NewScaffold { base: PathBuf, template: crate::scaffold::Template },
     ReloadConfig,
+    ApplyCodeActionPreview { prepared: crate::code_action_preview::Prepared },
+    QuickFixAt { location: EditorLocation },
     OpenFile {
         path: PathBuf,
     },
     OpenAndConfirmedFile {
         path: PathBuf,
+    },
+    OpenLibraryFile {
+        path: PathBuf,
+        read_only: bool,
     },
     OpenFileInNewTab {
         path: PathBuf,
@@ -669,6 +851,11 @@ pub enum InternalCommand {
         direction: SplitDirection,
         editor_tab_id: EditorTabId,
     },
+    SplitAndMove {
+        editor_tab_id: EditorTabId,
+        index: usize,
+        direction: SplitMoveDirection,
+    },
     SplitMove {
         direction: SplitMoveDirection,
         editor_tab_id: EditorTabId,
@@ -703,6 +890,11 @@ pub enum InternalCommand {
         child: EditorTabChild,
         kind: TabCloseKind,
     },
+    RequestCodeActions {
+        offset: usize,
+        mouse_click: bool,
+        kind:Option<String>,
+    },
     ShowCodeActions {
         offset: usize,
         mouse_click: bool,
@@ -720,11 +912,19 @@ pub enum InternalCommand {
         mode: RunDebugMode,
         config: RunDebugConfig,
     },
-    StartRename {
-        path: PathBuf,
-        placeholder: String,
-        start: usize,
-        position: Position,
+    RunAndDebugSaved {
+        mode: RunDebugMode,
+        config: RunDebugConfig,
+    },
+    RunProcessInTerminal {
+        program: String,
+        args: Vec<String>,
+        name: String,
+    },
+    RequestSymbolRename { token:u64, preview:bool },
+    PreparedRename {
+        path:PathBuf, revision:u64, offset:usize,
+        response:Result<Option<lsp_types::PrepareRenameResponse>,String>,
     },
     Search {
         pattern: Option<String>,
@@ -812,6 +1012,22 @@ pub enum InternalCommand {
     },
     RestartTerminal {
         term_id: TermId,
+    },
+    FlutterRunTestAtCursor {
+        term_id: TermId,
+    },
+    FlutterRunTest {
+        path: PathBuf,
+        name: String,
+        debug: bool,
+    },
+    FlutterStartTests {
+        targets: Vec<(PathBuf, String)>,
+        debug: bool,
+        exact: bool,
+    },
+    FlutterRerunTests {
+        failed_only: bool,
     },
 }
 

@@ -33,7 +33,7 @@ use sparrow_rpc::{
 
 use super::{
     PluginCatalogRpcHandler,
-    psp::{ResponseHandler, RpcCallback},
+    rpc::{ResponseHandler, RpcCallback},
 };
 
 pub struct DapClient {
@@ -128,7 +128,7 @@ impl DapClient {
             thread::spawn(move || {
                 let mut reader = Box::new(BufReader::new(stdout));
                 loop {
-                    match crate::plugin::lsp::read_message(&mut reader) {
+                    match crate::plugin::rpc::read_message(&mut reader) {
                         Ok(message_str) => {
                             tracing::debug!("read from dap server: {}", message_str);
                             dap_rpc.handle_server_message(&message_str);
@@ -236,6 +236,9 @@ impl DapClient {
                 });
             }
             DapEvent::Stopped(stopped) => {
+                // The SDK emits a transient entry pause while wiring the VM,
+                // then resumes automatically. No stop-on-entry option is exposed.
+                if stopped.reason == "entry" { return Ok(()); }
                 let all_threads_stopped =
                     stopped.all_threads_stopped.unwrap_or_default();
                 let mut stack_frames = HashMap::new();
@@ -245,6 +248,16 @@ impl DapClient {
                             if let Ok(frames) = self.dap_rpc.stack_trace(thread.id) {
                                 stack_frames.insert(thread.id, frames.stack_frames);
                             }
+                        }
+                    }
+                }
+
+                // Dart commonly pauses one isolate, with allThreadsStopped=false.
+                // Its thread still needs a stack/scopes request.
+                if let Some(thread) = stopped.thread_id {
+                    if !stack_frames.contains_key(&thread) {
+                        if let Ok(frames) = self.dap_rpc.stack_trace(thread) {
+                            stack_frames.insert(thread, frames.stack_frames);
                         }
                     }
                 }
@@ -294,9 +307,21 @@ impl DapClient {
             DapEvent::Continued(_) => {
                 self.plugin_rpc.core_rpc.dap_continued(self.dap_rpc.dap_id);
             }
-            DapEvent::Exited(_exited) => {}
+            DapEvent::Exited(exited) => {
+                if self.config.is_test() {
+                    self.plugin_rpc.core_rpc.flutter_test_event(self.config.dap_id,
+                        serde_json::json!({"type": "sparrow.exit", "success": exited.exit_code == 0}));
+                }
+            }
             DapEvent::Terminated(_) => {
+                self.plugin_rpc.core_rpc.dap_session_event(self.config.dap_id, serde_json::json!({"type":"terminated"}));
                 self.terminated = true;
+                if self.config.is_test() {
+                    self.plugin_rpc.core_rpc.flutter_test_event(
+                        self.config.dap_id,
+                        serde_json::json!({"type": "sparrow.terminated"}),
+                    );
+                }
                 // self.plugin_rpc.core_rpc.dap_terminated(self.dap_rpc.dap_id);
                 if let Some(term_id) = self.term_id {
                     self.plugin_rpc.proxy_rpc.terminal_close(term_id);
@@ -306,7 +331,18 @@ impl DapClient {
                 }
             }
             DapEvent::Thread { .. } => {}
-            DapEvent::Output(_) => {}
+            DapEvent::DartTestNotification(event) => {
+                self.plugin_rpc
+                    .core_rpc
+                    .flutter_test_event(self.config.dap_id, event.clone());
+            }
+            DapEvent::Output(output) => {
+                self.plugin_rpc.core_rpc.dap_session_event(self.config.dap_id, serde_json::json!({"type":"output", "output":output.output}));
+                if self.config.is_test() {
+                    self.plugin_rpc.core_rpc.flutter_test_event(self.config.dap_id,
+                        serde_json::json!({"type": "sparrow.output", "output": output.output}));
+                }
+            }
             DapEvent::Breakpoint { .. } => {}
             DapEvent::Module { .. } => {}
             DapEvent::LoadedSource { .. } => {}
@@ -424,13 +460,6 @@ pub enum DapRpc {
 }
 
 #[derive(Clone)]
-pub struct DebuggerData {
-    pub debugger_type: String,
-    pub program: String,
-    pub args: Option<Vec<String>>,
-}
-
-#[derive(Clone)]
 pub struct DapRpcHandler {
     pub dap_id: DapId,
     rpc_tx: Sender<DapRpc>,
@@ -499,6 +528,12 @@ impl DapRpcHandler {
                 }
                 DapRpc::Disconnected => {
                     dap_client.disconnected = true;
+                    if dap_client.config.is_test() {
+                        dap_client.plugin_rpc.core_rpc.flutter_test_event(
+                            dap_client.config.dap_id,
+                            serde_json::json!({"type": "sparrow.terminated"}),
+                        );
+                    }
                     if let Some(term_id) = dap_client.term_id {
                         dap_client.plugin_rpc.proxy_rpc.terminal_close(term_id);
                     }
@@ -620,17 +655,20 @@ impl DapRpcHandler {
     }
 
     pub fn launch(&self, config: &RunDebugConfig) -> Result<()> {
-        let params = serde_json::json!({
-            "program": config.program,
-            "args": config.args,
-            "cwd": config.cwd,
-            "runInTerminal": true,
-            "env": config.env
-        });
-        let _resp = self
-            .request::<Launch>(params)
-            .map_err(|e| anyhow!(e.message))?;
+        let params = dart_launch_arguments(config)?;
+        let attaching=config.args.as_ref().and_then(|args|args.first()).is_some_and(|a|a=="attach");
+        if attaching{self.request::<dap_types::Attach>(params).map_err(|e|anyhow!(e.message))?;}else{self.request::<Launch>(params).map_err(|e|anyhow!(e.message))?;}
         Ok(())
+    }
+
+    pub fn hot_reload(&self, restart: bool) {
+        let args = serde_json::json!({"reason":"manual"});
+        let result = if restart {
+            self.request::<dap_types::FlutterHotRestart>(args)
+        } else {
+            self.request::<dap_types::FlutterHotReload>(args)
+        };
+        if let Err(err) = result { tracing::error!("Flutter reload failed: {}", err.message); }
     }
 
     pub fn stop(&self) {
@@ -720,9 +758,14 @@ impl DapRpcHandler {
     }
 
     pub fn pause_thread(&self, thread_id: ThreadId) -> Result<()> {
-        let params = PauseArguments { thread_id };
-        self.request::<Pause>(params)
-            .map_err(|e| anyhow!(e.message))?;
+        let thread_ids = if thread_id == ThreadId::default() {
+            self.threads()?.threads.into_iter().map(|thread| thread.id).collect::<Vec<_>>()
+        } else { vec![thread_id] };
+        if thread_ids.is_empty() { return Err(anyhow!("No running Dart isolates to pause")); }
+        for thread_id in thread_ids {
+            self.request::<Pause>(PauseArguments { thread_id })
+                .map_err(|error| anyhow!(error.message))?;
+        }
         Ok(())
     }
 
@@ -821,4 +864,83 @@ impl DapRpcHandler {
 
         self.request_async::<StepOut>(args, move |_| {});
     }
+}
+
+/// Translate SDK CLI configurations into the Dart DAP launch schema. The
+/// debug adapter launches an entrypoint, never the SDK executable as a script.
+fn dart_launch_arguments(config: &RunDebugConfig) -> Result<Value> {
+    if !config.is_dart_flutter() {
+        return Err(anyhow!("Only Dart and Flutter debug targets are supported"));
+    }
+    let mut program = config.program.clone();
+    let mut args = config.args.clone().unwrap_or_default();
+    let mut tool_args = Vec::new();
+    if config.is_test() && std::path::Path::new(&program).file_stem().is_some_and(|p|p=="flutter"||p=="dart") {
+        if args.first().is_some_and(|a|a=="test"){args.remove(0);}program=if args.first().is_some_and(|a|!a.starts_with('-')){args.remove(0)}else{"test".into()};
+    } else if !config.is_test() {
+        let flutter = std::path::Path::new(&program)
+            .file_stem()
+            .is_some_and(|s| s == "flutter");
+        if !flutter&&args.first().is_some_and(|s|s=="attach") {let uri=args.get(1).ok_or_else(||anyhow!("Set a VM service URI for remote debugging"))?;return Ok(serde_json::json!({"vmServiceUri":uri,"cwd":config.cwd,"env":config.env.clone().unwrap_or_default()}));}
+        if args.first().is_some_and(|s| s == "run" || s=="attach") {
+            args.remove(0);
+        }
+        if flutter {
+            program = "lib/main.dart".into();
+            let mut iter = args.into_iter();
+            while let Some(arg) = iter.next() {
+                if arg == "-t" || arg == "--target" {
+                    program = iter
+                        .next()
+                        .ok_or_else(|| anyhow!("Flutter target is missing"))?;
+                } else if let Some(target) = arg.strip_prefix("--target=") {
+                    program = target.to_string();
+                } else {
+                    tool_args.push(arg);
+                }
+            }
+            args = Vec::new();
+        } else {
+            while args.first().is_some_and(|s| s.starts_with('-')) {
+                tool_args.push(args.remove(0));
+            }
+            if args.is_empty() {
+                return Err(anyhow!("Choose a Dart entrypoint for debugging"));
+            }
+            program = args.remove(0);
+        }
+    }
+    Ok(
+        serde_json::json!({"console":if config.is_test(){"debugConsole"}else{"terminal"},"program":program,"args":args,"toolArgs":tool_args,"cwd":config.cwd,"runInTerminal":!config.is_test(),"env":config.env.clone().unwrap_or_default()}),
+    )
+}
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    #[test]
+    fn native_flutter_launch_uses_entrypoint_not_tool_executable() {
+        let c:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":"flutter","name":"app","program":"flutter","args":["run","--target","example/lib/main.dart","--flavor","dev"]})).unwrap();
+        let p = dart_launch_arguments(&c).unwrap();
+        assert_eq!(p["program"], "example/lib/main.dart");
+        assert_eq!(p["toolArgs"], serde_json::json!(["--flavor", "dev"]));
+    }
+    #[test]
+    fn native_sdk_launch_receives_an_environment_map() {
+        let mut config: RunDebugConfig = serde_json::from_value(serde_json::json!({"name":"main","program":"dart","args":["run","main.dart"]})).unwrap();
+        assert_eq!(dart_launch_arguments(&config).unwrap()["env"], serde_json::json!({}));
+        config.env = Some(std::collections::HashMap::from([("APP_MODE".into(), "preview".into())]));
+        assert_eq!(dart_launch_arguments(&config).unwrap()["env"], serde_json::json!({"APP_MODE":"preview"}));
+    }
+    #[test]
+    fn native_dart_launch_keeps_script_arguments() {
+        let c:RunDebugConfig=serde_json::from_value(serde_json::json!({"name":"script","program":"dart","args":["run","tool/main.dart","hello world"]})).unwrap();
+        let p = dart_launch_arguments(&c).unwrap();
+        assert_eq!(p["program"], "tool/main.dart");
+        assert_eq!(p["args"], serde_json::json!(["hello world"]));
+    }
+}
+
+#[cfg(test)]mod preset_argument_tests {use super::*;
+ #[test]fn sdk_test_configurations_launch_test_paths_instead_of_the_sdk(){for (kind,program)in[("flutter-test","flutter"),("dart-test","dart")]{let config:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":kind,"name":"Tests","program":program,"args":["test","test","--plain-name","counter"]})).unwrap();let args=dart_launch_arguments(&config).unwrap();assert_eq!(args["program"],"test");assert_eq!(args["args"],serde_json::json!(["--plain-name","counter"]));assert_eq!(args["runInTerminal"],false);}}
+ #[test]fn attach_arguments_strip_the_cli_command(){let dart:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":"dart","name":"Attach","program":"dart","args":["attach","http://127.0.0.1:8181/abc/"]})).unwrap();assert_eq!(dart_launch_arguments(&dart).unwrap()["vmServiceUri"],"http://127.0.0.1:8181/abc/");let flutter:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":"flutter","name":"Attach","program":"flutter","args":["attach","--target","lib/main.dart","-d","linux"]})).unwrap();let args=dart_launch_arguments(&flutter).unwrap();assert_eq!(args["program"],"lib/main.dart");assert_eq!(args["toolArgs"],serde_json::json!(["-d","linux"]));}
 }

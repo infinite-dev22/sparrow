@@ -45,7 +45,9 @@ impl<T: Clone + 'static> Listener<T> {
         cx.create_effect(move |_| {
             // TODO(minor): Signals could have a `take` method to avoid cloning.
             if let Some(cmd) = val.get() {
-                on_val(cmd);
+                // Commands are events, not derived state. Reading a signal in
+                // their callback must not subscribe and replay the command.
+                floem::reactive::untrack(|| on_val(cmd));
             }
         });
     }
@@ -61,5 +63,30 @@ impl<T: 'static> Copy for Listener<T> {}
 impl<T: 'static> Clone for Listener<T> {
     fn clone(&self) -> Self {
         *self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn callback_state_changes_never_replay_a_command() {
+        let cx = Scope::new();
+        let state = cx.create_rw_signal(0);
+        let count = std::rc::Rc::new(std::cell::Cell::new(0));
+        let observed = count.clone();
+        let listener = Listener::new(cx, move |_: &'static str| {
+            observed.set(observed.get() + 1);
+            if state.get() == 0 {
+                state.set(1);
+            }
+        });
+        listener.send("run");
+        assert_eq!(count.get(), 1);
+        state.set(2);
+        assert_eq!(count.get(), 1);
+        listener.send("stop");
+        assert_eq!(count.get(), 2);
+        cx.dispose();
     }
 }

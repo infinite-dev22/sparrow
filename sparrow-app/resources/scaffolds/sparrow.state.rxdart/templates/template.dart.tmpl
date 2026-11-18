@@ -1,0 +1,7 @@
+import 'package:rxdart/rxdart.dart';
+
+class {{name}} {
+  final count = BehaviorSubject<int>.seeded(0);
+  void increment() => count.add(count.value + 1);
+  Future<void> dispose() => count.close();
+}

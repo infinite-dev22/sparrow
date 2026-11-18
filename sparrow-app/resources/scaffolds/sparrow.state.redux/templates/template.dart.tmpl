@@ -1,0 +1,5 @@
+import 'package:redux/redux.dart';
+
+enum {{name}}Action { increment }
+int {{variable}}Reducer(int state, dynamic action) => action == {{name}}Action.increment ? state + 1 : state;
+Store<int> create{{name}}Store() => Store<int>({{variable}}Reducer, initialState: 0);

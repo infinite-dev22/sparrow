@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.provider
+version: 1.0.0
+title: "Provider"
+category: state
+target: sibling
+suffix: "_provider"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: provider
+    version: "any"

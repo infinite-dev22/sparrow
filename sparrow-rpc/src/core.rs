@@ -47,6 +47,9 @@ pub enum CoreNotification {
     ProxyStatus {
         status: ProxyStatus,
     },
+    BufferSyncRequired {
+        path: PathBuf,
+    },
     OpenFileChanged {
         path: PathBuf,
         content: FileChanged,
@@ -131,6 +134,11 @@ pub enum CoreNotification {
         level: LogLevel,
         message: String,
         target: Option<String>,
+    },
+    DapSessionEvent { dap_id: DapId, event: serde_json::Value },
+    FlutterTestEvent {
+        dap_id: DapId,
+        event: serde_json::Value,
     },
     DapStopped {
         dap_id: DapId,
@@ -365,6 +373,14 @@ impl CoreRpcHandler {
 
     pub fn update_terminal(&self, term_id: TermId, content: Vec<u8>) {
         self.notification(CoreNotification::UpdateTerminal { term_id, content });
+    }
+
+    pub fn dap_session_event(&self, dap_id: DapId, event: serde_json::Value) {
+        self.notification(CoreNotification::DapSessionEvent { dap_id, event });
+    }
+
+    pub fn flutter_test_event(&self, dap_id: DapId, event: serde_json::Value) {
+        self.notification(CoreNotification::FlutterTestEvent { dap_id, event });
     }
 
     pub fn dap_stopped(

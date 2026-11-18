@@ -26,25 +26,41 @@ pub fn default_panel_order() -> PanelOrder {
         PanelPosition::LeftTop,
         im::vector![
             PanelKind::FileExplorer,
+            PanelKind::ResourceManager,
             PanelKind::Plugin,
             PanelKind::SourceControl,
-            PanelKind::Debug,
+            PanelKind::PullRequests,
         ],
     );
     order.insert(
         PanelPosition::BottomLeft,
         im::vector![
+            PanelKind::FlutterRun,
+            PanelKind::Debug,
+            PanelKind::FlutterTest,
+            PanelKind::Problem,
+            PanelKind::Problems,
+            PanelKind::Logcat,
+            PanelKind::GitHistory,
             PanelKind::Terminal,
             PanelKind::Search,
-            PanelKind::Problem,
             PanelKind::CallHierarchy,
             PanelKind::References,
-            PanelKind::Implementation
+            PanelKind::Implementation,
         ],
     );
     order.insert(
         PanelPosition::RightTop,
-        im::vector![PanelKind::DocumentSymbol,],
+        im::vector![
+            PanelKind::Notifications,
+            PanelKind::RunningDevices,
+            PanelKind::FlutterInspector,
+            PanelKind::FlutterPerformance,
+            PanelKind::DeviceManager,
+            PanelKind::WidgetTree,
+            PanelKind::DartOutline,
+            PanelKind::MobilePreview,
+        ],
     );
 
     order
@@ -56,6 +72,7 @@ pub enum PanelSection {
     FileExplorer,
     Error,
     Warn,
+    Lint,
     Changes,
     Installed,
     Available,
@@ -88,6 +105,9 @@ pub struct PanelData {
     pub panels: RwSignal<PanelOrder>,
     pub styles: RwSignal<im::HashMap<PanelPosition, PanelStyle>>,
     pub size: RwSignal<PanelSize>,
+    pub(crate) hidden_styles:
+        RwSignal<Option<im::HashMap<PanelPosition, PanelStyle>>>,
+    pub last_opened: RwSignal<Option<PanelKind>>,
     pub available_size: Memo<Size>,
     pub sections: RwSignal<im::HashMap<PanelSection, RwSignal<bool>>>,
     pub common: Rc<CommonData>,
@@ -101,8 +121,6 @@ impl PanelData {
         sections: im::HashMap<PanelSection, bool>,
         common: Rc<CommonData>,
     ) -> Self {
-        let panels = cx.create_rw_signal(panels);
-
         let mut styles = im::HashMap::new();
         styles.insert(
             PanelPosition::LeftTop,
@@ -124,7 +142,7 @@ impl PanelData {
             PanelPosition::BottomLeft,
             PanelStyle {
                 active: 0,
-                shown: true,
+                shown: false,
                 maximized: false,
             },
         );
@@ -152,13 +170,15 @@ impl PanelData {
                 maximized: false,
             },
         );
+        let (panels, styles) = normalize_panel_layout(panels, styles);
+        let panels = cx.create_rw_signal(panels);
         let styles = cx.create_rw_signal(styles);
         let size = cx.create_rw_signal(PanelSize {
-            left: 250.0,
+            left: 420.0,
             left_split: 0.5,
-            bottom: 300.0,
+            bottom: 342.0,
             bottom_split: 0.5,
-            right: 250.0,
+            right: 466.0,
             right_split: 0.5,
         });
         let sections = cx.create_rw_signal(
@@ -172,10 +192,20 @@ impl PanelData {
             panels,
             styles,
             size,
+            hidden_styles: cx.create_rw_signal(None),
+            last_opened: cx.create_rw_signal(Some(PanelKind::FileExplorer)),
             available_size,
             sections,
             common,
         }
+    }
+
+    pub fn toggle_all_tool_windows(&self) {
+        let current = self.styles.get_untracked();
+        let (next, saved) =
+            toggle_tool_windows(current, self.hidden_styles.get_untracked());
+        self.hidden_styles.set(saved);
+        self.styles.set(next);
     }
 
     pub fn panel_info(&self) -> PanelInfo {
@@ -235,7 +265,7 @@ impl PanelData {
         kind: &PanelKind,
     ) -> Option<(usize, PanelPosition)> {
         self.panels
-            .with_untracked(|panels| panel_position(panels, kind))
+            .with_untracked(|panels| panel_position(panels, &kind.canonical()))
     }
 
     pub fn is_panel_visible(&self, kind: &PanelKind) -> bool {
@@ -251,6 +281,7 @@ impl PanelData {
     }
 
     pub fn show_panel(&self, kind: &PanelKind) {
+        self.last_opened.set(Some(kind.canonical()));
         if let Some((index, position)) = self.panel_position(kind) {
             self.styles.update(|styles| {
                 if let Some(style) = styles.get_mut(&position) {
@@ -266,8 +297,13 @@ impl PanelData {
             if let Some((active_panel, _)) =
                 self.active_panel_at_position(&position, false)
             {
-                if &active_panel == kind {
+                if active_panel == kind.canonical() {
                     self.set_shown(&position, false);
+                    if self.common.focus.with_untracked(|focus| {
+                        matches!(focus, Focus::Panel(active) if active.canonical() == kind.canonical())
+                    }) {
+                        self.common.focus.set(Focus::Workbench);
+                    }
                     let peer_position = position.peer();
                     if let Some(order) = self
                         .panels
@@ -393,42 +429,14 @@ impl PanelData {
     }
 
     pub fn move_panel_to_position(&self, kind: PanelKind, position: &PanelPosition) {
-        let current_position = self.panel_position(&kind);
-        if current_position.as_ref().map(|(_, pos)| pos) == Some(position) {
-            return;
-        }
-
-        let mut new_index_at_old_position = None;
-        let index = self
-            .panels
-            .try_update(|panels| {
-                if let Some((index, current_position)) = current_position {
-                    if let Some(panels) = panels.get_mut(&current_position) {
-                        panels.remove(index);
-
-                        let max_index = panels.len().saturating_sub(1);
-                        if index > max_index {
-                            new_index_at_old_position = Some(max_index);
-                        }
-                    }
-                }
-                let panels = panels.entry(*position).or_default();
-                panels.push_back(kind);
-                panels.len() - 1
-            })
-            .unwrap();
-        self.styles.update(|styles| {
-            if let Some((_, current_position)) = current_position {
-                if let Some(new_index) = new_index_at_old_position {
-                    let style = styles.entry(current_position).or_default();
-                    style.active = new_index;
-                }
-            }
-
-            let style = styles.entry(*position).or_default();
-            style.active = index;
-            style.shown = true;
-        });
+        let (panels, styles) = relocate_panel(
+            self.panels.get_untracked(),
+            self.styles.get_untracked(),
+            kind,
+            *position,
+        );
+        self.panels.set(panels);
+        self.styles.set(styles);
 
         let db: Arc<SparrowDb> = use_context().unwrap();
         db.save_panel_orders(self.panels.get_untracked());
@@ -455,10 +463,322 @@ pub fn panel_position(
     kind: &PanelKind,
 ) -> Option<(usize, PanelPosition)> {
     for (pos, panels) in order.iter() {
-        let index = panels.iter().position(|k| k == kind);
+        let index = panels.iter().position(|k| *k == kind.canonical());
         if let Some(index) = index {
             return Some((index, *pos));
         }
     }
     None
+}
+
+/// Stable iteration order matters: im::HashMap iteration must never decide
+/// which of two saved copies owns a tool window.
+const POSITIONS: [PanelPosition; 6] = [
+    PanelPosition::LeftTop,
+    PanelPosition::LeftBottom,
+    PanelPosition::BottomLeft,
+    PanelPosition::BottomRight,
+    PanelPosition::RightTop,
+    PanelPosition::RightBottom,
+];
+
+pub fn normalize_panel_layout(
+    order: PanelOrder,
+    mut styles: im::HashMap<PanelPosition, PanelStyle>,
+) -> (PanelOrder, im::HashMap<PanelPosition, PanelStyle>) {
+    use std::collections::HashMap;
+    use strum::IntoEnumIterator;
+    let mut owners = HashMap::new();
+    for position in POSITIONS {
+        if let Some(items) = order.get(&position) {
+            for (index, kind) in items.iter().enumerate() {
+                let kind = kind.canonical();
+                let visible = styles
+                    .get(&position)
+                    .is_some_and(|style| style.shown && style.active == index);
+                let priority = if visible {
+                    2
+                } else if position == kind.default_position() {
+                    1
+                } else {
+                    0
+                };
+                if owners.get(&kind).is_none_or(|(_, old)| priority > *old) {
+                    owners.insert(kind, (position, priority));
+                }
+            }
+        }
+    }
+    let mut result = PanelOrder::new();
+    for position in POSITIONS {
+        let mut items = im::Vector::new();
+        if let Some(saved) = order.get(&position) {
+            for kind in saved.iter().map(|kind| kind.canonical()) {
+                if owners
+                    .get(&kind)
+                    .is_some_and(|(owner, _)| *owner == position)
+                    && !items.contains(&kind)
+                {
+                    items.push_back(kind);
+                }
+            }
+        }
+        result.insert(position, items);
+    }
+    for kind in PanelKind::iter().filter(|kind| kind.canonical() == *kind) {
+        if !owners.contains_key(&kind) {
+            result
+                .entry(kind.default_position())
+                .or_default()
+                .push_back(kind);
+        }
+    }
+    for position in POSITIONS {
+        let style = styles.entry(position).or_default();
+        let previous = order
+            .get(&position)
+            .and_then(|items| items.get(style.active))
+            .map(|kind| kind.canonical());
+        let items = &result[&position];
+        if let Some(index) =
+            previous.and_then(|kind| items.iter().position(|item| *item == kind))
+        {
+            style.active = index;
+        } else {
+            style.active = style.active.min(items.len().saturating_sub(1));
+            // If a duplicate lost ownership, don't open a different tool in its place.
+            if previous.is_some() || items.is_empty() {
+                style.shown = false;
+                style.maximized = false;
+            }
+        }
+    }
+    (result, styles)
+}
+
+fn relocate_panel(
+    order: PanelOrder,
+    styles: im::HashMap<PanelPosition, PanelStyle>,
+    kind: PanelKind,
+    destination: PanelPosition,
+) -> (PanelOrder, im::HashMap<PanelPosition, PanelStyle>) {
+    let kind = kind.canonical();
+    let (mut order, mut styles) = normalize_panel_layout(order, styles);
+    if panel_position(&order, &kind)
+        .is_some_and(|(_, position)| position == destination)
+    {
+        return (order, styles);
+    }
+    for position in POSITIONS {
+        let items = order.entry(position).or_default();
+        if let Some(index) = items.iter().position(|item| *item == kind) {
+            let style = styles.entry(position).or_default();
+            if style.active == index {
+                style.shown = false;
+                style.maximized = false;
+            }
+            items.remove(index);
+            if style.active > index {
+                style.active -= 1;
+            }
+            style.active = style.active.min(items.len().saturating_sub(1));
+            if items.is_empty() {
+                style.shown = false;
+                style.maximized = false;
+            }
+        }
+    }
+    let items = order.entry(destination).or_default();
+    items.push_back(kind);
+    let style = styles.entry(destination).or_default();
+    style.active = items.len() - 1;
+    style.shown = true;
+    (order, styles)
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use std::collections::HashSet;
+    fn assert_unique(order: &PanelOrder) {
+        let kinds: Vec<_> = order
+            .values()
+            .flat_map(|items| items.iter().copied())
+            .collect();
+        assert_eq!(kinds.len(), kinds.iter().collect::<HashSet<_>>().len());
+        assert!(!kinds.contains(&PanelKind::DocumentSymbol));
+    }
+    #[test]
+    fn defaults_have_one_home_per_tool() {
+        assert_unique(&default_panel_order());
+    }
+    #[test]
+    fn migration_keeps_visible_duplicate_and_active_identity() {
+        let mut order = default_panel_order();
+        order.insert(
+            PanelPosition::RightBottom,
+            im::vector![PanelKind::DeviceManager],
+        );
+        order
+            .get_mut(&PanelPosition::LeftTop)
+            .unwrap()
+            .push_front(PanelKind::DocumentSymbol);
+        let mut styles = im::HashMap::new();
+        styles.insert(
+            PanelPosition::RightBottom,
+            PanelStyle {
+                shown: true,
+                ..Default::default()
+            },
+        );
+        styles.insert(
+            PanelPosition::LeftTop,
+            PanelStyle {
+                active: 1,
+                shown: true,
+                ..Default::default()
+            },
+        );
+        let (order, styles) = normalize_panel_layout(order, styles);
+        assert_unique(&order);
+        assert_eq!(
+            panel_position(&order, &PanelKind::DeviceManager),
+            Some((0, PanelPosition::RightBottom))
+        );
+        assert_eq!(
+            order[&PanelPosition::LeftTop][styles[&PanelPosition::LeftTop].active],
+            PanelKind::FileExplorer
+        );
+        assert!(styles[&PanelPosition::RightBottom].shown);
+        let (again, _) = normalize_panel_layout(order.clone(), styles);
+        assert_eq!(order, again);
+    }
+    #[test]
+    fn moving_repairs_duplicates_and_preserves_other_active_tool() {
+        let mut order = default_panel_order();
+        order.insert(
+            PanelPosition::RightBottom,
+            im::vector![PanelKind::DeviceManager],
+        );
+        let mut styles = im::HashMap::new();
+        styles.insert(
+            PanelPosition::RightTop,
+            PanelStyle {
+                active: 3,
+                shown: true,
+                ..Default::default()
+            },
+        );
+        let (order, styles) = relocate_panel(
+            order,
+            styles,
+            PanelKind::DeviceManager,
+            PanelPosition::LeftTop,
+        );
+        assert_unique(&order);
+        assert_eq!(
+            order[&PanelPosition::RightTop][styles[&PanelPosition::RightTop].active],
+            PanelKind::FlutterPerformance
+        );
+        assert!(!styles[&PanelPosition::RightBottom].shown);
+        let destination = &styles[&PanelPosition::LeftTop];
+        assert!(destination.shown);
+        assert_eq!(
+            order[&PanelPosition::LeftTop][destination.active],
+            PanelKind::DeviceManager
+        );
+    }
+    #[test]
+    fn moving_active_tool_closes_source_without_opening_another() {
+        let order = default_panel_order();
+        let index = panel_position(&order, &PanelKind::DeviceManager).unwrap().0;
+        let mut styles = im::HashMap::new();
+        styles.insert(
+            PanelPosition::RightTop,
+            PanelStyle {
+                active: index,
+                shown: true,
+                ..Default::default()
+            },
+        );
+        let (order, styles) = relocate_panel(
+            order,
+            styles,
+            PanelKind::DeviceManager,
+            PanelPosition::BottomLeft,
+        );
+        assert_unique(&order);
+        assert!(!styles[&PanelPosition::RightTop].shown);
+        assert!(styles[&PanelPosition::BottomLeft].shown);
+    }
+    #[test]
+    fn moving_to_same_dock_keeps_order_and_selection() {
+        let order = default_panel_order();
+        let (again, _) = relocate_panel(
+            order.clone(),
+            im::HashMap::new(),
+            PanelKind::DeviceManager,
+            PanelPosition::RightTop,
+        );
+        for position in POSITIONS {
+            assert_eq!(
+                order.get(&position).cloned().unwrap_or_default(),
+                again[&position]
+            );
+        }
+    }
+    #[test]
+    fn old_outline_alias_has_one_home() {
+        let (order, _) = relocate_panel(
+            default_panel_order(),
+            im::HashMap::new(),
+            PanelKind::DocumentSymbol,
+            PanelPosition::LeftTop,
+        );
+        assert_unique(&order);
+        assert_eq!(
+            panel_position(&order, &PanelKind::DocumentSymbol),
+            panel_position(&order, &PanelKind::DartOutline)
+        );
+    }
+}
+
+fn toggle_tool_windows(
+    mut current: im::HashMap<PanelPosition, PanelStyle>,
+    saved: Option<im::HashMap<PanelPosition, PanelStyle>>,
+) -> (
+    im::HashMap<PanelPosition, PanelStyle>,
+    Option<im::HashMap<PanelPosition, PanelStyle>>,
+) {
+    if current.values().any(|style| style.shown) {
+        let saved = current.clone();
+        for (_, style) in current.iter_mut() {
+            style.shown = false;
+        }
+        (current, Some(saved))
+    } else {
+        (saved.unwrap_or(current), None)
+    }
+}
+#[cfg(test)]
+mod tool_window_tests {
+    use super::*;
+    #[test]
+    fn hiding_and_restoring_keeps_active_tabs_and_maximized_state() {
+        let layout = im::hashmap! {
+            PanelPosition::LeftTop => PanelStyle { active:2,shown:true,maximized:false },
+            PanelPosition::BottomLeft => PanelStyle { active:3,shown:true,maximized:true },
+            PanelPosition::RightTop => PanelStyle { active:0,shown:false,maximized:false },
+        };
+        let (hidden, saved) = toggle_tool_windows(layout.clone(), None);
+        assert!(hidden.values().all(|style| !style.shown));
+        let (restored, _) = toggle_tool_windows(hidden, saved);
+        for (position, expected) in layout.iter() {
+            let actual = &restored[position];
+            assert_eq!(
+                (actual.active, actual.shown, actual.maximized),
+                (expected.active, expected.shown, expected.maximized)
+            );
+        }
+    }
 }

@@ -43,6 +43,7 @@ use floem::{
 use itertools::Itertools;
 use lapce_xi_rope::find::CaseMatching;
 use lsp_types::CodeLens;
+use sparrow_core::rope_text_pos::RopeTextPosition;
 use sparrow_core::{
     buffer::{Buffer, diff::DiffLines, rope_text::RopeText},
     cursor::{CursorAffinity, CursorMode},
@@ -1063,6 +1064,113 @@ impl EditorView {
             }
         }
     }
+
+    fn paint_closing_label_backgrounds(
+        &self,
+        cx: &mut PaintCx,
+        screen_lines: &ScreenLines,
+        config: &SparrowConfig,
+    ) {
+        if !config.editor.enable_inlay_hints {
+            return;
+        }
+        let doc = self.editor.doc();
+        let Some(labels) = doc.closing_labels.get_untracked() else {
+            return;
+        };
+        for (line, y) in screen_lines.iter_lines_y() {
+            let layout = self.editor.editor.text_layout(line);
+            for (shift, size, col, phantom) in layout.phantom_text.offset_size_iter()
+            {
+                if !labels.iter().any(|label| {
+                    label.range.end.line as usize == line
+                        && phantom.text == format!(" {} ", label.label)
+                }) {
+                    continue;
+                }
+                for range in crate::doc::extra_styles_for_range(
+                    &layout.text,
+                    col + shift,
+                    col + shift + size,
+                    None,
+                    None,
+                    None,
+                ) {
+                    let rect = Rect::new(
+                        range.x,
+                        y + range.y - 1.0,
+                        range.x + range.width.unwrap_or_default(),
+                        y + range.y + range.height + 1.0,
+                    );
+                    cx.fill(
+                        &rect.to_rounded_rect(3.0),
+                        config.color(SparrowColor::INLAY_HINT_BACKGROUND),
+                        0.0,
+                    );
+                }
+            }
+        }
+    }
+
+    fn paint_flutter_widget_guides(
+        &self,
+        cx: &mut PaintCx,
+        viewport: Rect,
+        screen_lines: &ScreenLines,
+        config: &SparrowConfig,
+    ) {
+        let e_data = &self.editor;
+        let doc = e_data.doc();
+        let path = doc.content.with_untracked(|c| c.path().cloned());
+        let Some(path) = path else { return };
+        if !crate::dart::is_dart_path(&path) {
+            return;
+        }
+
+        let editor = &e_data.editor;
+        let line_height = config.editor.line_height() as f64;
+        let brush = config.color(SparrowColor::EDITOR_INDENT_GUIDE);
+
+        let content = doc.buffer.with_untracked(|b| b.to_string());
+        let guides = crate::dart::extract_widget_guides(&content);
+
+        for guide in guides {
+            let start_rvline = editor.rvline_of_line(guide.start_line);
+            let end_rvline = editor.rvline_of_line(guide.end_line);
+
+            let start_info = screen_lines.info(start_rvline);
+            let end_info = screen_lines.info(end_rvline);
+
+            if start_info.is_none() && end_info.is_none() {
+                continue;
+            }
+
+            let y0 = start_info.as_ref().map(|i| i.vline_y + line_height).unwrap_or(viewport.min_y());
+            let y1 = end_info.as_ref().map(|i| i.vline_y).unwrap_or(viewport.max_y());
+
+            if y1 <= y0 {
+                continue;
+            }
+
+            let start_pt = editor.line_point_of_line_col(
+                guide.start_line,
+                guide.start_col,
+                CursorAffinity::Forward,
+                true,
+            );
+
+            let x = start_pt.x + 4.0;
+            let line = Line::new(Point::new(x, y0), Point::new(x, y1));
+            cx.stroke(&line, brush, &Stroke::new(1.0));
+
+            // Small horizontal tick / elbow pointing towards closing paren
+            if let Some(end_info) = end_info {
+                let end_y = end_info.vline_y + line_height / 2.0;
+                let elbow = Line::new(Point::new(x, end_y), Point::new(x + 6.0, end_y));
+                cx.stroke(&elbow, brush, &Stroke::new(1.0));
+            }
+        }
+    }
 }
 
 impl View for EditorView {
@@ -1189,6 +1297,10 @@ impl View for EditorView {
         // within the active screen lines without issue.
         let screen_lines = ed.screen_lines.get_untracked();
         self.paint_current_line(cx, is_local, &screen_lines);
+        if let Some(path)=doc.content.with_untracked(|c|c.path().cloned()) {
+            let points=e_data.common.breakpoints.with_untracked(|all|all.get(&path).cloned().unwrap_or_default());
+            for (line,y) in screen_lines.iter_lines_y(){if points.get(&line).is_some_and(|b|b.active){cx.fill(&Rect::new(viewport.x0,y-viewport.y0,viewport.x1,y-viewport.y0+config.editor.line_height()as f64),config.color(SparrowColor::DEBUG_BREAKPOINT).with_alpha(0.18),0.0);}}
+        }
         FloemEditorView::paint_selection(cx, ed, &screen_lines);
         let screen_lines = ed.screen_lines.get_untracked();
         self.paint_diff_sections(cx, viewport, &screen_lines, &config);
@@ -1199,6 +1311,9 @@ impl View for EditorView {
         let screen_lines = ed.screen_lines.get_untracked();
         self.paint_bracket_highlights_scope_lines(cx, viewport, &screen_lines);
         let screen_lines = ed.screen_lines.get_untracked();
+        self.paint_flutter_widget_guides(cx, viewport, &screen_lines, &config);
+        let screen_lines = ed.screen_lines.get_untracked();
+        self.paint_closing_label_backgrounds(cx, &screen_lines, &config);
         FloemEditorView::paint_text(
             cx,
             None,
@@ -1357,10 +1472,14 @@ pub fn editor_container_view(
     let viewport = ed.viewport;
     let screen_lines = ed.screen_lines;
 
+    let markdown_mode=create_memo(move |_|crate::markdown_preview::mode(&editor.get()));
+    let markdown_preview=crate::markdown_preview::preview(window_tab_data.clone(),editor);
     stack((
         editor_breadcrumbs(workspace, editor.get_untracked(), config),
-        stack((
+        find_view(editor,find_editor,find_focus,replace_editor,replace_active,replace_focus,is_active),
+        stack((stack((
             editor_gutter(window_tab_data.clone(), editor),
+            container(editor_gutter_code_actions(editor, create_memo(|_|20.0),0.0)).style(|s|s.width(22.0).height_full()),
             editor_gutter_folding_range(
                 window_tab_data.clone(),
                 doc,
@@ -1385,18 +1504,12 @@ pub fn editor_container_view(
                         |s| s.hide(),
                     )
             }),
-            find_view(
-                editor,
-                find_editor,
-                find_focus,
-                replace_editor,
-                replace_active,
-                replace_focus,
-                is_active,
-            )
-            .debug_name("find view"),
+            inspection_widget(window_tab_data.clone(), editor),
         ))
-        .style(|s| s.width_full().flex_basis(0).flex_grow(1.0f32)),
+        .style(move |s| s.height_full().min_width(0.0).flex_basis(0).flex_grow(1.0f32)
+            .apply_if(markdown_mode.get()=="preview",|s|s.hide())),
+        markdown_preview.style(move |s|s.apply_if(markdown_mode.get()=="source",|s|s.hide()))))
+        .style(|s|s.width_full().flex_basis(0).flex_grow(1.0_f32)),
     ))
     .on_cleanup(move || {
         let editor = editor.get_untracked();
@@ -1427,35 +1540,12 @@ pub fn editor_container_view(
     .debug_name("Editor Container")
 }
 
-fn editor_gutter_breakpoint_view(
-    i: usize,
-    doc: DocSignal,
+pub(crate) fn toggle_gutter_breakpoint(
+    line: usize, doc: DocSignal,
     daps: RwSignal<im::HashMap<DapId, DapData>>,
     breakpoints: RwSignal<BTreeMap<PathBuf, BTreeMap<usize, SparrowBreakpoint>>>,
-    screen_lines: RwSignal<ScreenLines>,
     common: Rc<CommonData>,
-    icon_padding: f32,
-) -> impl View {
-    let hovered = create_rw_signal(false);
-    let config = common.config;
-    container(
-        svg(move || config.get().ui_svg(SparrowIcons::DEBUG_BREAKPOINT)).style(
-            move |s| {
-                let config = config.get();
-                let size = config.ui.icon_size() as f32 + 2.0;
-                s.size(size, size)
-                    .color(config.color(SparrowColor::DEBUG_BREAKPOINT_HOVER))
-                    .apply_if(!hovered.get(), |s| s.hide())
-            },
-        ),
-    )
-    .on_click_stop(move |_| {
-        let screen_lines = screen_lines.get_untracked();
-        let line = screen_lines.lines.get(i).map(|r| r.line).unwrap_or(0);
-        // let line = (viewport.get_untracked().y0
-        //     / config.get_untracked().editor.line_height() as f64)
-        //     .floor() as usize
-        //     + i;
+) {
         let doc = doc.get_untracked();
         let offset = doc.buffer.with_untracked(|b| b.offset_of_line(line));
         if let Some(path) = doc.content.get_untracked().path() {
@@ -1515,7 +1605,25 @@ fn editor_gutter_breakpoint_view(
                 );
             }
         }
-    })
+}
+
+fn editor_gutter_breakpoint_view(
+    common: Rc<CommonData>,
+    icon_padding: f32,
+) -> impl View {
+    let hovered = create_rw_signal(false);
+    let config = common.config;
+    container(
+        svg(move || "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 12 12\"><circle cx=\"6\" cy=\"6\" r=\"6\" fill=\"currentColor\"/></svg>".to_string()).style(
+            move |s| {
+                let config = config.get();
+                let size = 12.0;
+                s.size(size, size)
+                    .color(config.color(SparrowColor::DEBUG_BREAKPOINT_HOVER))
+                    .apply_if(!hovered.get(), |s| s.hide())
+            },
+        ),
+    )
     .on_event_stop(EventListener::PointerEnter, move |_| {
         hovered.set(true);
     })
@@ -1538,11 +1646,10 @@ fn editor_gutter_breakpoints(
     icon_padding: f32,
 ) -> impl View {
     let breakpoints = window_tab_data.terminal.debug.breakpoints;
-    let daps = window_tab_data.terminal.debug.daps;
     let common = window_tab_data.common.clone();
 
-    let (ed, doc, config) = e_data
-        .with_untracked(|e| (e.editor.clone(), e.doc_signal(), e.common.config));
+    let (ed, config) = e_data
+        .with_untracked(|e| (e.editor.clone(), e.common.config));
     let viewport = ed.viewport;
     let screen_lines = ed.screen_lines;
 
@@ -1562,20 +1669,10 @@ fn editor_gutter_breakpoints(
                     0..num
                 },
                 move |i| *i,
-                move |i| {
-                    editor_gutter_breakpoint_view(
-                        i,
-                        doc,
-                        daps,
-                        breakpoints,
-                        screen_lines,
-                        common.clone(),
-                        icon_padding,
-                    )
-                },
+                move |_| editor_gutter_breakpoint_view(common.clone(), icon_padding),
             )
             .style(move |s| {
-                s.absolute().flex_col().margin_top(
+                s.absolute().inset_left(0.0).inset_top(0.0).flex_col().margin_top(
                     -(viewport.get().y0 % config.get().editor.line_height() as f64)
                         as f32,
                 )
@@ -1600,11 +1697,11 @@ fn editor_gutter_breakpoints(
                     let active = breakpoint.active;
                     container(
                         svg(move || {
-                            config.get().ui_svg(SparrowIcons::DEBUG_BREAKPOINT)
+                            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 12 12\"><circle cx=\"6\" cy=\"6\" r=\"6\" fill=\"currentColor\"/></svg>".to_string()
                         })
                         .style(move |s| {
                             let config = config.get();
-                            let size = config.ui.icon_size() as f32 + 2.0;
+                            let size = 12.0;
                             let color = if active {
                                 SparrowColor::DEBUG_BREAKPOINT
                             } else {
@@ -1634,9 +1731,10 @@ fn editor_gutter_breakpoints(
         .style(|s| s.size_pct(100.0, 100.0)),
     )
     .style(move |s| {
-        s.absolute()
-            .size_pct(100.0, 100.0)
-            .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
+        s.absolute().inset_left(0.0).inset_top(0.0)
+            .width(config.get().ui.icon_size() as f32 + icon_padding * 2.0)
+            .height_full()
+            .z_index(2)
     })
 }
 
@@ -1924,6 +2022,90 @@ fn editor_gutter_code_actions(
     .debug_name("Code Action LightBulb")
 }
 
+fn editor_gutter_tests(
+    window: Rc<WindowTabData>,
+    e_data: RwSignal<EditorData>,
+) -> impl View {
+    let (ed, doc, config) = e_data
+        .with_untracked(|e| (e.editor.clone(), e.doc_signal(), e.common.config));
+    let screen_lines = ed.screen_lines;
+    let viewport = ed.viewport;
+    let internal = window.common.internal_command;
+    // Cache discovery by buffer revision, rather than rescanning on scroll.
+    let tests = create_memo(move |_| {
+        let doc = doc.get();
+        let path = doc.content.with(|c| c.path().cloned());
+        let Some(path) = path.filter(|p| crate::dart::test_runner::is_test_file(p))
+        else {
+            return Vec::new();
+        };
+        let source = doc.buffer.with(|b| b.to_string());
+        crate::dart::test_runner::discover_tests(&source)
+            .into_iter()
+            .map(|test| (path.clone(), test))
+            .collect::<Vec<_>>()
+    });
+    dyn_stack(
+        move || tests.get(),
+        |(path, test)| (path.clone(), test.byte_range.0, test.name.clone()),
+        move |(path, test)| {
+            let line = test.line;
+            let debug_path = path.clone();
+            let debug_name = test.name.clone();
+            stack((
+                crate::app::tooltip_label(
+                    config,
+                    container(svg(move || config.get().ui_svg(SparrowIcons::START))
+                        .style(move |s| {
+                            let config = config.get();
+                            let size = config.ui.icon_size() as f32;
+                            s.size(size, size).color(config.color(SparrowColor::SOURCE_CONTROL_ADDED))
+                        }))
+                        .style(move |s| s.padding(4.0).border_radius(6.0)
+                            .hover(|s| s.cursor(CursorStyle::Pointer)
+                                .background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND))))
+                        .on_click_stop(move |_| {
+                            internal.send(InternalCommand::FlutterRunTest {
+                                path: path.clone(), name: test.name.clone(), debug: false,
+                            });
+                        }),
+                    || "Run Test / Group",
+                ),
+                clickable_icon(
+                    || SparrowIcons::DEBUG,
+                    move || {
+                        internal.send(InternalCommand::FlutterRunTest {
+                            path: debug_path.clone(),
+                            name: debug_name.clone(),
+                            debug: true,
+                        })
+                    },
+                    || false,
+                    || false,
+                    || "Debug Test / Group",
+                    config,
+                ),
+            ))
+            .style(move |s| {
+                let info = screen_lines.with(|s| s.info_for_line(line));
+                let y = info.map(|i| i.y).unwrap_or(-100.0) - viewport.get().y0;
+                s.absolute()
+                    .height(config.get().editor.line_height() as f32)
+                    .items_center()
+                    .margin_top(y as f32)
+            })
+        },
+    )
+    .style(move |s| {
+        s.absolute()
+            .inset_right(0.0)
+            .width(48.0)
+            .height_full()
+            .apply_if(tests.with(|t| t.is_empty()), |s| s.hide())
+    })
+    .debug_name("Dart Test Gutter")
+}
+
 fn editor_gutter(
     window_tab_data: Rc<WindowTabData>,
     e_data: RwSignal<EditorData>,
@@ -1939,25 +2121,44 @@ fn editor_gutter(
     let gutter_rect = create_rw_signal(Rect::ZERO);
     let gutter_width = create_memo(move |_| gutter_rect.get().width());
 
-    let icon_total_width = move || {
-        let icon_size = config.get().ui.icon_size() as f32;
-        icon_size + icon_padding * 2.0
-    };
-
-    let gutter_padding_right = create_memo(move |_| icon_total_width() + 6.0);
-
+    let previews = create_memo(move |_| {
+        let doc = doc.get();
+        if doc.content.with(|c|c.path().is_some_and(|p|crate::dart::is_dart_path(p))) {
+            doc.buffer.with(|b|crate::dart::extract_swatches(&b.to_string()))
+        } else { (Vec::new(),Vec::new()) }
+    });
+    let bookmarks = window_tab_data.common.bookmarks;
+    let lanes = create_memo(move |_| {
+        let doc = doc.get();
+        let (colors,icons)=previews.get();
+        let max_on_line=|lines:Vec<usize>| {
+            let mut counts=std::collections::HashMap::<usize,usize>::new();
+            for line in lines { *counts.entry(line).or_default()+=1; }
+            counts.into_values().max().unwrap_or(0)
+        };
+        let has_bookmarks=doc.content.with(|c|c.path().is_some_and(|p|bookmarks.with(|items|items.get(p).is_some_and(|lines|!lines.is_empty()))));
+        let tests=doc.content.with(|c|c.path().is_some_and(|p|crate::dart::test_runner::is_test_file(p)));
+        super::gutter::GutterLanes::new(max_on_line(colors.iter().map(|c|c.line).collect()),
+            max_on_line(icons.iter().map(|i|i.line).collect()),has_bookmarks,
+            doc.code_lens.with(|lenses|!lenses.is_empty()),tests)
+    });
+    let gutter_padding_right=create_memo(move |_|lanes.get().padding);
+    let number_width=create_memo(move |_|gutter_width.get()-gutter_padding_right.get() as f64);
+    let click_doc = doc;
+    let click_common = window_tab_data.common.clone();
+    let click_daps = window_tab_data.terminal.debug.daps;
+    let click_breakpoints = window_tab_data.terminal.debug.breakpoints;
     stack((
         stack((
-            empty().style(move |s| s.width(icon_total_width() * 2.0 - 8.0)),
+            empty().style(|s| s.width(0.0)),
             label(move || {
                 let doc = doc.get();
                 doc.buffer.with(|b| b.last_line() + 1).to_string()
-            }),
+            }).style(move |s|s.font_family(config.get().editor.font_family.clone()).font_size(config.get().editor.font_size() as f32)),
             empty().style(move |s| s.width(gutter_padding_right.get())),
         ))
         .debug_name("Centered Last Line Count")
-        .style(|s| s.height_pct(100.0)),
-        editor_gutter_breakpoints(window_tab_data.clone(), e_data, icon_padding),
+        .style(|s| s.height_pct(100.0).color(floem::peniko::Color::TRANSPARENT)),
         clip(
             stack((
                 editor_gutter_code_lens(
@@ -1966,8 +2167,8 @@ fn editor_gutter(
                     screen_lines,
                     viewport,
                     icon_padding,
-                ),
-                editor_gutter_view(e_data.get_untracked(), gutter_padding_right)
+                ).style(move |s|s.margin_left((number_width.get()+lanes.get().run as f64) as f32)),
+                editor_gutter_view(e_data.get_untracked(), gutter_padding_right, lanes, previews)
                     .on_resize(move |rect| {
                         gutter_rect.set(rect);
                     })
@@ -1977,13 +2178,63 @@ fn editor_gutter(
                         }
                     })
                     .style(|s| s.size_pct(100.0, 100.0)),
-                editor_gutter_code_actions(e_data, gutter_width, icon_padding),
+
+                editor_gutter_tests(window_tab_data.clone(), e_data).style(|s|s.inset_right(6.0)),
             ))
             .style(|s| s.size_pct(100.0, 100.0)),
         )
         .style(move |s| s.absolute().size_pct(100.0, 100.0)),
+        editor_gutter_breakpoints(window_tab_data.clone(), e_data, 3.0)
+            .style(move |s|s.margin_left((number_width.get()+lanes.get().breakpoint as f64) as f32)),
     ))
-    .style(|s| s.height_pct(100.0))
+    .style(move |s| s.height_pct(100.0).padding_left(4.0).border_right(1.0)
+        .border_color(config.get().color(SparrowColor::SPARROW_BORDER)))
+    .on_event(EventListener::PointerDown, move |event| {
+        if let Event::PointerDown(pointer) = event {
+            if !pointer.button.is_primary() { return EventPropagation::Continue; }
+            let height = config.get_untracked().editor.line_height() as f64;
+            let line = screen_lines.with_untracked(|lines|lines.iter_lines_y()
+                .find(|(_,y)|pointer.pos.y>=*y-viewport.get_untracked().y0 && pointer.pos.y<*y-viewport.get_untracked().y0+height)
+                .map(|(line,_)|line));
+            if let Some(line)=line {
+                let x=pointer.pos.x-number_width.get_untracked();
+                let layout=lanes.get_untracked();
+                if pointer.modifiers.alt() || (x>=layout.bookmark as f64 && x<layout.bookmark as f64+14.0) {
+                    if let Some(path)=click_doc.get_untracked().content.with_untracked(|c|c.path().cloned()) {
+                        bookmarks.update(|items|{
+                            let lines=items.entry(path).or_default();
+                            if !lines.remove(&line) { lines.insert(line); }
+                        });
+                    }
+                    return EventPropagation::Stop;
+                }
+                if x>=layout.colors as f64 && x<layout.bookmark as f64 {
+                    let slot=((x-layout.colors as f64)/14.0).floor() as usize;
+                    if let Some(swatch)=previews.get_untracked().0.into_iter().filter(|color|color.line==line).nth(slot) {
+                        let document=click_doc.get_untracked();let start=document.buffer.with_untracked(|buffer|buffer.offset_of_line(line)+swatch.col);
+                        let end=start+swatch.source_text.len();let expected=swatch.source_text.clone();
+                        let mut menu=crate::popup_menu::Menu::new("Color");
+                        for (name,argb) in [("Amber",0xFFFFC107u32),("Blue",0xFF2196F3),("Green",0xFF4CAF50),("Red",0xFFF44336),("White",0xFFFFFFFF),("Black",0xFF000000),("Transparent",0x00000000)] {
+                            let doc=document.clone();let expected=expected.clone();
+                            menu=menu.entry(crate::popup_menu::MenuItem::new(format!("{name}  #{argb:08X}")).action(move ||{
+                                if doc.buffer.with_untracked(|buffer|end<=buffer.len()&&buffer.slice_to_cow(start..end).as_ref()==expected) {
+                                    let replacement=format!("Color(0x{argb:08X})");
+                                    doc.do_raw_edit(&[(sparrow_core::selection::Selection::region(start,end),replacement.as_str())],sparrow_core::editor::EditType::Other);
+                                }
+                            }));
+                        }
+                        crate::popup_menu::show_context_menu(menu,None);
+                    }
+                    return EventPropagation::Stop;
+                }
+                if x>=layout.breakpoint as f64 && x<layout.icons as f64 {
+                    toggle_gutter_breakpoint(line, click_doc, click_daps, click_breakpoints, click_common.clone());
+                    return EventPropagation::Stop;
+                }
+            }
+        }
+        EventPropagation::Continue
+    })
     .debug_name("Editor Gutter")
 }
 
@@ -2144,7 +2395,8 @@ fn editor_content(
             editor_view(e_data.get_untracked(), debug_breakline, is_active).style(
                 move |s| {
                     s.absolute()
-                        .margin_left(1.0)
+                        .margin_left(6.0)
+                        .margin_top(4.0)
                         .min_size_full()
                         .cursor(CursorStyle::Text)
                 },
@@ -2322,7 +2574,7 @@ fn search_editor_view(
     ))
     .style(move |s| {
         let config = config.get();
-        s.width(200.0)
+        s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)
             .items_center()
             .border(1.0)
             .border_radius(6.0)
@@ -2364,7 +2616,7 @@ fn replace_editor_view(
     ))
     .style(move |s| {
         let config = config.get();
-        s.width(200.0)
+        s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)
             .items_center()
             .border(1.0)
             .border_radius(6.0)
@@ -2476,7 +2728,7 @@ fn find_view(
                 )
                 .style(|s| s.padding_horiz(6.0)),
             ))
-            .style(|s| s.items_center()),
+            .style(|s| s.items_center().width_full()),
             stack((
                 empty().style(move |s| {
                     let config = config.get();
@@ -2529,10 +2781,10 @@ fn find_view(
         ))
         .style(move |s| {
             let config = config.get();
-            s.margin_right(50.0)
+            s.width_full().padding_horiz(6.0)
                 .background(config.color(SparrowColor::PANEL_BACKGROUND))
-                .border_radius(6.0)
-                .border(1.0)
+                .border_radius(0.0)
+                .border_bottom(1.0)
                 .border_color(config.color(SparrowColor::SPARROW_BORDER))
                 .padding_vert(4.0)
                 .cursor(CursorStyle::Default)
@@ -2562,10 +2814,7 @@ fn find_view(
         }),
     )
     .style(move |s| {
-        s.absolute()
-            .margin_top(-1.0)
-            .width_pct(100.0)
-            .justify_end()
+        s.width_full().flex_shrink(0.0_f32)
             .apply_if(!find_visual.get(), |s| s.hide())
     })
 }
@@ -2714,4 +2963,146 @@ pub fn changes_colors_all(
     }
 
     colors
+}
+
+/// Current-file inspection counts and navigation, independent of the Problems scope.
+fn inspection_widget(
+    window: Rc<WindowTabData>,
+    editor: RwSignal<EditorData>,
+) -> impl View {
+    let config = window.common.config;
+    let diagnostics = create_memo(move |_| {
+        let doc = editor.get().doc_signal().get();
+        doc.diagnostics().diagnostics.get()
+    });
+    let counts = create_memo(move |_| {
+        let mut counts = [0usize; 3];
+        for diagnostic in diagnostics.get() {
+            let index = match diagnostic.severity {
+                Some(lsp_types::DiagnosticSeverity::ERROR) => 0,
+                Some(lsp_types::DiagnosticSeverity::WARNING) => 1,
+                _ => 2,
+            };
+            counts[index] += 1;
+        }
+        counts
+    });
+    let open_window = window.clone();
+    let previous_window = window.clone();
+    let next_window = window;
+    let navigate = move |window: &WindowTabData, forward: bool| {
+        let editor = editor.get_untracked();
+        let doc = editor.doc();
+        let offset = editor.cursor().with_untracked(|c| c.offset());
+        let mut positions: Vec<_> = doc
+            .diagnostics()
+            .diagnostics
+            .get_untracked()
+            .iter()
+            .map(|d| d.range.start)
+            .collect();
+        positions.sort();
+        positions.dedup();
+        let next = if forward {
+            positions
+                .iter()
+                .find(|p| {
+                    doc.buffer.with_untracked(|b| b.offset_of_position(p)) > offset
+                })
+                .or_else(|| positions.first())
+        } else {
+            positions
+                .iter()
+                .rev()
+                .find(|p| {
+                    doc.buffer.with_untracked(|b| b.offset_of_position(p)) < offset
+                })
+                .or_else(|| positions.last())
+        };
+        if let (Some(position), Some(path)) =
+            (next, doc.content.with_untracked(|c| c.path().cloned()))
+        {
+            window
+                .common
+                .internal_command
+                .send(InternalCommand::JumpToLocation {
+                    location: crate::editor::location::EditorLocation {
+                        path,
+                        position: Some(
+                            crate::editor::location::EditorPosition::Position(
+                                *position,
+                            ),
+                        ),
+                        scroll_offset: None,
+                        ignore_unconfirmed: false,
+                        same_editor_tab: false,
+                    },
+                });
+        }
+    };
+    stack((
+        dyn_stack(
+            || 0..3,
+            |i| *i,
+            move |i| {
+                let window = open_window.clone();
+                stack((
+                    svg(move || {
+                        config.get().ui_svg(if i == 0 {
+                            SparrowIcons::ERROR
+                        } else if i == 1 {
+                            SparrowIcons::WARNING
+                        } else {
+                            SparrowIcons::LIGHTBULB
+                        })
+                    })
+                    .style(move |s| {
+                        s.size(12.0, 12.0).margin_right(3.0).color(
+                            config.get().color(if i == 0 {
+                                SparrowColor::SPARROW_ERROR
+                            } else {
+                                SparrowColor::SPARROW_WARN
+                            }),
+                        )
+                    }),
+                    label(move || counts.get()[i].to_string()),
+                ))
+                .on_click_stop(move |_| {
+                    window.show_panel(crate::panel::kind::PanelKind::Problems)
+                })
+                .style(move |s| {
+                    s.items_center()
+                        .margin_right(6.0)
+                        .apply_if(counts.get()[i] == 0, |s| s.hide())
+                })
+            },
+        ),
+        clickable_icon(
+            || SparrowIcons::FILE_PICKER_UP,
+            move || navigate(&previous_window, false),
+            || false,
+            move || diagnostics.with(|d| d.is_empty()),
+            || "Previous Problem",
+            config,
+        ),
+        clickable_icon(
+            || SparrowIcons::ITEM_OPENED,
+            move || navigate(&next_window, true),
+            || false,
+            move || diagnostics.with(|d| d.is_empty()),
+            || "Next Problem",
+            config,
+        ),
+    ))
+    .style(move |s| {
+        s.absolute()
+            .inset_right(12.0)
+            .inset_top(0.0)
+            .height(24.0)
+            .items_center()
+            .padding_left(6.0)
+            .font_size(11.0)
+            .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
+            .apply_if(diagnostics.with(|d| d.is_empty()), |s| s.hide())
+    })
 }

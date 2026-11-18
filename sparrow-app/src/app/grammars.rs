@@ -1,3 +1,4 @@
+//! Upstream syntax assets, limited to Dart and Flutter project-file grammars.
 use std::{
     env,
     fs::{self},
@@ -128,15 +129,82 @@ fn download_release(
 
             if asset.name.ends_with(".zip") {
                 let mut archive = zip::ZipArchive::new(file)?;
-                archive.extract(&dir)?;
+                for i in 0..archive.len() {
+                    let mut entry = archive.by_index(i)?;
+                    let Some(path) = entry.enclosed_name().map(PathBuf::from) else {
+                        continue;
+                    };
+                    if !supported_asset(&path) {
+                        continue;
+                    }
+                    let target = dir.join(&path);
+                    if entry.is_dir() {
+                        fs::create_dir_all(target)?;
+                    } else {
+                        if let Some(parent) = target.parent() {
+                            fs::create_dir_all(parent)?;
+                        }
+                        std::io::copy(&mut entry, &mut fs::File::create(target)?)?;
+                    }
+                }
             } else if asset.name.ends_with(".tar.zst") {
                 let mut archive =
                     tar::Archive::new(zstd::stream::read::Decoder::new(file)?);
-                archive.unpack(&dir)?;
+                for entry in archive.entries()? {
+                    let mut entry = entry?;
+                    let kind = entry.header().entry_type();
+                    if (kind.is_file() || kind.is_dir())
+                        && supported_asset(&entry.path()?)
+                    {
+                        entry.unpack_in(&dir)?;
+                    }
+                }
             }
 
             fs::write(dir.join("version"), &release_version)?;
         }
     }
     Ok(true)
+}
+
+// Preserve upstream notices while excluding unrelated grammar/query assets.
+fn supported_asset(path: &std::path::Path) -> bool {
+    let names = sparrow_core::language::SparrowLanguage::syntax_asset_names();
+    if path.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
+        s.starts_with("LICENSE")
+            || s.starts_with("COPYING")
+            || s.starts_with("NOTICE")
+    }) {
+        return true;
+    }
+    path.components().any(|c| {
+        let Some(name) = c.as_os_str().to_str() else {
+            return false;
+        };
+        names.contains(name)
+            || names.iter().any(|n| {
+                name.starts_with(&format!("libtree-sitter-{n}."))
+                    || name.starts_with(&format!("tree-sitter-{n}."))
+            })
+    })
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn only_project_syntax_and_notices_are_installed() {
+        assert!(supported_asset(std::path::Path::new(
+            "queries/dart/highlights.scm"
+        )));
+        assert!(supported_asset(std::path::Path::new(
+            "libtree-sitter-yaml.so"
+        )));
+        assert!(supported_asset(std::path::Path::new("LICENSE")));
+        assert!(!supported_asset(std::path::Path::new(
+            "queries/python/highlights.scm"
+        )));
+        assert!(!supported_asset(std::path::Path::new(
+            "libtree-sitter-rust.so"
+        )));
+    }
 }

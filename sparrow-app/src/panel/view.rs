@@ -1,3 +1,5 @@
+use crate::popup_menu::PopupMenuExt;
+use crate::popup_menu::{Menu, MenuItem};
 use std::{rc::Rc, sync::Arc};
 
 use floem::{
@@ -12,7 +14,7 @@ use floem::{
     unit::PxPctAuto,
     views::{
         Decorators, container, dyn_stack, empty, h_stack, label, stack,
-        stack_from_iter, tab, text,
+        stack_from_iter, svg, tab, text,
     },
 };
 
@@ -31,12 +33,54 @@ use crate::{
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     file_explorer::view::file_explorer_panel,
     panel::{
-        call_hierarchy_view::show_hierarchy_panel, document_symbol::symbol_panel,
+        call_hierarchy_view::show_hierarchy_panel,
         implementation_view::implementation_panel,
         references_view::references_panel,
     },
     window_tab::{DragContent, WindowTabData},
 };
+
+/// Radius of the rounded "islands" (tool windows and editor area).
+pub const ISLAND_RADIUS: f32 = 8.0;
+
+fn island_corner(
+    config: ReadSignal<Arc<SparrowConfig>>,
+    path: &'static str,
+    top: bool,
+    left: bool,
+) -> impl View {
+    let svg_str = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10"><path d="{path}" fill="currentColor"/></svg>"#
+    );
+    svg(move || svg_str.clone()).style(move |s| {
+        let color = config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND);
+        s.absolute()
+            .size(ISLAND_RADIUS, ISLAND_RADIUS)
+            .color(color)
+            .apply_if(top, |s| s.inset_top(0.0))
+            .apply_if(!top, |s| s.inset_bottom(0.0))
+            .apply_if(left, |s| s.inset_left(0.0))
+            .apply_if(!left, |s| s.inset_right(0.0))
+    })
+}
+
+/// floem does not clip children to a rounded parent, so rounded corners are
+/// faked by painting four quarter-circle masks in the window-frame colour on
+/// top of the island's corners.
+pub fn island_corners(config: ReadSignal<Arc<SparrowConfig>>) -> impl View {
+    stack((
+        island_corner(config, "M0 0H10A10 10 0 0 0 0 10Z", true, true),
+        island_corner(config, "M0 0H10V10A10 10 0 0 0 0 0Z", true, false),
+        island_corner(config, "M0 0V10H10A10 10 0 0 1 0 0Z", false, true),
+        island_corner(config, "M10 0V10H0A10 10 0 0 0 10 0Z", false, false),
+    ))
+    .style(|s| {
+        s.absolute()
+            .size_pct(100.0, 100.0)
+            .z_index(40)
+            .pointer_events_none()
+    })
+}
 
 pub fn foldable_panel_section(
     header: impl View + 'static,
@@ -65,8 +109,9 @@ pub fn foldable_panel_section(
             s.padding_horiz(10.0)
                 .padding_vert(6.0)
                 .width_pct(100.0)
+                .items_center()
                 .cursor(CursorStyle::Pointer)
-                .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
+                .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
         })
         .on_click_stop(move |_| {
             open.update(|open| *open = !*open);
@@ -112,7 +157,11 @@ impl PanelBuilder {
             let s = s.width_full().flex_col();
             // Use the manual height if given, otherwise if we're open behave flex,
             // otherwise, do nothing so that there's no height
-            let s = if open.get() {
+            let s = if position.is_bottom() {
+                // Bottom tools are columns: vertical section heights must not
+                // become intrinsic widths that squeeze stacks and variables.
+                s.height_full().min_width(0.0).flex_grow(1.0_f32).flex_basis(0.0)
+            } else if open.get() {
                 if let Some(height) = height {
                     s.height(height)
                 } else {
@@ -394,11 +443,10 @@ pub fn panel_container_view(
 
     let is_bottom = position.is_bottom();
     stack((
-        panel_picker(window_tab_data.clone(), position.first()),
         panel_view(window_tab_data.clone(), position.first()),
         panel_view(window_tab_data.clone(), position.second()),
-        panel_picker(window_tab_data.clone(), position.second()),
         resize_drag_view(position),
+        island_corners(config),
         stack((drop_view(position.first()), drop_view(position.second()))).style(
             move |s| {
                 let is_dragging_panel = is_dragging_panel();
@@ -426,25 +474,23 @@ pub fn panel_container_view(
         s.apply_if(!panel.is_container_shown(&position, true), |s| s.hide())
             .apply_if(position == PanelContainerPosition::Bottom, |s| {
                 s.width_pct(100.0)
-                    .apply_if(!is_maximized, |s| {
-                        s.border_top(1.0).height(size as f32)
-                    })
+                    .flex_shrink(0.0_f32)
+                    .apply_if(!is_maximized, |s| s.height(size as f32))
                     .apply_if(is_maximized, |s| s.flex_grow(1.0f32))
+                    .background(config.color(SparrowColor::PANEL_BACKGROUND))
             })
             .apply_if(position == PanelContainerPosition::Left, |s| {
-                s.border_right(1.0)
-                    .width(size as f32)
+                s.width(size as f32)
                     .height_pct(100.0)
                     .background(config.color(SparrowColor::PANEL_BACKGROUND))
             })
             .apply_if(position == PanelContainerPosition::Right, |s| {
-                s.border_left(1.0)
-                    .width(size as f32)
+                s.width(size as f32)
                     .height_pct(100.0)
                     .background(config.color(SparrowColor::PANEL_BACKGROUND))
             })
             .apply_if(!is_bottom, |s| s.flex_col())
-            .border_color(config.color(SparrowColor::SPARROW_BORDER))
+            .border_radius(ISLAND_RADIUS)
             .color(config.color(SparrowColor::PANEL_FOREGROUND))
     })
     .debug_name(format!("{:?} Panel Container View", position))
@@ -471,6 +517,14 @@ fn panel_view(
         |p| *p,
         move |kind| {
             let view = match kind {
+                PanelKind::Notifications => super::workflow_tools::notifications(window_tab_data.clone()).into_any(),
+                PanelKind::PullRequests => super::workflow_tools::pull_requests(window_tab_data.clone()).into_any(),
+                PanelKind::MobilePreview => super::mobile_preview::panel(window_tab_data.clone()).into_any(),
+                PanelKind::RunningDevices => super::workflow_tools::running_devices(window_tab_data.clone()).into_any(),
+                PanelKind::Problems => super::reference_tools::problems(window_tab_data.clone()).into_any(),
+                PanelKind::Logcat => super::reference_tools::logcat(window_tab_data.clone()).into_any(),
+                PanelKind::ResourceManager => super::resource_manager::panel(window_tab_data.clone()).into_any(),
+                PanelKind::GitHistory => super::reference_tools::history(window_tab_data.clone()).into_any(),
                 PanelKind::Terminal => {
                     terminal_panel(window_tab_data.clone()).into_any()
                 }
@@ -498,7 +552,7 @@ fn panel_view(
                         .into_any()
                 }
                 PanelKind::DocumentSymbol => {
-                    symbol_panel(window_tab_data.clone(), position).into_any()
+                    crate::panel::dart_outline::dart_outline_panel(window_tab_data.clone(), position).into_any()
                 }
                 PanelKind::References => {
                     references_panel(window_tab_data.clone(), position).into_any()
@@ -507,17 +561,62 @@ fn panel_view(
                     implementation_panel(window_tab_data.clone(), position)
                         .into_any()
                 }
+                PanelKind::WidgetTree => {
+                    crate::panel::widget_tree::widget_tree_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
+                PanelKind::DartOutline => {
+                    crate::panel::dart_outline::dart_outline_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
+                PanelKind::FlutterInspector => {
+                    crate::panel::flutter_inspector::flutter_inspector_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
+                PanelKind::FlutterTest => {
+                    crate::panel::flutter_test_view::flutter_test_panel(window_tab_data.clone(), position).into_any()
+                }
+                PanelKind::FlutterRun => {
+                    crate::panel::flutter_run_view::flutter_run_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
+                PanelKind::DeviceManager => {
+                    crate::panel::device_manager_view::device_manager_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
+                PanelKind::FlutterPerformance => {
+                    crate::panel::flutter_performance_view::flutter_performance_panel(
+                        window_tab_data.clone(),
+                        position,
+                    )
+                        .into_any()
+                }
             };
             view.style(|s| s.size_pct(100.0, 100.0))
         },
     )
-    .style(move |s| {
-        s.size_pct(100.0, 100.0).apply_if(
-            !panel.is_position_shown(&position, true)
-                || panel.is_position_empty(&position, true),
-            |s| s.hide(),
-        )
-    })
+        .style(move |s| {
+            s.size_pct(100.0, 100.0).apply_if(
+                !panel.is_position_shown(&position, true)
+                    || panel.is_position_empty(&position, true),
+                |s| s.hide(),
+            )
+        })
 }
 
 pub fn panel_header(
@@ -525,14 +624,94 @@ pub fn panel_header(
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> impl View {
     container(label(move || header.clone())).style(move |s| {
+        let config = config.get();
         s.padding_horiz(10.0)
-            .padding_vert(6.0)
+            .height(config.ui.header_height() as f32)
+            .items_center()
             .width_pct(100.0)
-            .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
+            .background(config.color(SparrowColor::PANEL_BACKGROUND))
     })
 }
 
-fn panel_picker(
+/// Android Studio style tool window stripe: a narrow vertical icon bar on the
+/// outer edge of the window. The top of the stripe holds the side's first
+/// position, the bottom holds its second position plus the bottom-panel
+/// position on the same side, so every panel icon keeps a home.
+pub fn tool_window_stripe(
+    window_tab_data: Rc<WindowTabData>,
+    is_left: bool,
+) -> impl View {
+    let config = window_tab_data.common.config;
+    let overflow_window = window_tab_data.clone();
+    let (top, lower, bottom) = if is_left {
+        (
+            PanelPosition::LeftTop,
+            PanelPosition::LeftBottom,
+            PanelPosition::BottomLeft,
+        )
+    } else {
+        (
+            PanelPosition::RightTop,
+            PanelPosition::RightBottom,
+            PanelPosition::BottomRight,
+        )
+    };
+    stack((
+        stripe_picker(window_tab_data.clone(), top),
+        label(|| "···")
+            .style(move |s| {
+                s.size(28.0, 28.0)
+                    .margin_vert(2.0)
+                    .items_center()
+                    .justify_center()
+                    .font_size(16.0)
+                    .cursor(CursorStyle::Pointer)
+                    .apply_if(!is_left, |s| s.hide())
+                    .hover(|s| {
+                        s.background(
+                            config
+                                .get()
+                                .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                        .border_radius(6.0)
+                    })
+            })
+            .ide_popout_menu(move || {
+                use strum::IntoEnumIterator;
+                let mut menu = Menu::new("Tool Windows");
+                let mut kinds: Vec<_> = PanelKind::iter()
+                    .filter(|kind| kind.canonical() == *kind)
+                    .collect();
+                kinds.sort_by_key(|kind| kind.title());
+                for kind in kinds {
+                    let window = overflow_window.clone();
+                    menu = menu.entry(
+                        MenuItem::new(kind.title())
+                            .action(move || window.show_panel(kind)),
+                    );
+                }
+                menu
+            }),
+        empty().style(|s| s.flex_grow(1.0f32)),
+        stripe_picker(window_tab_data.clone(), lower),
+        stripe_picker(window_tab_data, bottom),
+    ))
+    .style(move |s| {
+        let config = config.get();
+        s.flex_col()
+            .items_center()
+            .width(config.ui.tool_window_stripe_width() as f32)
+            .height_pct(100.0)
+            .flex_shrink(0.0f32)
+            .padding_vert(2.0)
+            .background(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND)) // Blends with title bar
+            .apply_if(is_left, |s| s.margin_right(-1.0)) // Tighten gap
+            .apply_if(!is_left, |s| s.margin_left(-1.0))
+    })
+    .debug_name("Tool Window Stripe")
+}
+
+fn stripe_picker(
     window_tab_data: Rc<WindowTabData>,
     position: PanelPosition,
 ) -> impl View {
@@ -540,30 +719,20 @@ fn panel_picker(
     let panels = panel.panels;
     let config = window_tab_data.common.config;
     let dragging = window_tab_data.common.dragging;
-    let is_bottom = position.is_bottom();
-    let is_first = position.is_first();
     dyn_stack(
         move || {
+            let active = panel.active_panel_at_position(&position, true);
             panel
                 .panels
                 .with(|panels| panels.get(&position).cloned().unwrap_or_default())
+                .into_iter()
+                .filter(|kind| kind.pinned() || active == Some((*kind, true)))
+                .collect::<Vec<_>>()
         },
         |p| *p,
         move |p| {
             let window_tab_data = window_tab_data.clone();
-            let tooltip = match p {
-                PanelKind::Terminal => "Terminal",
-                PanelKind::FileExplorer => "File Explorer",
-                PanelKind::SourceControl => "Source Control",
-                PanelKind::Plugin => "Plugins",
-                PanelKind::Search => "Search",
-                PanelKind::Problem => "Problems",
-                PanelKind::Debug => "Debug",
-                PanelKind::CallHierarchy => "Call Hierarchy",
-                PanelKind::DocumentSymbol => "Document Symbol",
-                PanelKind::References => "References",
-                PanelKind::Implementation => "Implementation",
-            };
+            let tooltip = p.title();
             let icon = p.svg_name();
             let is_active = {
                 let window_tab_data = window_tab_data.clone();
@@ -578,7 +747,7 @@ fn panel_picker(
                     }
                 }
             };
-            container(stack((
+            container(
                 clickable_icon(
                     || icon,
                     move || {
@@ -607,49 +776,29 @@ fn panel_picker(
                                 .color(SparrowColor::PANEL_BACKGROUND)
                                 .multiply_alpha(0.7),
                         )
-                })
-                .style(|s| s.padding(1.0)),
-                label(|| "".to_string()).style(move |s| {
-                    s.selectable(false)
-                        .pointer_events_none()
-                        .absolute()
-                        .size_pct(100.0, 100.0)
-                        .apply_if(!is_bottom && is_first, |s| s.margin_top(2.0))
-                        .apply_if(!is_bottom && !is_first, |s| s.margin_top(-2.0))
-                        .apply_if(is_bottom && is_first, |s| s.margin_left(-2.0))
-                        .apply_if(is_bottom && !is_first, |s| s.margin_left(2.0))
-                        .apply_if(is_active(), |s| {
-                            s.apply_if(!is_bottom && is_first, |s| {
-                                s.border_bottom(2.0)
-                            })
-                            .apply_if(!is_bottom && !is_first, |s| s.border_top(2.0))
-                            .apply_if(is_bottom && is_first, |s| s.border_left(2.0))
-                            .apply_if(is_bottom && !is_first, |s| {
-                                s.border_right(2.0)
-                            })
-                        })
-                        .border_color(
-                            config
-                                .get()
-                                .color(SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE),
-                        )
                 }),
-            )))
-            .style(|s| s.padding(6.0))
+            )
+            .style(move |s| {
+                let config = config.get();
+                s.size(28.0, 28.0)
+                    .items_center()
+                    .justify_center()
+                    .margin_vert(2.0)
+                    .border_radius(6.0)
+                    .apply_if(is_active(), |s| {
+                        s.background(config.color(if p == PanelKind::FileExplorer {
+                            SparrowColor::ACTIVITY_CURRENT
+                        } else {
+                            SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND
+                        }))
+                    })
+            })
         },
     )
     .style(move |s| {
-        s.border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-            .apply_if(
-                panels.with(|p| {
-                    p.get(&position).map(|p| p.is_empty()).unwrap_or(true)
-                }),
-                |s| s.hide(),
-            )
-            .apply_if(is_bottom, |s| s.flex_col())
-            .apply_if(is_bottom && is_first, |s| s.border_right(1.0))
-            .apply_if(is_bottom && !is_first, |s| s.border_left(1.0))
-            .apply_if(!is_bottom && is_first, |s| s.border_bottom(1.0))
-            .apply_if(!is_bottom && !is_first, |s| s.border_top(1.0))
+        s.flex_col().items_center().apply_if(
+            panels.with(|p| p.get(&position).map(|p| p.is_empty()).unwrap_or(true)),
+            |s| s.hide(),
+        )
     })
 }

@@ -25,6 +25,7 @@ pub enum PaletteKind {
     TerminalProfile,
     DiffFiles,
     HelpAndFile,
+    PubPackage,
 }
 
 impl PaletteKind {
@@ -39,6 +40,7 @@ impl PaletteKind {
             PaletteKind::Workspace => ">",
             PaletteKind::Command => ":",
             PaletteKind::TerminalProfile => "<",
+            PaletteKind::PubPackage => "!",
             PaletteKind::File
             | PaletteKind::FileChooser
             | PaletteKind::Reference
@@ -66,6 +68,7 @@ impl PaletteKind {
             _ if input.starts_with('>') => PaletteKind::Workspace,
             _ if input.starts_with(':') => PaletteKind::Command,
             _ if input.starts_with('<') => PaletteKind::TerminalProfile,
+            _ if input.starts_with('!') => PaletteKind::PubPackage,
             _ => PaletteKind::File,
         }
     }
@@ -112,6 +115,7 @@ impl PaletteKind {
             }
             PaletteKind::TerminalProfile => None, // InternalCommand::NewTerminal
             PaletteKind::DiffFiles => Some(SparrowWorkbenchCommand::DiffFiles),
+            PaletteKind::PubPackage => None, // reached via fuzzy command
         }
     }
 
@@ -148,6 +152,7 @@ impl PaletteKind {
             | PaletteKind::WorkspaceSymbol
             | PaletteKind::Line
             | PaletteKind::TerminalProfile
+            | PaletteKind::PubPackage
             // | PaletteType::GlobalSearch
              => input.get(1..).unwrap_or(""),
         }

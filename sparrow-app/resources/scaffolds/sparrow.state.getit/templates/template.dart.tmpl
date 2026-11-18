@@ -1,0 +1,7 @@
+import 'package:get_it/get_it.dart';
+
+class {{name}} {
+  int count = 0;
+  void increment() => count++;
+}
+void register{{name}}() => GetIt.I.registerLazySingleton<{{name}}>({{name}}.new);

@@ -1,0 +1,7 @@
+import 'package:signals/signals.dart';
+
+class {{name}} {
+  final count = signal(0);
+  void increment() => count.value++;
+  void dispose() => count.dispose();
+}

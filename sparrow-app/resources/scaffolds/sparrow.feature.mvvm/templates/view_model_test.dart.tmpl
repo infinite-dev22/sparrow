@@ -1,0 +1,48 @@
+import 'dart:async';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:{{package}}/{{model_import}}/{{snake}}_item.dart';
+import 'package:{{package}}/{{repository_import}}/{{snake}}_repository.dart';
+import 'package:{{package}}/{{screen_import}}/{{snake}}_view_model.dart';
+
+class _Repository implements {{name}}Repository {
+  final response = Completer<List<{{name}}Item>>();
+  @override
+  Future<List<{{name}}Item>> load() => response.future;
+}
+
+void main() {
+  test('loads data and notifies loading transitions', () async {
+    final repository = _Repository();
+    final model = {{name}}ViewModel(repository);
+    addTearDown(model.dispose);
+    final loading = <bool>[];
+    model.addListener(() => loading.add(model.loading));
+    final result = model.load();
+    expect(model.loading, isTrue);
+    repository.response.complete(const [{{name}}Item(id: '1', title: 'First')]);
+    await result;
+    expect(model.items.single.title, 'First');
+    expect(model.error, isNull);
+    expect(loading, [true, false]);
+  });
+
+  test('exposes repository failures', () async {
+    final repository = _Repository();
+    final model = {{name}}ViewModel(repository);
+    addTearDown(model.dispose);
+    final result = model.load();
+    repository.response.completeError(StateError('offline'));
+    await result;
+    expect(model.error, contains('offline'));
+    expect(model.loading, isFalse);
+  });
+
+  test('does not notify after disposal', () async {
+    final repository = _Repository();
+    final model = {{name}}ViewModel(repository);
+    final result = model.load();
+    model.dispose();
+    repository.response.complete(const []);
+    await result;
+  });
+}

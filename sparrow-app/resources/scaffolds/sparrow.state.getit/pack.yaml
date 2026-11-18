@@ -1,0 +1,13 @@
+schema: 2
+id: sparrow.state.getit
+version: 1.0.0
+title: "GetIt Service"
+category: state
+target: sibling
+suffix: "_service"
+files:
+  - path: "{{suffixed_snake}}.dart"
+    source: templates/template.dart.tmpl
+dependencies:
+  - package: get_it
+    version: "any"

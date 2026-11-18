@@ -12,6 +12,27 @@ use std::{
     time::Instant,
 };
 
+use self::{
+    item::{PaletteItem, PaletteItemContent},
+    kind::PaletteKind,
+};
+use crate::{
+    command::{
+        CommandExecuted, CommandKind, InternalCommand, SparrowCommand, WindowCommand,
+    },
+    db::SparrowDb,
+    debug::{RunDebugConfigs, RunDebugMode},
+    editor::{
+        EditorData,
+        location::{EditorLocation, EditorPosition},
+    },
+    keypress::{KeyPressData, KeyPressFocus, condition::Condition},
+    lsp::path_from_url,
+    main_split::MainSplitData,
+    source_control::SourceControlData,
+    window_tab::{CommonData, Focus},
+    workspace::{SparrowWorkspace, SparrowWorkspaceType, SshHost},
+};
 use anyhow::Result;
 use floem::{
     ext_event::{create_ext_action, create_signal_from_channel},
@@ -34,28 +55,6 @@ use sparrow_core::{
 use sparrow_rpc::proxy::{PathRequest, ProxyResponse};
 use strum::{EnumMessage, IntoEnumIterator};
 use tracing::error;
-
-use self::{
-    item::{PaletteItem, PaletteItemContent},
-    kind::PaletteKind,
-};
-use crate::{
-    command::{
-        CommandExecuted, CommandKind, InternalCommand, SparrowCommand, WindowCommand,
-    },
-    db::SparrowDb,
-    debug::{RunDebugConfigs, RunDebugMode},
-    editor::{
-        EditorData,
-        location::{EditorLocation, EditorPosition},
-    },
-    keypress::{KeyPressData, KeyPressFocus, condition::Condition},
-    lsp::path_from_url,
-    main_split::MainSplitData,
-    source_control::SourceControlData,
-    window_tab::{CommonData, Focus},
-    workspace::{SparrowWorkspace, SparrowWorkspaceType, SshHost},
-};
 
 pub mod item;
 pub mod kind;
@@ -299,10 +298,14 @@ impl PaletteData {
                         .unwrap();
                     if let Some(new_kind) = new_kind {
                         palette.run_inner(new_kind);
-                    } else if input
-                        .with_untracked(|i| i.kind == PaletteKind::WorkspaceSymbol)
-                    {
-                        palette.run_inner(PaletteKind::WorkspaceSymbol);
+                    } else {
+                        let kind = input.with_untracked(|i| i.kind);
+                        if matches!(
+                            kind,
+                            PaletteKind::WorkspaceSymbol | PaletteKind::PubPackage
+                        ) {
+                            palette.run_inner(kind);
+                        }
                     }
                 }
                 Some(new_input)
@@ -423,6 +426,7 @@ impl PaletteData {
                 self.get_scm_references();
             }
             PaletteKind::TerminalProfile => self.get_terminal_profiles(),
+            PaletteKind::PubPackage => self.get_pub_packages(),
         }
     }
 
@@ -756,19 +760,24 @@ impl PaletteData {
             }
         };
 
+        let lsp = &self.common.dart_lsp;
+        if !crate::dart::is_dart_path(&path) || !lsp.is_available() {
+            self.items.update(|items| items.clear());
+            return;
+        }
         let set_items = self.items.write_only();
-        let send = create_ext_action(self.common.scope, move |result| {
-            if let Ok(ProxyResponse::GetDocumentSymbols { resp }) = result {
-                let items = Self::format_document_symbol_resp(resp);
-                set_items.set(items);
-            } else {
-                set_items.update(|items| items.clear());
+        let status = self.status;
+        let current_run = self.run_id;
+        let requested_run = current_run.get_untracked();
+        let send = create_ext_action(self.common.scope, move |symbols| {
+            if status.get_untracked() == PaletteStatus::Started
+                && current_run.get_untracked() == requested_run {
+                set_items.set(Self::format_document_symbol_resp(
+                    DocumentSymbolResponse::Nested(symbols),
+                ));
             }
         });
-
-        self.common.proxy.get_document_symbols(path, move |result| {
-            send(result);
-        });
+        lsp.document_symbols(&path, move |symbols| send(symbols));
     }
 
     fn format_document_symbol_resp(
@@ -814,7 +823,7 @@ impl PaletteData {
             content: PaletteItemContent::DocumentSymbol {
                 kind: s.kind,
                 name: s.name.replace('\n', "↵"),
-                range: s.range,
+                range: s.selection_range,
                 container_name: parent,
             },
             filter_text: s.name.clone(),
@@ -1189,6 +1198,37 @@ impl PaletteData {
         self.items.set(items);
     }
 
+    fn get_pub_packages(&self) {
+        let query = self.input.get_untracked().input;
+        let set_items = self.items.write_only();
+        let scope = self.common.scope;
+
+        let send = floem::ext_event::create_ext_action(
+            scope,
+            move |packages: Vec<PubPackageInfo>| {
+                let items: im::Vector<PaletteItem> = packages
+                    .into_iter()
+                    .map(|p| PaletteItem {
+                        content: PaletteItemContent::PubPackage {
+                            name: p.name.clone(),
+                            description: p.description,
+                            version: p.version,
+                        },
+                        filter_text: p.name,
+                        score: 0,
+                        indices: Vec::new(),
+                    })
+                    .collect();
+                set_items.set(items);
+            },
+        );
+
+        std::thread::spawn(move || {
+            let packages = fetch_pub_packages(&query).unwrap_or_default();
+            send(packages);
+        });
+    }
+
     fn preselect_matching(&self, items: &im::Vector<PaletteItem>, matching: &str) {
         let Some((idx, _)) = items
             .iter()
@@ -1206,6 +1246,19 @@ impl PaletteData {
         self.close();
         if let Some(item) = items.get(index) {
             match &item.content {
+                PaletteItemContent::PubPackage { name, .. } => {
+                    self.common.internal_command.send(
+                        InternalCommand::RunProcessInTerminal {
+                            program: "flutter".to_string(),
+                            args: vec![
+                                "pub".to_string(),
+                                "add".to_string(),
+                                name.clone(),
+                            ],
+                            name: format!("pub add {name}"),
+                        },
+                    );
+                }
                 PaletteItemContent::PaletteHelp { cmd } => {
                     let cmd = SparrowCommand {
                         kind: CommandKind::Workbench(cmd.clone()),
@@ -1573,6 +1626,19 @@ impl PaletteData {
                     }),
                 PaletteItemContent::SCMReference { .. } => {}
                 PaletteItemContent::TerminalProfile { .. } => {}
+                PaletteItemContent::PubPackage { name, .. } => {
+                    self.common.internal_command.send(
+                        InternalCommand::RunProcessInTerminal {
+                            program: "flutter".to_string(),
+                            args: vec![
+                                "pub".to_string(),
+                                "add".to_string(),
+                                name.clone(),
+                            ],
+                            name: format!("pub add {name}"),
+                        },
+                    );
+                }
             }
         }
     }
@@ -1597,6 +1663,11 @@ impl PaletteData {
         self.status.set(PaletteStatus::Inactive);
         if self.common.focus.get_untracked() == Focus::Palette {
             self.common.focus.set(Focus::Workbench);
+            self.common
+                .window_common
+                .app_view_id
+                .get_untracked()
+                .request_focus();
         }
         self.has_preview.set(false);
         self.items.update(|items| items.clear());
@@ -1808,5 +1879,98 @@ impl KeyPressFocus for PaletteData {
 
     fn receive_char(&self, c: &str) {
         self.input_editor.receive_char(c);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PubPackageInfo {
+    name: String,
+    description: String,
+    version: String,
+}
+
+fn fetch_pub_packages(query: &str) -> anyhow::Result<Vec<PubPackageInfo>> {
+    // Empty query → top packages. Substring → matching packages.
+    let search_url = if query.is_empty() {
+        "https://pub.dev/api/search?q=".to_string()
+    } else {
+        format!(
+            "https://pub.dev/api/search?q={}",
+            url::form_urlencoded::byte_serialize(query.as_bytes())
+                .collect::<String>()
+        )
+    };
+    let resp = sparrow_proxy::get_url(&search_url, None)?;
+    if !resp.status().is_success() {
+        return Err(anyhow::anyhow!("pub.dev search failed: {}", resp.status()));
+    }
+    let data: serde_json::Value = resp.json()?;
+    let names: Vec<String> = data
+        .get("packages")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| p.get("package").and_then(|v| v.as_str()))
+                .map(|s| s.to_string())
+                .take(20)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Fetch descriptions in parallel-ish (sequential is fine for ≤20).
+    let mut out = Vec::with_capacity(names.len());
+    for name in names {
+        let url = format!("https://pub.dev/api/packages/{name}");
+        let Ok(resp) = sparrow_proxy::get_url(&url, None) else {
+            continue;
+        };
+        let Ok(info) = resp.json::<serde_json::Value>() else {
+            continue;
+        };
+        let description = info
+            .get("latest")
+            .and_then(|v| v.get("pubspec"))
+            .and_then(|v| v.get("description"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let version = info
+            .get("latest")
+            .and_then(|v| v.get("version"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        out.push(PubPackageInfo {
+            name,
+            description,
+            version,
+        });
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod dart_symbol_tests {
+    use super::*;
+    #[test]
+    fn nested_dart_symbols_keep_parent_and_jump_to_identifier() {
+        let symbol: DocumentSymbol = serde_json::from_value(serde_json::json!({
+            "name": "Counter", "kind": 5,
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 8, "character": 1}},
+            "selectionRange": {"start": {"line": 0, "character": 6}, "end": {"line": 0, "character": 13}},
+            "children": [{"name": "increment", "kind": 6,
+                "range": {"start": {"line": 2, "character": 2}, "end": {"line": 4, "character": 3}},
+                "selectionRange": {"start": {"line": 2, "character": 7}, "end": {"line": 2, "character": 16}}}]
+        })).unwrap();
+        let items = PaletteData::format_document_symbol_resp(DocumentSymbolResponse::Nested(vec![symbol]));
+        assert_eq!(items.len(), 2);
+        match &items[1].content {
+            PaletteItemContent::DocumentSymbol { name, range, container_name, .. } => {
+                assert_eq!(name, "increment");
+                assert_eq!(container_name.as_deref(), Some("Counter"));
+                assert_eq!(range.start, lsp_types::Position::new(2, 7));
+            }
+            _ => panic!("expected Dart symbol"),
+        }
     }
 }

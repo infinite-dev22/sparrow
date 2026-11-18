@@ -1,3 +1,4 @@
+use sparrow_core::rope_text_pos::RopeTextPosition;
 use std::{
     collections::{BTreeMap, HashSet},
     env,
@@ -36,8 +37,12 @@ use lsp_types::{
 };
 use serde_json::Value;
 use sparrow_core::{
-    command::FocusCommand, cursor::CursorAffinity, directory::Directory, meta,
-    mode::Mode, register::Register,
+    command::{EditCommand, FocusCommand},
+    cursor::CursorAffinity,
+    directory::Directory,
+    meta,
+    mode::Mode,
+    register::Register,
 };
 use sparrow_rpc::{
     RpcError,
@@ -51,6 +56,11 @@ use sparrow_rpc::{
 };
 use tracing::{Level, debug, error, event};
 
+use crate::dart::{
+    DartLspService, FlutterHotReloadData, FlutterInspectorData, SignatureHelpData,
+};
+use crate::outline::OutlineData;
+use crate::widget_tree::WidgetTreeData;
 use crate::{
     about::AboutData,
     alert::{AlertBoxData, AlertButton},
@@ -82,7 +92,7 @@ use crate::{
     palette::{DEFAULT_RUN_TOML, PaletteData, PaletteStatus, kind::PaletteKind},
     panel::{
         call_hierarchy_view::{CallHierarchyData, CallHierarchyItemData},
-        data::{PanelData, PanelSection, default_panel_order},
+        data::{PanelData, PanelSection, default_panel_order, normalize_panel_layout},
         kind::PanelKind,
         position::PanelContainerPosition,
     },
@@ -102,6 +112,7 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Focus {
     Workbench,
+    Modal,
     Palette,
     CodeAction,
     Rename,
@@ -131,6 +142,9 @@ pub struct WorkProgress {
 
 #[derive(Clone)]
 pub struct CommonData {
+    pub document_views: RwSignal<BTreeMap<PathBuf, String>>,
+    pub bookmarks: RwSignal<BTreeMap<PathBuf, std::collections::BTreeSet<usize>>>,
+    pub workspace_undo: crate::workspace_undo::SharedHistory,
     pub workspace: Arc<SparrowWorkspace>,
     pub scope: Scope,
     pub focus: RwSignal<Focus>,
@@ -140,6 +154,8 @@ pub struct CommonData {
     pub hover: HoverData,
     pub register: RwSignal<Register>,
     pub find: Find,
+    pub dart_lsp: DartLspService,
+    pub signature_help: RwSignal<SignatureHelpData>,
     pub workbench_size: RwSignal<Size>,
     pub window_origin: RwSignal<Point>,
     pub internal_command: Listener<InternalCommand>,
@@ -181,12 +197,24 @@ pub struct WindowTabData {
     pub plugin: PluginData,
     pub code_action: RwSignal<CodeActionData>,
     pub code_lens: RwSignal<Option<ViewId>>,
+    pub dart_lsp: DartLspService,
+    pub flutter_hot_reload: FlutterHotReloadData,
+    pub flutter_inspector: FlutterInspectorData,
+    pub devtools: crate::dart::devtools::DevToolsData,
+    pub flutter_project: crate::dart::project_wizard::ProjectWizard,
+    pub flutter_test: crate::dart::test_service::FlutterTestData,
     pub source_control: SourceControlData,
     pub rename: RenameData,
+    pub file_refactor: crate::file_refactor::State,
+    pub scaffold: crate::scaffold::State,
+    pub formatting: crate::formatting::State,
+    pub project_search: crate::project_search::State,
+    pub git_actions: crate::git_actions::State,
     pub global_search: GlobalSearchData,
     pub call_hierarchy_data: CallHierarchyData,
     pub about_data: AboutData,
     pub alert_data: AlertBoxData,
+    pub settings_modal_visible: RwSignal<bool>,
     pub layout_rect: RwSignal<Rect>,
     pub title_height: RwSignal<f64>,
     pub status_height: RwSignal<f64>,
@@ -195,7 +223,16 @@ pub struct WindowTabData {
     pub update_in_progress: RwSignal<bool>,
     pub progresses: RwSignal<IndexMap<ProgressToken, WorkProgress>>,
     pub messages: RwSignal<Vec<(String, ShowMessageParams)>>,
+    pub notifications: RwSignal<Vec<crate::panel::workflow_tools::Notice>>,
     pub common: Rc<CommonData>,
+    pub widget_tree: WidgetTreeData,
+    pub outline: OutlineData,
+    pub project_menu_visible: RwSignal<bool>,
+    pub branch_menu_visible: RwSignal<bool>,
+    pub device_menu_visible: RwSignal<bool>,
+    pub run_configs: RwSignal<Vec<RunDebugConfig>>,
+    pub active_run_config_idx: RwSignal<usize>,
+    pub run_config_modal_visible: RwSignal<bool>,
 }
 
 impl std::fmt::Debug for WindowTabData {
@@ -363,13 +400,35 @@ impl WindowTabData {
             let attrs = Attrs::new()
                 .family(&family)
                 .font_size(config.ui.font_size() as f32)
-                .line_height(LineHeightValue::Normal(1.8));
+                .line_height(LineHeightValue::Normal(1.0));
             let attrs_list = AttrsList::new(attrs);
             text_layout.set_text("W", attrs_list, None);
-            text_layout.size().height
+            text_layout
+                .size()
+                .height
+                .max(config.ui.list_line_height() as f64)
         });
 
+        let (dart_lsp, dart_lsp_rx) = match &workspace.kind {
+            SparrowWorkspaceType::Local => match workspace.path.clone() {
+                Some(root) => DartLspService::spawn(root),
+                None => DartLspService::spawn_unavailable(),
+            },
+            _ => DartLspService::spawn_unavailable(),
+        };
+
+        if let Some(root) = &workspace.path {
+            if workspace.kind == SparrowWorkspaceType::Local {
+                crate::dart::assets::start(root.clone());
+            }
+        }
+        let signature_help =
+            cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
+
         let common = Rc::new(CommonData {
+            document_views: cx.create_rw_signal(workspace_info.as_ref().map(|info|info.document_views.clone()).unwrap_or_default()),
+            bookmarks: cx.create_rw_signal(workspace_info.as_ref().map(|info|info.bookmarks.clone()).unwrap_or_default()),
+            workspace_undo: Default::default(),
             workspace: workspace.clone(),
             scope: cx,
             keypress,
@@ -377,6 +436,8 @@ impl WindowTabData {
             completion,
             inline_completion,
             hover,
+            dart_lsp: dart_lsp.clone(),
+            signature_help,
             register,
             find,
             internal_command,
@@ -398,11 +459,19 @@ impl WindowTabData {
             window_common: window_common.clone(),
         });
 
+        crate::popup_menu::register(common.clone());
+        let flutter_inspector = FlutterInspectorData::new(cx, common.clone());
         let main_split = MainSplitData::new(cx, common.clone());
         let code_action =
             cx.create_rw_signal(CodeActionData::new(cx, common.clone()));
         let source_control =
             SourceControlData::new(cx, main_split.editors, common.clone());
+        if let Some(info)=workspace_info.as_ref() {
+            if !info.commit_message.is_empty(){source_control.editor.doc().reload(lapce_xi_rope::Rope::from(info.commit_message.clone()),false);}
+            source_control.amend.set(info.amend_commit);
+        }
+        let widget_tree = WidgetTreeData::new(cx, common.clone());
+        let outline = OutlineData::new(cx, common.clone());
         let file_explorer =
             FileExplorerData::new(cx, main_split.editors, common.clone());
 
@@ -460,13 +529,16 @@ impl WindowTabData {
         let panel = workspace_info
             .as_ref()
             .map(|i| {
-                let panel_order = db
-                    .get_panel_orders()
-                    .unwrap_or_else(|_| default_panel_order());
+                // Active indices belong to this workspace's saved order, not
+                // the last order saved by a different workspace.
+                let panel_order = i.panel.panels.clone();
+                let (panel_order, styles) = normalize_panel_layout(panel_order, i.panel.styles.clone());
                 PanelData {
                     panels: cx.create_rw_signal(panel_order),
-                    styles: cx.create_rw_signal(i.panel.styles.clone()),
+                    styles: cx.create_rw_signal(styles),
                     size: cx.create_rw_signal(i.panel.size.clone()),
+                    hidden_styles: cx.create_rw_signal(None),
+                    last_opened: cx.create_rw_signal(Some(PanelKind::FileExplorer)),
                     available_size: panel_available_size,
                     sections: cx.create_rw_signal(
                         i.panel
@@ -486,7 +558,7 @@ impl WindowTabData {
                     cx,
                     panel_order,
                     panel_available_size,
-                    im::HashMap::new(),
+                    HashMap::new(),
                     common.clone(),
                 )
             });
@@ -516,6 +588,9 @@ impl WindowTabData {
             );
         }
 
+        let flutter_hot_reload =
+            FlutterHotReloadData::new(cx, common.clone(), terminal.clone());
+
         let rename = RenameData::new(cx, main_split.editors, common.clone());
         let global_search = GlobalSearchData::new(cx, main_split.clone());
 
@@ -541,6 +616,20 @@ impl WindowTabData {
                             TermNotification::RequestPaint => {
                                 view_id.get_untracked().request_paint();
                             }
+                            TermNotification::VmServiceUrl { term_id, url } => {
+                                // Only connect for the terminal that flutter_hot_reload tracks,
+                                // and only if the tab is actually in the Running state.
+                                let tracked =
+                                    flutter_hot_reload.active_term.get_untracked();
+                                let running =
+                                    flutter_hot_reload.state.get_untracked()
+                                        == crate::dart::FlutterRunState::Running;
+                                if running && tracked == Some(*term_id) {
+                                    flutter_hot_reload.ws_uri.set(Some(url.to_string()));
+                                    // Inspector connection is explicit; discovering a VM is not an inspection request.
+
+                                }
+                            }
                         }
                     }
                 });
@@ -550,20 +639,58 @@ impl WindowTabData {
         let about_data = AboutData::new(cx, common.focus);
         let alert_data = AlertBoxData::new(cx, common.clone());
 
+        let run_configs = cx.create_rw_signal(Vec::new());
+        let active_run_config_idx = cx.create_rw_signal(0);
+        let run_config_modal_visible = cx.create_rw_signal(false);
+
+        let loaded_configs = workspace.path.as_deref().map(|root| {
+            crate::dart::run_config::load(root).unwrap_or_else(|| crate::dart::run_config::discover_defaults(root))
+        }).unwrap_or_default();
+        if let Some(name)=workspace_info.as_ref().and_then(|info|info.selected_run_configuration.as_ref()) {
+            if let Some(index)=loaded_configs.iter().position(|config|&config.name==name){active_run_config_idx.set(index);}
+        }
+        run_configs.set(loaded_configs);
+
         let window_tab_data = Self {
             scope: cx,
             window_tab_id: WindowTabId::next(),
             workspace,
             palette,
-            main_split,
+            main_split: main_split.clone(),
             terminal,
+            flutter_hot_reload: flutter_hot_reload.clone(),
+            flutter_inspector: flutter_inspector.clone(),
+            devtools: crate::dart::devtools::DevToolsData::new(cx),
+            flutter_project: crate::dart::project_wizard::ProjectWizard::new(
+                cx,
+                common
+                    .workspace
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.parent())
+                    .unwrap_or(std::env::temp_dir().as_path())
+                    .display()
+                    .to_string(),
+            ),
+            flutter_test: crate::dart::test_service::FlutterTestData::new(
+                cx,
+                common.proxy.clone(),
+            ),
             panel,
             file_explorer,
             code_action,
             code_lens: cx.create_rw_signal(None),
             source_control,
+            dart_lsp: dart_lsp.clone(),
+            widget_tree: widget_tree.clone(),
+            outline: outline.clone(),
             plugin,
             rename,
+            file_refactor: crate::file_refactor::State::new(cx),
+            scaffold: crate::scaffold::State::new(cx),
+            formatting: crate::formatting::State::new(cx),
+            project_search: crate::project_search::State::new(cx),
+            git_actions: crate::git_actions::State::new(cx),
             global_search,
             call_hierarchy_data: CallHierarchyData {
                 root: cx.create_rw_signal(None),
@@ -572,6 +699,7 @@ impl WindowTabData {
             },
             about_data,
             alert_data,
+            settings_modal_visible: cx.create_rw_signal(false),
             layout_rect: cx.create_rw_signal(Rect::ZERO),
             title_height,
             status_height,
@@ -580,8 +708,107 @@ impl WindowTabData {
             update_in_progress: cx.create_rw_signal(false),
             progresses: cx.create_rw_signal(IndexMap::new()),
             messages: cx.create_rw_signal(Vec::new()),
+            notifications: cx.create_rw_signal(Vec::new()),
             common,
+            project_menu_visible: cx.create_rw_signal(false),
+            branch_menu_visible: cx.create_rw_signal(false),
+            device_menu_visible: cx.create_rw_signal(false),
+            run_configs,
+            active_run_config_idx,
+            run_config_modal_visible,
         };
+
+        {
+            let data=window_tab_data.clone();let database=db.clone();
+            let revision=Rc::new(std::cell::Cell::new(0u64));
+            cx.create_effect(move |_|{
+                if let Some(editor)=data.main_split.active_editor.get() {editor.cursor().get();editor.viewport().get();}
+                data.main_split.editor_tabs.with(|tabs|{for tab in tabs.values(){tab.get();}});
+                data.main_split.docs.with(|docs|{for doc in docs.values(){doc.buffer.with(|buffer|buffer.rev());}});
+                data.panel.styles.get();data.panel.size.get();data.common.breakpoints.get();data.common.bookmarks.get();data.common.document_views.get();
+                data.source_control.editor.doc().buffer.with(|buffer|buffer.rev());data.source_control.amend.get();data.active_run_config_idx.get();data.run_configs.get();
+                let next=revision.get()+1;revision.set(next);
+                let revision=revision.clone();let database=database.clone();let workspace=(*data.workspace).clone();
+                let data=data.clone();
+                floem::action::exec_after(std::time::Duration::from_millis(800),move |_|{
+                    // Editor/tab removal updates several signals in sequence. Take
+                    // the snapshot after the transition, never inside its effects.
+                    if revision.get()==next && data.main_split.splits.try_get_untracked().is_some() {
+                        database.save_workspace_info(workspace,data.workspace_info());
+                    }
+                });
+            });
+        }
+
+        {
+            let settings = window_tab_data.settings_modal_visible;
+            let run = window_tab_data.run_config_modal_visible;
+            let wizard = window_tab_data.flutter_project.active;
+            let focus = window_tab_data.common.focus;
+            let root = window_tab_data.common.view_id;
+            let previous_focus = cx.create_rw_signal(Focus::Workbench);
+            cx.create_effect(move |_| {
+                if settings.get() || run.get() || wizard.get() {
+                    let current = focus.get_untracked();
+                    if current != Focus::Modal {
+                        // Command palettes and other transient overlays close
+                        // when they open a dialog; do not restore their stale focus.
+                        previous_focus.set(match current {
+                            Focus::Workbench | Focus::Panel(_) => current,
+                            _ => Focus::Workbench,
+                        });
+                    }
+                    focus.set(Focus::Modal);
+                } else if focus.get_untracked() == Focus::Modal {
+                    focus.set(previous_focus.get_untracked());
+                    root.get_untracked().request_focus();
+                }
+            });
+        }
+
+        // Terminal data owns the Flutter run session, independent of its view.
+        {
+            let terminal = window_tab_data.terminal.clone();
+            let flutter = window_tab_data.flutter_hot_reload.clone();
+            cx.create_effect(move |_| {
+                let processes = terminal.run_debug_process(true);
+                let session = processes.iter().rev().find(|(_, process)| {
+                    !process.stopped
+                        && (!process.is_prelaunch || process.config.prelaunch.is_none())
+                        && crate::dart::run_config::is_flutter_target(&process.config)
+                });
+                if let Some((id, _)) = session {
+                    flutter.active_term.set(Some(*id));
+                    flutter.state.set(crate::dart::FlutterRunState::Running);
+                } else if flutter.active_term.get_untracked().is_some() {
+                    flutter.state.set(crate::dart::FlutterRunState::Idle);
+                    flutter.ws_uri.set(None);
+                }
+            });
+        }
+
+        // Only a run-state transition opens the console. Device discovery and
+        // manual panel toggles must not steal editor space in an idle workspace.
+        {
+            let state = flutter_hot_reload.state;
+            let panel = window_tab_data.panel.clone();
+            cx.create_effect(move |previous: Option<bool>| {
+                let running = state.get() == crate::dart::FlutterRunState::Running;
+                floem::reactive::untrack(|| {
+                    if previous.is_none() && !running {
+                        if let Some((PanelKind::FlutterRun, true)) = panel
+                            .active_panel_at_position(
+                                &crate::panel::position::PanelPosition::BottomLeft,
+                                false,
+                            )
+                        {
+                            panel.hide_panel(&PanelKind::FlutterRun);
+                        }
+                    }
+                });
+                running
+            });
+        }
 
         {
             let focus = window_tab_data.common.focus;
@@ -633,67 +860,333 @@ impl WindowTabData {
             });
         }
 
+        // ── Widget tree: debounced refresh on editor/rev change ─────
+        {
+            let widget_tree = widget_tree.clone();
+            let main_split_wt = main_split.clone();
+            let dart_lsp_wt = dart_lsp.clone();
+            let timer: RwSignal<Option<floem::action::TimerToken>> =
+                cx.create_rw_signal(None);
+
+            cx.create_effect(move |_| {
+                let Some(editor) = main_split_wt.active_editor.get() else {
+                    widget_tree.clear();
+                    return;
+                };
+                let doc = editor.doc_signal().get();
+                let path = doc.content.with_untracked(|c| c.path().cloned());
+                let Some(path) = path else {
+                    widget_tree.clear();
+                    return;
+                };
+                if !crate::dart::is_dart_path(&path) {
+                    widget_tree.clear();
+                    return;
+                }
+                // Track loaded + rev so both async-load and edits trigger.
+                let _ = doc.loaded.get();
+                let _ = doc.buffer.with(|b| b.rev());
+                widget_tree.schedule_refresh(
+                    timer,
+                    main_split_wt.clone(),
+                    dart_lsp_wt.clone(),
+                );
+            });
+        }
+
+        {
+            let widget_tree = widget_tree.clone();
+            cx.create_effect(move |_| {
+                widget_tree.updates.with(|notif| {
+                    let Some((path, widgets)) = notif.as_ref() else {
+                        return;
+                    };
+                    widget_tree.apply_update(path.clone(), widgets.clone());
+                });
+            });
+        }
+
+        // ── Dart LSP: forward buffer changes ─────────────────────────────
+        {
+            let dart_lsp = dart_lsp.clone();
+            let main_split_effect = main_split.clone();
+            cx.create_effect(move |_| {
+                let Some(editor) = main_split_effect.active_editor.get() else {
+                    return;
+                };
+                let doc = editor.doc_signal().get();
+                let path = doc.content.with_untracked(|c| c.path().cloned());
+                let Some(path) = path else { return };
+                if !crate::dart::is_dart_path(&path) {
+                    return;
+                }
+                let loaded = doc.loaded.get();
+                if !loaded {
+                    dart_lsp.sync_document(path, None);
+                    return;
+                }
+                let version = doc.buffer.with(|b| b.rev() as i64);
+                let content = doc.buffer.with(|b| b.to_string());
+                let closing =
+                    crate::dart::extract_closing_labels_from_source(&content);
+                doc.closing_labels.set(Some(closing));
+                dart_lsp.sync_document(path, Some((content, version)));
+            });
+        }
+
+        // ── Dart LSP: apply diagnostics ──────────────────────────────────
+        {
+            use crate::dart::DartNotification;
+
+            // Per-file highest applied LSP version, so out-of-order publishes are
+            // dropped instead of flickering the editor back to stale diagnostics.
+            let last_applied: Arc<
+                parking_lot::Mutex<std::collections::HashMap<PathBuf, i64>>,
+            > = Default::default();
+
+            let notices = window_tab_data.notifications;
+            let main_split_apply = main_split.clone();
+            let notification = create_signal_from_channel(dart_lsp_rx);
+
+            cx.create_effect(move |_| {
+                notification.with(|notif| {
+                    let Some(notif) = notif.as_ref() else { return };
+                    match notif {
+                        DartNotification::Diagnostics {
+                            path,
+                            version,
+                            diagnostics,
+                        } => {
+                            // Version discipline: skip anything older than what we
+                            // already applied. `-1` means "server didn't tell us",
+                            // so we apply unconditionally in that case.
+                            if *version >= 0 {
+                                let mut guard = last_applied.lock();
+                                if guard.get(path).copied().unwrap_or(-1) >= *version
+                                {
+                                    return;
+                                }
+                                guard.insert(path.clone(), *version);
+                            }
+                            let Some(doc) = main_split_apply
+                                .docs
+                                .with_untracked(|docs| docs.get(path).cloned())
+                            else {
+                                return;
+                            };
+                            let data = main_split_apply.get_diagnostic_data(path);
+                            data.set_external(diagnostics.iter().cloned());
+                            doc.init_diagnostics();
+                        }
+                        DartNotification::ClosingLabels { path, labels } => {
+                            if let Some(doc) = main_split_apply
+                                .docs
+                                .with_untracked(|docs| docs.get(path).cloned())
+                            {
+                                doc.closing_labels.set(Some(labels.clone()));
+                                doc.clear_text_cache();
+                            }
+                        }
+                        DartNotification::Log(msg) => {
+                            debug!("dart lsp: {msg}");
+                        }
+                        DartNotification::PackageResolution{id,result} => {
+                            crate::panel::workflow_tools::record_pub_get_result(notices,*id,result.clone());
+                        }
+                        DartNotification::Error(e) => {
+                            tracing::warn!("dart lsp: {e}");
+                            crate::panel::workflow_tools::record(
+                                notices,
+                                "Dart analysis",
+                                e,
+                            );
+                        }
+                        DartNotification::ApplyEdit { id, edit } => {
+                            let applied = edit.as_ref().is_some_and(|edit| main_split_apply.apply_dart_server_edit(edit));
+                            main_split_apply.common.dart_lsp.respond_to_edit(id.clone(), applied);
+                        }
+                        DartNotification::Ready => {
+                            crate::panel::workflow_tools::record(
+                                notices,
+                                "Dart analysis",
+                                "Analysis server is ready.",
+                            );
+                            // LSP handshake done — request semantic tokens for every open Dart doc.
+                            main_split_apply.docs.with_untracked(|docs| {
+                                for (path, doc) in docs.iter() {
+                                    if crate::dart::is_dart_path(path) {
+                                        doc.get_semantic_styles();
+                                    }
+                                }
+                            });
+                        }
+                        _ => {}
+                    }
+                });
+            });
+        }
+
+        // ── Dart outline: debounced refresh on editor/rev change ──────
+        {
+            let outline = outline.clone();
+            let main_split_outline = main_split.clone();
+            let dart_lsp_outline = dart_lsp.clone();
+            let timer: RwSignal<Option<floem::action::TimerToken>> =
+                cx.create_rw_signal(None);
+
+            cx.create_effect(move |_| {
+                let Some(editor) = main_split_outline.active_editor.get() else {
+                    outline.clear();
+                    return;
+                };
+                let doc = editor.doc_signal().get();
+                let path = doc.content.with_untracked(|c| c.path().cloned());
+                let Some(path) = path else {
+                    outline.clear();
+                    return;
+                };
+                if !crate::dart::is_dart_path(&path) {
+                    outline.clear();
+                    return;
+                }
+                // Track loaded + rev so both async-load and edits trigger.
+                let _ = doc.loaded.get();
+                let _ = doc.buffer.with(|b| b.rev());
+                outline.schedule_refresh(
+                    timer,
+                    main_split_outline.clone(),
+                    dart_lsp_outline.clone(),
+                );
+            });
+        }
+
+        // ── Dart outline: apply completed analyses ───────────────────
+        {
+            let outline = outline.clone();
+            cx.create_effect(move |_| {
+                outline.updates.with(|notif| {
+                    let Some((path, symbols)) = notif.as_ref() else {
+                        return;
+                    };
+                    outline.apply_update(path.clone(), symbols.clone());
+                });
+            });
+        }
+
+        // ── Flutter hot reload: keep state in sync with the terminal ──
+        {
+            let hr = flutter_hot_reload.clone();
+            cx.create_effect(move |_| {
+                // Track tab_info so this fires when tabs are added / removed /
+                // re-indexed.
+                let _ = hr.terminal.tab_info.get();
+
+                let Some(term_id) = hr.active_term.get() else {
+                    return;
+                };
+
+                // Adapter-owned Flutter processes deliberately have no PTY.
+                // The adapter session model owns their lifetime and console.
+                if hr.terminal.debug.adapter_sessions.with(|sessions| {
+                    sessions.values().any(|(id, _)| *id == term_id)
+                }) { return; }
+
+                match hr.terminal.get_terminal(&term_id) {
+                    None => {
+                        // Terminal was closed entirely — back to idle.
+                        hr.active_term.set(None);
+                        hr.state.set(crate::dart::FlutterRunState::Idle);
+                    }
+                    Some(terminal) => {
+                        // `.with` (not `_untracked`) so we re-fire when the
+                        // run_debug.stopped flag flips.
+                        let stopped = terminal.run_debug.with(|r| {
+                            r.as_ref().map(|p| p.stopped).unwrap_or(false)
+                        });
+                        if stopped
+                            && hr.state.get_untracked()
+                                != crate::dart::FlutterRunState::Error
+                        {
+                            hr.state.set(crate::dart::FlutterRunState::Error);
+                        }
+                    }
+                }
+            });
+        }
+
+        // ── Flutter inspector: apply VM service notifications ───────
+        {
+            let inspector = flutter_inspector.clone();
+            cx.create_effect(move |_| {
+                inspector.updates.with(|notif| {
+                    let Some(notif) = notif.as_ref() else { return };
+                    inspector.apply(notif);
+                });
+            });
+        }
+
+        // ── Flutter inspector: disconnect when the run stops ───────
+        {
+            let inspector = flutter_inspector.clone();
+            let hot_reload = flutter_hot_reload.clone();
+            cx.create_effect(move |_| {
+                if hot_reload.state.get() == crate::dart::FlutterRunState::Idle
+                    && inspector.state.get_untracked()
+                        != crate::dart::InspectorState::Disconnected
+                {
+                    inspector.disconnect();
+                }
+            });
+        }
+
+        // ── Flutter inspector: connect when VM Service URL is received from daemon ──
+        {
+            let inspector = flutter_inspector.clone();
+            let inspector_panel = window_tab_data.panel.clone();
+            let hot_reload = flutter_hot_reload.clone();
+            cx.create_effect(move |_| {
+                if let Some(ws_uri) = hot_reload.ws_uri.get() {
+                    let running = hot_reload.state.get()
+                        == crate::dart::FlutterRunState::Running;
+                    let _ = inspector_panel.styles.get();
+                    if running && !ws_uri.is_empty() && inspector_panel.is_panel_visible(&PanelKind::FlutterInspector) {
+                        let term_id = hot_reload
+                            .active_term
+                            .get_untracked()
+                            .unwrap_or(sparrow_rpc::terminal::TermId(0));
+                        inspector.on_vm_url(term_id, ws_uri);
+                    }
+                }
+            });
+        }
+
         window_tab_data
     }
 
-    pub fn reload_config(&self) {
+    pub fn config_for_workspace(&self, workspace: &SparrowWorkspace) -> SparrowConfig {
         let db: Arc<SparrowDb> = use_context().unwrap();
 
         let disabled_volts = db.get_disabled_volts().unwrap_or_default();
         let workspace_disabled_volts = db
-            .get_workspace_disabled_volts(&self.workspace)
+            .get_workspace_disabled_volts(workspace)
             .unwrap_or_default();
         let mut all_disabled_volts = disabled_volts;
         all_disabled_volts.extend(workspace_disabled_volts);
 
-        let config = SparrowConfig::load(
-            &self.workspace,
+        SparrowConfig::load(
+            workspace,
             &all_disabled_volts,
             &self.common.window_common.extra_plugin_paths,
-        );
+        )
+    }
+
+    pub fn reload_config(&self) {
+        let config = self.config_for_workspace(&self.workspace);
         self.common.keypress.update(|keypress| {
             keypress.update_keymaps(&config);
         });
 
-        let mut change_plugins = Vec::new();
-        for (key, configs) in self.common.config.get_untracked().plugins.iter() {
-            if config
-                .plugins
-                .get(key)
-                .map(|x| x != configs)
-                .unwrap_or_default()
-            {
-                change_plugins.push(key.clone());
-            }
-        }
-        self.set_config.set(Arc::new(config.clone()));
-        if !change_plugins.is_empty() {
-            self.common
-                .proxy
-                .update_plugin_configs(config.plugins.clone());
-            if config.core.auto_reload_plugin {
-                let mut plugin_metas: HashMap<
-                    String,
-                    sparrow_rpc::plugin::VoltMetadata,
-                > = self
-                    .plugin
-                    .installed
-                    .get_untracked()
-                    .values()
-                    .map(|x| {
-                        let meta = x.meta.get_untracked();
-                        (meta.name.clone(), meta)
-                    })
-                    .collect();
-                for name in change_plugins {
-                    if let Some(meta) = plugin_metas.remove(&name) {
-                        self.common.proxy.reload_volt(meta);
-                    } else {
-                        tracing::error!("not found volt metadata of {}", name);
-                    }
-                }
-            }
-        }
+        self.set_config.set(Arc::new(config));
     }
 
     pub fn run_sparrow_command(&self, cmd: SparrowCommand) {
@@ -707,12 +1200,23 @@ impl WindowTabData {
             | CommandKind::Move(_) => {
                 if self.palette.status.get_untracked() != PaletteStatus::Inactive {
                     self.palette.run_command(&cmd, None, Modifiers::empty());
+                } else if self.common.focus.get_untracked()
+                    == Focus::Panel(PanelKind::FileExplorer)
+                    && matches!(
+                        cmd.kind,
+                        CommandKind::Edit(
+                            EditCommand::ClipboardCopy
+                                | EditCommand::ClipboardCut
+                                | EditCommand::ClipboardPaste
+                        )
+                    )
+                {
+                    self.file_explorer
+                        .run_command(&cmd, None, Modifiers::empty());
                 } else if let Some(editor_data) =
                     self.main_split.active_editor.get_untracked()
                 {
                     editor_data.run_command(&cmd, None, Modifiers::empty());
-                } else {
-                    // TODO: dispatch to current focused view?
                 }
             }
             CommandKind::MotionMode(_) => {}
@@ -754,7 +1258,7 @@ impl WindowTabData {
                                 path: Some(if let Some(path) = file.path.pop() {
                                     path
                                 } else {
-                                    tracing::error!("No path");
+                                    error!("No path");
                                     return;
                                 }),
                                 last_open: std::time::SystemTime::now()
@@ -791,7 +1295,7 @@ impl WindowTabData {
                                 path: if let Some(path) = file.path.pop() {
                                     path
                                 } else {
-                                    tracing::error!("No path");
+                                    error!("No path");
                                     return;
                                 },
                             })
@@ -822,8 +1326,8 @@ impl WindowTabData {
             }
 
             SaveAll => {
+                let mut paths = HashSet::new();
                 self.main_split.editors.with_editors_untracked(|editors| {
-                    let mut paths = HashSet::new();
                     for (editor_id, editor_data) in editors.iter() {
                         // Defensive safeguard: `floem`'s `Editor::doc()` panics if the reactive scope was
                         // already destroyed. This catches "ghost" editors (like closed Settings or Plugin tabs)
@@ -861,11 +1365,18 @@ impl WindowTabData {
                         }
                     }
                 });
+                // Refactorings can update documents that have no editor tab.
+                let docs=self.main_split.docs.with_untracked(|docs|docs.values().cloned().collect::<Vec<_>>());
+                for doc in docs {
+                    if doc.loaded() && !doc.is_pristine() && doc.content.with_untracked(|c|c.path().is_some_and(|p|!paths.contains(p))) {
+                        doc.save(||{});
+                    }
+                }
             }
 
             // ==== Configuration / Info Files and Folders ====
             OpenSettings => {
-                self.main_split.open_settings();
+                self.settings_modal_visible.set(true);
             }
             OpenSettingsFile => {
                 if let Some(path) = SparrowConfig::settings_file() {
@@ -952,7 +1463,24 @@ impl WindowTabData {
             ExportCurrentThemeSettings => {
                 self.main_split.export_theme();
             }
-            ToggleInlayHints => {}
+            ToggleInlayHints => {
+                let enabled = !self.common.config.get_untracked().editor.enable_inlay_hints;
+                // Keep an existing project override in its original scope.
+                let project = self.workspace.path.as_ref().map(|root| root.join(".sparrow/settings.toml"));
+                let target = project.filter(|path| {
+                    std::fs::read_to_string(path).ok()
+                        .and_then(|text| text.parse::<toml::Value>().ok())
+                        .is_some_and(|value| value.get("editor").and_then(|e|e.get("enable-inlay-hints")).is_some())
+                }).or_else(SparrowConfig::settings_file);
+                if let Some(target) = target {
+                    match SparrowConfig::update_scoped_settings(vec![(target, vec![(
+                        "editor".into(), "enable-inlay-hints".into(), Some(enabled.into()),
+                    )])]) {
+                        Ok(()) => self.reload_config(),
+                        Err(error) => self.show_alert("Inlay Hints".into(), error, Vec::new()),
+                    }
+                }
+            }
 
             // ==== Window ====
             ReloadWindow => {
@@ -1063,6 +1591,21 @@ impl WindowTabData {
             }
 
             // ==== File Explorer ====
+            GitCommand => {let args=data.and_then(|d|serde_json::from_value::<Vec<String>>(d).ok()).unwrap_or_else(||vec!["status".into()]);self.git_actions.open("Command".into(),args);}
+            FlutterProjectTask => {
+                if let Some(root)=self.workspace.path.as_deref(){if let Some(flutter)=crate::dart::sdk::find_flutter_binary(Some(root)) {let args=data.and_then(|d|serde_json::from_value::<Vec<String>>(d).ok()).unwrap_or_else(||vec!["build".into()]);self.common.internal_command.send(InternalCommand::NewTerminal{profile:Some(sparrow_rpc::terminal::TerminalProfile{name:format!("Flutter {}",args.join(" ")),command:Some(flutter.display().to_string()),arguments:Some(args),workdir:lsp_types::Url::from_directory_path(root).ok(),..Default::default()})});self.show_panel(PanelKind::Terminal);}else{self.show_alert("Flutter SDK".into(),"Configure a Flutter SDK to run project tasks.".into(),Vec::new());}}
+            }
+            SearchEverywhere | FindInFiles | ReplaceInFiles => {self.project_search.open(cmd==ReplaceInFiles,cmd==SearchEverywhere,data.and_then(|d|serde_json::from_value(d).ok()));}
+            ReformatCodeOptions => {
+                let target=data.and_then(|d|serde_json::from_value::<PathBuf>(d.clone()).ok()).or_else(||self.main_split.active_editor.get_untracked().and_then(|editor|editor.doc().content.with_untracked(|c|c.path().cloned()))).or_else(||self.workspace.path.clone());
+                if let Some(target)=target {self.formatting.open(target);}
+            }
+            ReplaceInEditor => {
+                if let Some(editor)=self.main_split.active_editor.get_untracked(){
+                    editor.run_command(&SparrowCommand {kind: CommandKind::Focus(sparrow_core::command::FocusCommand::Search),data:None},None,Modifiers::empty());
+                    self.common.find.replace_active.set(true); self.common.find.replace_focus.set(true);
+                }
+            }
             FileExplorerRename => {
                 self.file_explorer.rename_selected();
             }
@@ -1083,6 +1626,18 @@ impl WindowTabData {
                     self.panel.show_panel(&PanelKind::Terminal);
                 }
                 self.common.focus.set(Focus::Panel(PanelKind::Terminal));
+            }
+            FlutterDebugTestAtCursor => self.run_test_at_cursor(true),
+            FlutterRunTestFile => {
+                if let Some(editor) = self.main_split.active_editor.get_untracked() {
+                    if let Some(path) = editor.doc().content.with_untracked(|c| c.path().cloned()) {
+                        self.prepare_flutter_tests(vec![(path, String::new())], false, false);
+                    }
+                }
+            }
+            FlutterRerunFailedTests => self.rerun_flutter_tests(true),
+            FlutterRunTestAtCursor => {
+                self.run_test_at_cursor(false);
             }
             CloseTerminalTab => {
                 self.terminal.close_tab(None);
@@ -1109,6 +1664,7 @@ impl WindowTabData {
                 }
                 self.common.focus.set(Focus::Panel(PanelKind::Terminal));
             }
+
             PreviousTerminalTab => {
                 self.terminal.previous_tab();
                 if !self.panel.is_panel_visible(&PanelKind::Terminal) {
@@ -1182,7 +1738,12 @@ impl WindowTabData {
                 if let Some(is_debug) = active_term
                     .and_then(|term_id| self.terminal.restart_run_debug(term_id))
                 {
-                    self.panel.show_panel(&PanelKind::Terminal);
+                    let panel = self.terminal.debug.active_term.get_untracked()
+                        .and_then(|id| self.terminal.get_terminal(&id))
+                        .and_then(|terminal| terminal.run_debug.get_untracked())
+                        .map(|process| crate::dart::run_config::console_panel(process.mode, &process.config))
+                        .unwrap_or(PanelKind::Terminal);
+                    self.panel.show_panel(&panel);
                     if is_debug {
                         self.panel.show_panel(&PanelKind::Debug);
                     }
@@ -1191,9 +1752,16 @@ impl WindowTabData {
                 }
             }
             RunAndDebugStop => {
-                let active_term = self.terminal.debug.active_term.get_untracked();
-                if let Some(term_id) = active_term {
+                let active = self.terminal.debug.active_term.get_untracked();
+                let processes = self.terminal.run_debug_process(false);
+                let selected = self.run_configs.with_untracked(|configs| configs.get(self.active_run_config_idx.get_untracked()).map(|config| config.name.clone()));
+                let term_id = active.filter(|id| processes.iter().any(|(term, process)| term == id && !process.stopped))
+                    .or_else(|| processes.iter().find(|(_, process)| !process.stopped && Some(&process.config.name) == selected.as_ref()).map(|(term, _)| *term))
+                    .or_else(|| processes.iter().find(|(_, process)| !process.stopped).map(|(term, _)| *term));
+                if let Some(term_id) = term_id {
                     self.terminal.stop_run_debug(term_id);
+                } else if self.flutter_hot_reload.state.get_untracked() == crate::dart::FlutterRunState::Running {
+                    self.flutter_hot_reload.stop();
                 }
             }
 
@@ -1248,11 +1816,21 @@ impl WindowTabData {
                 }
             }
             HidePanel => {
-                if let Some(data) = data {
-                    if let Ok(kind) = serde_json::from_value::<PanelKind>(data) {
-                        self.hide_panel(kind);
-                    }
+                let kind = data
+                    .and_then(|data| serde_json::from_value::<PanelKind>(data).ok())
+                    .or_else(|| match self.common.focus.get_untracked() {
+                        Focus::Panel(kind) => Some(kind),
+                        _ => self.panel.last_opened.get_untracked()
+                            .filter(|kind| self.panel.is_panel_visible(kind)),
+                    });
+                if let Some(kind) = kind {
+                    self.hide_panel(kind);
                 }
+            }
+            ToggleAllToolWindows => {
+                self.panel.toggle_all_tool_windows();
+                self.common.focus.set(Focus::Workbench);
+                self.common.view_id.get_untracked().request_focus();
             }
             ShowPanel => {
                 if let Some(data) = data {
@@ -1302,6 +1880,11 @@ impl WindowTabData {
             ToggleSearchFocus => {
                 self.toggle_panel_focus(PanelKind::Search);
             }
+            ActivateRunToolWindow => self.toggle_panel_focus(PanelKind::FlutterRun),
+            ActivateDebugToolWindow => self.toggle_panel_focus(PanelKind::Debug),
+            ActivateProblemsToolWindow => self.toggle_panel_focus(PanelKind::Problems),
+            ActivateStructureToolWindow => self.toggle_panel_focus(PanelKind::DartOutline),
+            ActivateGitToolWindow => self.toggle_panel_focus(PanelKind::GitHistory),
             ToggleTerminalVisual => {
                 self.toggle_panel_visual(PanelKind::Terminal);
             }
@@ -1325,6 +1908,7 @@ impl WindowTabData {
             }
             FocusEditor => {
                 self.common.focus.set(Focus::Workbench);
+                self.common.view_id.get_untracked().request_focus();
             }
             FocusTerminal => {
                 self.common.focus.set(Focus::Panel(PanelKind::Terminal));
@@ -1458,7 +2042,7 @@ impl WindowTabData {
             NextError => {
                 self.main_split.next_error();
             }
-            PreviousError => {}
+            PreviousError => self.main_split.previous_error(),
             Quit => {
                 floem::quit_app();
             }
@@ -1564,6 +2148,10 @@ impl WindowTabData {
                             cwd: None,
                             env: None,
                             prelaunch: None,
+                before_launch: Vec::new(),
+                store_in_project: false,
+                            flutter_options: Default::default(),
+                            debug_adapter: None,
                             debug_command: None,
                             dap_id: Default::default(),
                             tracing_output: false,
@@ -1623,6 +2211,118 @@ impl WindowTabData {
                     editor_data.jump_highlight(InlineFindDirection::Left);
                 }
             }
+            RunCurrentFile | DebugCurrentFile | ProfileCurrentFile => {
+                let path = data.clone().and_then(|value| serde_json::from_value::<PathBuf>(value).ok())
+                    .or_else(|| self.main_split.active_editor.get_untracked()
+                        .and_then(|editor| editor.doc().content.with_untracked(|content| content.path().cloned())));
+                if let Some(path) = path {
+                    let source=self.main_split.docs.with_untracked(|docs|docs.get(&path).map(|doc|doc.buffer.with_untracked(|b|b.to_string()))).or_else(||std::fs::read_to_string(&path).ok());
+                    if !source.as_deref().is_some_and(crate::dart::regex::has_entry_point){self.show_alert("Run configuration".into(),"This Dart file has no top-level main entrypoint.".into(),Vec::new());return;}
+                    if cmd==ProfileCurrentFile&&crate::dart::test_runner::is_test_file(&path){self.show_alert("Profile".into(),"Use Run or Debug for Dart test files.".into(),Vec::new());return;}
+                    if crate::dart::test_runner::is_test_file(&path)
+                        && crate::dart::test_runner::project_root(&path).is_some_and(|root| crate::dart::is_flutter_project(&root)) {
+                        self.prepare_flutter_tests(vec![(path, String::new())], cmd == DebugCurrentFile, false);
+                        return;
+                    }
+                    match crate::dart::run_config::configuration_for_file(&path, self.workspace.path.as_deref()) {
+                        Ok(mut config) => {if cmd==ProfileCurrentFile {if !crate::dart::run_config::is_flutter_target(&config){self.show_alert("Profile".into(),"Profiling requires a Flutter entrypoint.".into(),Vec::new());return;}config.args.get_or_insert_with(Vec::new).push("--profile".into());} self.common.internal_command.send(InternalCommand::RunAndDebug {
+                            mode: if cmd == DebugCurrentFile { RunDebugMode::Debug } else { RunDebugMode::Run }, config,
+                        });},
+                        Err(message) => self.show_alert("Run configuration".into(), message, Vec::new()),
+                    }
+                }
+            }
+            EditRunConfigurations => self.run_config_modal_visible.set(true),
+            OptimizeImports => {
+                if let Some(editor) = self.main_split.active_editor.get_untracked() {
+                    let doc = editor.doc();
+                    let path = doc.content.with_untracked(|content| content.path().cloned());
+                    if let Some(path) = path.filter(|path| crate::dart::is_dart_path(path)) {
+                        if !self.common.dart_lsp.is_available() {
+                            self.show_alert("Optimize Imports".into(), "The Dart analysis server is not ready yet.".into(), Vec::new());
+                            return;
+                        }
+                        let rev = doc.rev();
+                        let commands = self.common.internal_command;
+                        let apply = create_ext_action(self.scope, move |actions: Vec<CodeActionOrCommand>| {
+                            if doc.rev() != rev { return; }
+                            if let Some(action) = actions.into_iter().find(|action| match action {
+                                CodeActionOrCommand::CodeAction(action) => action.disabled.is_none(),
+                                CodeActionOrCommand::Command(_) => true,
+                            }) {
+                                commands.send(InternalCommand::RunCodeAction { plugin_id: PluginId(0), action });
+                            }
+                        });
+                        self.common.dart_lsp.code_actions_with_kind(&path, 0, 0, &[], Some("source.organizeImports"), move |actions| apply(actions));
+                    }
+                }
+            }
+            CopyActiveFile => {if let Some(path)=self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())){self.show_panel(PanelKind::FileExplorer);self.file_explorer.reveal_in_file_tree(path.clone());self.file_explorer.naming.set(sparrow_rpc::file::Naming::Duplicating(sparrow_rpc::file::Duplicating{state:sparrow_rpc::file::NamingState::Naming,path,destination:None,is_dir:false,move_on_finish:false,editor_needs_reset:true}));}}
+            RefactorExtract | RefactorInline => {if let Some(editor)=self.main_split.active_editor.get_untracked(){self.common.internal_command.send(InternalCommand::RequestCodeActions{offset:editor.cursor().with_untracked(|c|c.offset()),mouse_click:false,kind:Some(if cmd==RefactorExtract{"refactor.extract"}else{"refactor.inline"}.into())});}}
+            SafeDeleteFile => {let path=data.and_then(|d|serde_json::from_value::<PathBuf>(d).ok()).or_else(||self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())));if let Some(path)=path.filter(|p|crate::dart::is_dart_path(p)){self.file_refactor.open_delete(path);}}
+            MoveActiveFile => {let path=data.and_then(|d|serde_json::from_value::<PathBuf>(d).ok()).or_else(||self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())));if let (Some(path),Some(root))=(path,self.workspace.path.as_deref()){if crate::dart::is_dart_path(&path){self.file_refactor.open_move(path,root);}}}
+            RenameActiveFile => {
+                let path = data.and_then(|value| serde_json::from_value::<PathBuf>(value).ok())
+                    .or_else(|| self.main_split.active_editor.get_untracked().and_then(|editor| editor.doc().content.with_untracked(|content| content.path().cloned())));
+                if let Some(path) = path {
+                    self.show_panel(PanelKind::FileExplorer);
+                    self.common.focus.set(Focus::Panel(PanelKind::FileExplorer));
+                    self.file_explorer.reveal_in_file_tree(path.clone());
+                    if crate::dart::is_dart_path(&path){self.file_refactor.open(path);}else{self.file_explorer.rename_path(path);}
+                }
+            }
+            ToggleBookmark => {
+                if let Some(editor)=self.main_split.active_editor.get_untracked() {
+                    let doc=editor.doc();
+                    if let Some(path)=doc.content.with_untracked(|content|content.path().cloned()) {
+                        let offset=editor.cursor().with_untracked(|cursor|cursor.offset());
+                        let line=doc.buffer.with_untracked(|buffer|buffer.line_of_offset(offset));
+                        self.common.bookmarks.update(|items|{let lines=items.entry(path).or_default();if !lines.remove(&line){lines.insert(line);}});
+                    }
+                }
+            }
+            ToggleBreakpoint => {
+                if let Some(editor) = self.main_split.active_editor.get_untracked() {
+                    let doc = editor.doc();
+                    let offset = editor.cursor().with_untracked(|cursor| cursor.offset());
+                    let line = doc.buffer.with_untracked(|buffer| buffer.line_of_offset(offset));
+                    crate::editor::view::toggle_gutter_breakpoint(line, editor.doc_signal(),
+                        self.terminal.debug.daps, self.terminal.debug.breakpoints, self.common.clone());
+                }
+            }
+            RunSelectedConfiguration | DebugSelectedConfiguration => {
+                let mode = if cmd == RunSelectedConfiguration { RunDebugMode::Run } else { RunDebugMode::Debug };
+                self.launch_selected_configuration(mode);
+            }
+            FlutterRun => self.launch_selected_configuration(RunDebugMode::Run),
+            DartPubGet => self.resolve_workspace_dependencies(),
+            FlutterHotReload => {
+                self.reload_flutter_after_saving(false);
+            }
+            FlutterHotRestart => {
+                self.reload_flutter_after_saving(true);
+            }
+            FlutterStop => {
+                self.flutter_hot_reload.stop();
+            }
+            FlutterNewProject => self.flutter_project.active.set(true),
+            ScaffoldNewFeature => self.scaffold.open_feature(self),
+            ScaffoldUndo => self.scaffold.open_undo(),
+            ScaffoldFromPack => self.scaffold.open_catalog(self,false),
+            ScaffoldManageTemplates => self.scaffold.open_manager(self),
+            ScaffoldExportPack => self.scaffold.open_catalog(self,true),
+            FlutterOpenDevTools | FlutterDevToolsMemory | FlutterDevToolsNetwork => {
+                let page = match cmd {
+                    FlutterDevToolsMemory => crate::dart::devtools::DevToolsPage::Memory,
+                    FlutterDevToolsNetwork => crate::dart::devtools::DevToolsPage::Network,
+                    _ => crate::dart::devtools::DevToolsPage::Home,
+                };
+                self.open_devtools(page);
+            }
+            AndroidStudioReferenceLayout => self.apply_android_studio_layout(),
+            PubAdd => {
+                self.palette.run(PaletteKind::PubPackage);
+            }
         }
     }
 
@@ -1652,6 +2352,15 @@ impl WindowTabData {
                     },
                     None,
                 );
+            }
+            InternalCommand::OpenLibraryFile { path, read_only } => {
+                if read_only {
+                    let (doc, _) = self.main_split.get_doc(path.clone(), None);
+                    doc.content.update(|content| {
+                        if let DocContent::File {read_only, ..} = content { *read_only = true; }
+                    });
+                }
+                self.run_internal_command(InternalCommand::OpenAndConfirmedFile { path });
             }
             InternalCommand::OpenAndConfirmedFile { path } => {
                 self.main_split.jump_to_location(
@@ -1711,6 +2420,10 @@ impl WindowTabData {
                 let send_new_path = new_path.clone();
                 let file_explorer = self.file_explorer.clone();
                 let editors = self.main_split.editors;
+                let docs = self.main_split.docs;
+                let diagnostics = self.main_split.diagnostics;
+                let dart_lsp = self.common.dart_lsp.clone();
+
 
                 let send = create_ext_action(
                     self.scope,
@@ -1764,6 +2477,28 @@ impl WindowTabData {
                                 });
                             }
 
+                            // Rekey caches as well as editor content. Otherwise reopening the
+                            // old path can return the moved document under its stale key.
+                            docs.update(|docs| {
+                                let paths = docs.keys().filter(|path| path.starts_with(&send_current_path)).cloned().collect::<Vec<_>>();
+                                for old in paths {
+                                    if let Some(doc) = docs.remove(&old) {
+                                        let target = new_path.join(old.strip_prefix(&send_current_path).expect("matching prefix"));
+                                        dart_lsp.send_close(old);
+                                        docs.insert(target, doc);
+                                    }
+                                }
+                            });
+                            diagnostics.update(|diagnostics| {
+                                let paths = diagnostics.keys().filter(|path| path.starts_with(&send_current_path)).cloned().collect::<Vec<_>>();
+                                for old in paths {
+                                    if let Some(data) = diagnostics.remove(&old) {
+                                        diagnostics.insert(new_path.join(old.strip_prefix(&send_current_path).expect("matching prefix")), data);
+                                    }
+                                }
+                            });
+
+                            file_explorer.finish_file_move(&send_current_path);
                             file_explorer.reload();
                             file_explorer.naming.set(Naming::None);
                         }
@@ -1780,6 +2515,52 @@ impl WindowTabData {
                     .proxy
                     .rename_path(current_path.clone(), new_path, send);
             }
+            InternalCommand::RunProcessInTerminal {
+                program,
+                args,
+                name,
+            } => {
+                use crate::debug::RunDebugMode;
+                use sparrow_rpc::dap_types::{ConfigSource, RunDebugConfig};
+                use std::time::Instant;
+
+                let cwd = self
+                    .common
+                    .workspace
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.to_str().map(|s| s.to_string()));
+                let process = crate::debug::RunDebugProcess {
+                    mode: RunDebugMode::Run,
+                    config: RunDebugConfig {
+                        ty: None,
+                        name,
+                        program,
+                        args: Some(args),
+                        cwd,
+                        env: None,
+                        prelaunch: None,
+                before_launch: Vec::new(),
+                store_in_project: false,
+                        flutter_options: Default::default(),
+                        debug_adapter: None,
+                        debug_command: None,
+                        dap_id: Default::default(),
+                        tracing_output: false,
+                        config_source: ConfigSource::Palette,
+                    },
+                    stopped: false,
+                    created: Instant::now(),
+                    is_prelaunch: false,
+                };
+                let tab = self.terminal.new_tab_run_debug(Some(process), None);
+                if let Some(term) = tab.active_terminal(false) {
+                    self.terminal.debug.active_term.set(Some(term.term_id));
+                }
+                self.show_panel(crate::panel::kind::PanelKind::Terminal);
+            }
+            InternalCommand::GitAction{title,args} => {self.git_actions.open(title,args);}
+            InternalCommand::NewScaffold {base,template} => {self.scaffold.open(base,template);}
             InternalCommand::FinishNewNode { is_dir, path } => {
                 let file_explorer = self.file_explorer.clone();
                 let internal_command = self.common.internal_command;
@@ -1855,6 +2636,18 @@ impl WindowTabData {
             } => {
                 self.main_split.split(direction, editor_tab_id);
             }
+            InternalCommand::SplitAndMove {
+                editor_tab_id,
+                index,
+                direction,
+            } => {
+                self.main_split.move_editor_tab_child_to_new_split(
+                    editor_tab_id,
+                    index,
+                    editor_tab_id,
+                    direction,
+                );
+            }
             InternalCommand::SplitMove {
                 direction,
                 editor_tab_id,
@@ -1885,15 +2678,126 @@ impl WindowTabData {
                     kind,
                 );
             }
+            InternalCommand::RequestCodeActions {
+                offset,
+                mouse_click,
+                kind,
+            } => {
+                let Some(editor) = self.main_split.active_editor.get_untracked()
+                else {
+                    return;
+                };
+                let doc = editor.doc();
+                let Some(path) = doc.content.with_untracked(|c| c.path().cloned())
+                else {
+                    return;
+                };
+                if !doc.loaded()
+                    || editor.cursor().with_untracked(|c| c.offset()) != offset
+                {
+                    return;
+                }
+                let revision = doc.rev();
+                self.common.hover.active.set(false);
+                let mut data = self.code_action.get_untracked();
+                data.show(PluginId(0), im::Vector::new(), offset, mouse_click);
+                data.origin = Some((path.clone(), revision));
+                data.request_state = crate::code_action::ActionRequestState::Loading;
+                let request_id = data.request_id;
+                self.code_action.set(data);
+                let actions = self.code_action;
+                let scope = self.scope.create_child();
+                let active_editor = self.main_split.active_editor;
+                let current_editor = editor.clone();
+                let source = doc.clone();
+                scope.create_effect(move |_| {
+                    let data = actions.get();
+                    if data.request_id != request_id
+                        || data.status.get()
+                            == crate::code_action::CodeActionStatus::Inactive
+                    {
+                        scope.dispose();
+                        return;
+                    }
+                    let current = active_editor.get();
+                    if current.is_none_or(|e| e.id() != current_editor.id())
+                        || !Rc::ptr_eq(&current_editor.doc_signal().get(), &source)
+                        || current_editor.cursor().with(|c| c.offset()) != offset
+                        || source.buffer.with(|b| b.rev()) != revision
+                    {
+                        data.cancel();
+                        scope.dispose();
+                    }
+                });
+                let send =
+                    create_ext_action(
+                        scope,
+                        move |result: Result<
+                            (PluginId, Vec<lsp_types::CodeActionOrCommand>),
+                            String,
+                        >| {
+                            let mut data = actions.get_untracked();
+                            if data.request_id != request_id
+                                || data.status.get_untracked()
+                                    != crate::code_action::CodeActionStatus::Active
+                            {
+                                return;
+                            }
+                            match result {
+                                Ok((plugin_id, items)) => {
+                                    doc.code_actions().update(|cache| {
+                                        cache.insert(
+                                            offset,
+                                            (
+                                                plugin_id,
+                                                items.clone().into_iter().collect(),
+                                            ),
+                                        );
+                                    });
+                                    data.replace_items(
+                                        plugin_id,
+                                        items.into_iter().collect(),
+                                    );
+                                }
+                                Err(error) => data.request_state =
+                                    crate::code_action::ActionRequestState::Failed(
+                                        error,
+                                    ),
+                            }
+                            actions.set(data);
+                        },
+                    );
+                editor.request_code_actions_with_kind(kind,move |result| send(result));
+            }
+
             InternalCommand::ShowCodeActions {
                 offset,
                 mouse_click,
                 plugin_id,
                 code_actions,
             } => {
+                self.common.hover.active.set(false);
                 let mut code_action = self.code_action.get_untracked();
                 code_action.show(plugin_id, code_actions, offset, mouse_click);
+                code_action.origin = self.main_split.active_editor.get_untracked().and_then(|editor| {
+                    let doc=editor.doc();doc.content.with_untracked(|c|c.path().cloned()).map(|path|(path,doc.rev()))
+                });
                 self.code_action.set(code_action);
+            }
+            InternalCommand::QuickFixAt { location } => {
+                self.main_split.jump_to_location(location, None);
+                if let Some(editor) = self.main_split.active_editor.get_untracked() {
+                    let scope = self.scope.create_child();
+                    let doc = editor.doc();
+                    scope.create_effect(move |_| {
+                        if doc.loaded.get() { editor.show_code_actions(false); scope.dispose(); }
+                    });
+                }
+            }
+            InternalCommand::ApplyCodeActionPreview { prepared } => {
+                if let Err(error) = crate::code_action_preview::apply(self, prepared) {
+                    self.show_alert("Quick Fix".into(), error, Vec::new());
+                }
             }
             InternalCommand::RunCodeAction { plugin_id, action } => {
                 self.main_split.run_code_action(plugin_id, action);
@@ -1925,16 +2829,95 @@ impl WindowTabData {
                 self.terminal.split_exchange(term_id);
             }
             InternalCommand::RunAndDebug { mode, config } => {
+                let dirty = self.main_split.docs.with_untracked(|docs| {
+                    docs.values()
+                        .filter(|doc| {
+                            doc.content
+                                .with_untracked(|content| content.path().is_some())
+                                && !doc
+                                    .buffer
+                                    .with_untracked(|buffer| buffer.is_pristine())
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>()
+                });
+                let commands = self.common.internal_command;
+                if dirty.is_empty() {
+                    commands
+                        .send(InternalCommand::RunAndDebugSaved { mode, config });
+                } else {
+                    let remaining = Rc::new(std::cell::Cell::new(dirty.len()));
+                    for doc in dirty {
+                        let remaining = remaining.clone();
+                        let config = config.clone();
+                        doc.save(move || {
+                            remaining.set(remaining.get() - 1);
+                            if remaining.get() == 0 {
+                                commands.send(InternalCommand::RunAndDebugSaved {
+                                    mode,
+                                    config,
+                                });
+                            }
+                        });
+                    }
+                }
+            }
+            InternalCommand::RunAndDebugSaved { mode, mut config } => {
+                // A configuration can launch repeatedly or switch Run/Debug.
+                // Keep each launch distinct from stopped adapter sessions.
+                config.dap_id = Default::default();
                 self.run_and_debug(cx, &mode, &config);
             }
-            InternalCommand::StartRename {
-                path,
-                placeholder,
-                position,
-                start,
-            } => {
-                self.rename.start(path, placeholder, start, position);
+            InternalCommand::RequestSymbolRename { token, preview } => {
+                crate::rename::request(Rc::new(self.clone()), token, preview);
             }
+            InternalCommand::PreparedRename {
+                path,
+                revision,
+                offset,
+                response,
+            } => {
+                let Some(editor) = self.main_split.active_editor.get_untracked()
+                else {
+                    return;
+                };
+                let doc = editor.doc();
+                if self.common.focus.get_untracked() != Focus::Workbench
+                    || doc.rev() != revision
+                    || doc
+                        .content
+                        .with_untracked(|c| c.path() != Some(&path) || c.read_only())
+                    || editor.cursor().with_untracked(|c| c.offset()) != offset
+                {
+                    return;
+                }
+                let response = match response {
+                    Ok(Some(response)) => response,
+                    other => {
+                        self.show_alert(
+                            "Rename".into(),
+                            other.err().unwrap_or_else(|| {
+                                "This symbol cannot be renamed.".into()
+                            }),
+                            Vec::new(),
+                        );
+                        return;
+                    }
+                };
+                let (start,position,placeholder)=doc.buffer.with_untracked(|buffer|{
+                    let (range,placeholder)=match response {
+                        lsp_types::PrepareRenameResponse::Range(range)=>(Some(range),None),
+                        lsp_types::PrepareRenameResponse::RangeWithPlaceholder{range,placeholder}=>(Some(range),Some(placeholder)),
+                        lsp_types::PrepareRenameResponse::DefaultBehavior{..}=>(None,None),
+                    };
+                    let (start,end)=range.map(|r|(buffer.offset_of_position(&r.start),buffer.offset_of_position(&r.end))).unwrap_or_else(||buffer.select_word(offset));
+                    (start,buffer.offset_to_position(start),placeholder.unwrap_or_else(||buffer.slice_to_cow(start..end).to_string()))
+                });
+                self.common.hover.active.set(false);
+                self.rename
+                    .start(path, placeholder, start, position, editor);
+            }
+
             InternalCommand::Search { pattern } => {
                 self.main_split.set_find_pattern(pattern);
             }
@@ -2119,16 +3102,60 @@ impl WindowTabData {
             InternalCommand::CallHierarchyIncoming { item_id } => {
                 self.call_hierarchy_incoming(item_id);
             }
+            InternalCommand::FlutterRunTest { path, name, debug } => {
+                self.prepare_flutter_tests(vec![(path, name)], debug, false);
+            }
+            InternalCommand::FlutterStartTests {
+                targets,
+                debug,
+                exact,
+            } => self.start_flutter_tests(targets, debug, exact),
+            InternalCommand::FlutterRerunTests { failed_only } => {
+                self.rerun_flutter_tests(failed_only)
+            }
+            InternalCommand::FlutterRunTestAtCursor { term_id: _ } => {
+                self.run_test_at_cursor(false);
+            }
         }
     }
 
     fn handle_core_notification(&self, rpc: &CoreNotification) {
         let cx = self.scope;
         match rpc {
+            CoreNotification::DapSessionEvent { dap_id, event } => {
+                if self.terminal.debug.adapter_sessions.with_untracked(|sessions| sessions.contains_key(&dap_id)) {
+                    if let Some(output) = event.get("output").and_then(|v| v.as_str()) {
+                        self.flutter_hot_reload.run_logs.update(|logs| {
+                            for line in output.lines() { logs.push_back(line.to_owned()); }
+                            while logs.len() > 5000 { logs.pop_front(); }
+                        });
+                    }
+                    if event.get("type").and_then(|v| v.as_str()) == Some("terminated") {
+                        self.terminal.debug.adapter_sessions.update(|sessions| {
+                            if let Some((_, process)) = sessions.get_mut(&dap_id) { process.stopped = true; }
+                        });
+                        if self.terminal.debug.active_dap.get_untracked() == Some(*dap_id) {
+                            self.terminal.debug.active_dap.set(None);
+                        }
+                    }
+                }
+            }
+            CoreNotification::FlutterTestEvent { dap_id, event } => {
+                self.flutter_test.debug_event(*dap_id, event);
+                if self.terminal.debug.active_dap.get_untracked() == Some(*dap_id)
+                    && self.flutter_test.debug_dap.get_untracked().is_none()
+                {
+                    self.terminal.debug.active_dap.set(None);
+                    self.terminal.debug.daps.update(|daps| {
+                        daps.remove(dap_id);
+                    });
+                }
+            }
             CoreNotification::ProxyStatus { status } => {
                 self.common.proxy_status.set(Some(status.to_owned()));
             }
             CoreNotification::DiffInfo { diff } => {
+                self.source_control.untracked.set(diff.untracked.iter().cloned().collect());
                 self.source_control.branch.set(diff.head.clone());
                 self.source_control
                     .branches
@@ -2186,8 +3213,7 @@ impl WindowTabData {
 
                 self.main_split
                     .get_diagnostic_data(&path)
-                    .diagnostics
-                    .set(diagnostics);
+                    .set_external(diagnostics);
 
                 // inform the document about the diagnostics
                 if let Some(doc) = self
@@ -2204,7 +3230,6 @@ impl WindowTabData {
                     self.main_split.docs.with_untracked(|x| {
                         for doc in x.values() {
                             doc.get_code_lens();
-                            doc.get_document_symbol();
                             doc.get_semantic_styles();
                             doc.get_folding_range();
                             doc.get_inlay_hints();
@@ -2219,7 +3244,7 @@ impl WindowTabData {
                     .term_tx
                     .send((*term_id, TermEvent::CloseTerminal))
                 {
-                    tracing::error!("{:?}", err);
+                    error!("{:?}", err);
                 }
                 self.terminal.terminal_stopped(term_id, *exit_code);
                 if self
@@ -2299,6 +3324,23 @@ impl WindowTabData {
                     }
                 });
             }
+            CoreNotification::BufferSyncRequired { path } => {
+                if let Some(doc) = self
+                    .main_split
+                    .docs
+                    .with_untracked(|docs| docs.get(path).cloned())
+                {
+                    if doc.loaded() {
+                        self.common.proxy.notification(
+                            sparrow_rpc::proxy::ProxyNotification::SyncBuffer {
+                                path: path.clone(),
+                                rev: doc.rev(),
+                                content: doc.buffer.with_untracked(|buffer| buffer.to_string()),
+                            },
+                        );
+                    }
+                }
+            }
             CoreNotification::OpenFileChanged { path, content } => {
                 self.main_split.open_file_changed(path, content);
             }
@@ -2372,7 +3414,45 @@ impl WindowTabData {
     }
 
     pub fn key_down<'a>(&self, event: impl Into<EventRef<'a>> + Copy) -> bool {
+        // Toolbar selectors keep their anchor/search field focused. Handle
+        // cancellation before dispatching Escape to the underlying editor.
+        if let EventRef::Keyboard(key) = event.into() {
+            let menus = [
+                self.project_menu_visible,
+                self.branch_menu_visible,
+                self.device_menu_visible,
+            ];
+            if key.modifiers.is_empty()
+                && key.key.logical_key
+                    == floem::keyboard::Key::Named(floem::keyboard::NamedKey::Escape)
+                && menus.iter().any(|menu| menu.get_untracked())
+            {
+                for menu in menus {
+                    menu.set(false);
+                }
+                crate::modal_focus::note_popup_escape();
+                return true;
+            }
+        }
+        if self.settings_modal_visible.get_untracked()
+            || self.run_config_modal_visible.get_untracked()
+            || self.flutter_project.active.get_untracked()
+            || self.file_refactor.active.get_untracked()
+            || self.scaffold.active.get_untracked()
+            || self.formatting.active.get_untracked()
+            || self.project_search.active.get_untracked()
+            || self.git_actions.active.get_untracked()
+        {
+            return false;
+        }
         if self.alert_data.active.get_untracked() {
+            if let EventRef::Keyboard(key)=event.into() {
+                if key.modifiers.is_empty() && key.key.logical_key==floem::keyboard::Key::Named(floem::keyboard::NamedKey::Escape) {
+                    self.alert_data.active.set(false);
+                    self.common.window_common.app_view_id.get_untracked().request_focus();
+                    return true;
+                }
+            }
             return false;
         }
         let focus = self.common.focus.get_untracked();
@@ -2386,8 +3466,23 @@ impl WindowTabData {
             }
             Focus::Rename => Some(keypress.key_down(event, &self.rename)),
             Focus::AboutPopup => Some(keypress.key_down(event, &self.about_data)),
-            Focus::Panel(PanelKind::Terminal) => {
-                self.terminal.key_down(event, &keypress)
+            Focus::Panel(PanelKind::Terminal) => self.terminal.key_down(event, &keypress),
+            Focus::Panel(PanelKind::FlutterRun) => {
+                // Terminal may have selected a shell since Run was last visible.
+                // Never send Run console keys to that unrelated terminal.
+                if let Some(id) = self.flutter_hot_reload.active_term.get_untracked()
+                    .filter(|id| self.terminal.get_terminal(id).is_some()) {
+                    self.terminal.focus_terminal_in_panel(id, PanelKind::FlutterRun);
+                    self.terminal.key_down(event, &keypress)
+                } else { None }
+            }
+            Focus::Panel(PanelKind::FileExplorer) => {
+                if let EventRef::Keyboard(key) = event.into() {
+                    if self.file_explorer.navigate_key(key) {
+                        return true;
+                    }
+                }
+                Some(keypress.key_down(event, &self.file_explorer))
             }
             Focus::Panel(PanelKind::Search) => {
                 Some(keypress.key_down(event, &self.global_search))
@@ -2427,6 +3522,11 @@ impl WindowTabData {
             .cloned()
             .unwrap();
         WorkspaceInfo {
+            commit_message: self.source_control.editor.doc().buffer.with_untracked(|buffer|buffer.to_string()),
+            amend_commit: self.source_control.amend.get_untracked(),
+            selected_run_configuration: self.run_configs.with_untracked(|configs|configs.get(self.active_run_config_idx.get_untracked()).map(|config|config.name.clone())),
+            document_views: self.common.document_views.get_untracked(),
+            bookmarks: self.common.bookmarks.get_untracked(),
             split: main_split_data.get_untracked().split_info(self),
             panel: self.panel.panel_info(),
             breakpoints: self
@@ -2480,6 +3580,50 @@ impl WindowTabData {
             origin.x = tab_size.width - hover_size.width - 1.0;
         }
         if origin.x <= 0.0 {
+            origin.x = 0.0;
+        }
+
+        Some(origin)
+    }
+
+    /// Screen position for the signature-help popup: just below the
+    /// cursor's current line.
+    pub fn signature_help_origin(&self) -> Option<floem::peniko::kurbo::Point> {
+        use floem::peniko::kurbo::Vec2;
+        use sparrow_core::cursor::CursorAffinity;
+
+        let sh = self.common.signature_help.get_untracked();
+        if !sh.is_active() {
+            return None;
+        }
+        let editor_data = self.main_split.active_editor.get_untracked()?;
+        if Some(editor_data.id()) != sh.editor_id {
+            return None;
+        }
+        let (window_origin, viewport, editor) = (
+            editor_data.window_origin(),
+            editor_data.viewport(),
+            &editor_data.editor,
+        );
+        let offset = editor_data.cursor().with_untracked(|c| c.offset());
+        let (_, point_below) =
+            editor.points_of_offset(offset, CursorAffinity::Forward);
+        let window_origin =
+            window_origin.get() - self.common.window_origin.get().to_vec2();
+        let viewport = viewport.get();
+        let tab_size = self.layout_rect.get().size();
+        let sh_size = sh.layout_rect.size();
+
+        let mut origin = window_origin
+            + Vec2::new(
+                point_below.x - viewport.x0,
+                point_below.y - viewport.y0 + 4.0,
+            );
+
+        if origin.x + sh_size.width + 8.0 > tab_size.width {
+            origin.x = (tab_size.width - sh_size.width - 8.0).max(0.0);
+        }
+        if origin.x < 0.0 {
             origin.x = 0.0;
         }
 
@@ -2674,9 +3818,7 @@ impl WindowTabData {
         let should_hide = match kind {
             PanelKind::Plugin
             | PanelKind::Problem
-            | PanelKind::Debug
             | PanelKind::CallHierarchy
-            | PanelKind::DocumentSymbol
             | PanelKind::References
             | PanelKind::Implementation => {
                 // Some panels don't accept focus (yet). Fall back to visibility check
@@ -2684,8 +3826,25 @@ impl WindowTabData {
                 self.panel.is_panel_visible(&kind)
             }
             PanelKind::Terminal
+            | PanelKind::Debug
             | PanelKind::SourceControl
             | PanelKind::Search
+            | PanelKind::WidgetTree
+            | PanelKind::DartOutline
+            | PanelKind::DocumentSymbol
+            | PanelKind::FlutterInspector
+            | PanelKind::FlutterRun
+            | PanelKind::FlutterTest
+            | PanelKind::DeviceManager
+            | PanelKind::FlutterPerformance
+            | PanelKind::Problems
+            | PanelKind::Logcat
+            | PanelKind::ResourceManager
+            | PanelKind::GitHistory
+            | PanelKind::Notifications
+            | PanelKind::PullRequests
+            | PanelKind::MobilePreview
+            | PanelKind::RunningDevices
             | PanelKind::FileExplorer => self.is_panel_focused(kind),
         };
         if should_hide {
@@ -2742,9 +3901,16 @@ impl WindowTabData {
     fn hide_panel(&self, kind: PanelKind) {
         self.panel.hide_panel(&kind);
         self.common.focus.set(Focus::Workbench);
+        self.common.view_id.get_untracked().request_focus();
     }
 
     pub fn show_panel(&self, kind: PanelKind) {
+        let kind = kind.canonical();
+        if kind == PanelKind::FlutterInspector {
+            if let (Some(term), Some(uri)) = (self.flutter_hot_reload.active_term.get_untracked(), self.flutter_hot_reload.ws_uri.get_untracked()) {
+                self.flutter_inspector.on_vm_url(term, uri);
+            }
+        }
         if kind == PanelKind::Terminal
             && self
                 .terminal
@@ -2760,6 +3926,21 @@ impl WindowTabData {
             );
         }
         self.panel.show_panel(&kind);
+        if kind == PanelKind::FileExplorer
+            && self.file_explorer.select.get_untracked().is_none()
+        {
+            if let Some(path) = self.workspace.path.clone() {
+                self.file_explorer
+                    .select
+                    .set(Some(sparrow_rpc::file::FileNodeViewKind::Path(path)));
+            }
+        }
+        self.common.view_id.get_untracked().request_focus();
+        if kind == PanelKind::FlutterRun {
+            if let Some(id) = self.flutter_hot_reload.active_term.get_untracked() {
+                self.terminal.focus_terminal_in_panel(id, PanelKind::FlutterRun);
+            }
+        }
         if kind == PanelKind::Search
             && self.common.focus.get_untracked() == Focus::Workbench
         {
@@ -2774,13 +3955,89 @@ impl WindowTabData {
         self.common.focus.set(Focus::Panel(kind));
     }
 
+    fn reload_flutter_after_saving(&self, restart: bool) {
+        let mut paths = HashSet::new();
+        let mut dirty = Vec::new();
+        self.main_split.editors.with_editors_untracked(|editors| {
+            for editor in editors.values() {
+                let doc = editor.doc();
+                if !doc.is_pristine() {
+                    if let Some(path) = doc.content.with_untracked(|content| content.path().cloned()) {
+                        if paths.insert(path) { dirty.push(editor.clone()); }
+                    }
+                }
+            }
+        });
+        let flutter = self.flutter_hot_reload.clone();
+        if dirty.is_empty() {
+            if restart { flutter.hot_restart(); } else { flutter.hot_reload(); }
+            return;
+        }
+        let remaining = Rc::new(std::cell::Cell::new(dirty.len()));
+        for editor in dirty {
+            let remaining = remaining.clone();
+            let flutter = flutter.clone();
+            editor.save(false, move || {
+                remaining.set(remaining.get() - 1);
+                if remaining.get() == 0 {
+                    if restart { flutter.hot_restart(); } else { flutter.hot_reload(); }
+                }
+            });
+        }
+    }
+
+    pub fn launch_selected_configuration(&self, mode: RunDebugMode) {
+        let selected = self.active_run_config_idx.get_untracked();
+        if let Some(config) = self.run_configs.with_untracked(|configs| configs.get(selected).cloned()) {
+            if let Some((term_id, _)) = self.terminal.run_debug_process(false).into_iter().find(|(_, process)| !process.stopped && process.mode == mode && process.config.name == config.name) {
+                let panel = crate::dart::run_config::console_panel(mode, &config);
+                self.show_panel(panel);
+                self.terminal.focus_terminal_in_panel(term_id, panel);
+                return;
+            }
+            self.common.internal_command.send(InternalCommand::RunAndDebug { mode, config });
+        } else {
+            self.run_config_modal_visible.set(true);
+        }
+    }
+
     fn run_and_debug(
         &self,
         cx: Scope,
         mode: &RunDebugMode,
         config: &RunDebugConfig,
     ) {
-        debug!("{:?}", config);
+        if !config.is_dart_flutter()
+            && !(config.config_source == ConfigSource::RunInTerminal
+                && *mode == RunDebugMode::Run)
+        {
+            self.show_alert("Unsupported run configuration".into(),"Sparrow runs and debugs Dart and Flutter SDK targets only. Use the Terminal for auxiliary build commands.".into(),Vec::new());
+            return;
+        }
+        let device = self.flutter_hot_reload.selected_device.get_untracked();
+        let mut prepared = crate::dart::run_config::with_selected_device(config.clone(), device.as_ref().map(|device| device.id.as_str()));
+        if let Some(workspace) = self.workspace.path.as_deref() {
+            prepared.cwd = Some(crate::dart::run_config::launch_directory(workspace, prepared.cwd.as_deref()).to_string_lossy().into_owned());
+        }
+        let root = prepared.cwd.as_deref().map(std::path::Path::new).or(self.workspace.path.as_deref());
+        let binary = match prepared.program.as_str() {
+            "dart" => crate::dart::sdk::find_dart_binary(root),
+            "flutter" => crate::dart::sdk::find_flutter_binary(root),
+            _ => None,
+        };
+        let resolve_task=|program:&str| match program {"dart"=>crate::dart::sdk::find_dart_binary(root),"flutter"=>crate::dart::sdk::find_flutter_binary(root),_=>None}.map(|p|p.to_string_lossy().into_owned());
+        let tasks=prepared.before_launch.iter().map(|task|resolve_task(&task.program)).collect::<Vec<_>>();
+        let legacy=prepared.prelaunch.as_ref().and_then(|task|resolve_task(&task.program));
+        if let Some(binary) = binary { prepared.program = binary.to_string_lossy().into_owned(); }
+        for(task,binary)in prepared.before_launch.iter_mut().zip(tasks){if let Some(binary)=binary{task.program=binary;}}
+        if let (Some(task),Some(binary))=(&mut prepared.prelaunch,legacy){task.program=binary;}
+        let attaching=prepared.args.as_ref().and_then(|args|args.first()).is_some_and(|a|a=="attach");
+        if attaching && crate::dart::run_config::is_flutter_target(&prepared){prepared.args.get_or_insert_with(Vec::new).extend(prepared.flutter_options.attach_args.clone());}
+        let remote_dart=attaching&&std::path::Path::new(&prepared.program).file_stem().is_some_and(|p|p=="dart");
+        let mode=if remote_dart{&RunDebugMode::Debug}else{mode};
+        prepared.begin_before_launch();
+        let config = &prepared;
+        debug!("Starting Dart/Flutter target: {}", config.name);
         match mode {
             RunDebugMode::Run => {
                 self.run_in_terminal(cx, mode, config, false);
@@ -2789,13 +4046,28 @@ impl WindowTabData {
                 if config.prelaunch.is_some() {
                     self.run_in_terminal(cx, mode, config, false);
                 } else {
+                    let id = sparrow_rpc::terminal::TermId::next();
+                    self.terminal.debug.adapter_sessions.update(|sessions| {
+                        sessions.insert(config.dap_id, (id, RunDebugProcess {
+                            mode: RunDebugMode::Debug, config: config.clone(), stopped: false,
+                            created: Instant::now(), is_prelaunch: false,
+                        }));
+                    });
+                    self.terminal.debug.active_dap.set(Some(config.dap_id));
+                    self.terminal.debug.active_term.set(Some(id));
+                    self.terminal.debug.daps.update(|daps| {
+                        daps.insert(config.dap_id, DapData::new(cx, config.dap_id, id, self.common.clone()));
+                    });
                     self.common.proxy.dap_start(
-                        config.clone(),
-                        self.terminal.debug.source_breakpoints(),
+                        config.clone(), self.terminal.debug.source_breakpoints(),
                     )
                 };
-                if !self.panel.is_panel_visible(&PanelKind::Debug) {
+                if config.flutter_options.activate_tool_window || config.flutter_options.focus_tool_window {
                     self.panel.show_panel(&PanelKind::Debug);
+                }
+                if config.flutter_options.focus_tool_window {
+                    self.common.focus.set(Focus::Panel(PanelKind::Debug));
+                    self.common.view_id.get_untracked().request_focus();
                 }
             }
         }
@@ -2835,8 +4107,13 @@ impl WindowTabData {
             );
             new_terminal_tab.active_terminal(false).unwrap().term_id
         };
-        self.common.focus.set(Focus::Panel(PanelKind::Terminal));
-        self.terminal.focus_terminal(term_id);
+        if *mode == RunDebugMode::Run && crate::dart::run_config::is_flutter_run(config) {
+            self.flutter_hot_reload.active_term.set(Some(term_id));
+        }
+        let console_panel = crate::dart::run_config::console_panel(*mode, config);
+        if config.flutter_options.focus_tool_window {
+            self.terminal.focus_terminal_in_panel(term_id, console_panel);
+        }
 
         self.terminal.debug.active_term.set(Some(term_id));
         self.terminal.debug.daps.update(|daps| {
@@ -2846,9 +4123,10 @@ impl WindowTabData {
             );
         });
 
-        if !self.panel.is_panel_visible(&PanelKind::Terminal) {
-            self.panel.show_panel(&PanelKind::Terminal);
+        if config.flutter_options.activate_tool_window || config.flutter_options.focus_tool_window {
+            self.panel.show_panel(&console_panel);
         }
+
     }
 
     pub fn open_paths(&self, paths: &[PathObject]) {
@@ -2893,6 +4171,7 @@ impl WindowTabData {
     }
 
     pub fn show_alert(&self, title: String, msg: String, buttons: Vec<AlertButton>) {
+        crate::panel::workflow_tools::record(self.notifications, &title, &msg);
         self.alert_data.title.set(title);
         self.alert_data.msg.set(msg);
         self.alert_data.buttons.set(buttons);
@@ -2932,6 +4211,11 @@ impl WindowTabData {
     }
 
     fn show_message(&self, title: &str, message: &ShowMessageParams) {
+        crate::panel::workflow_tools::record(
+            self.notifications,
+            title,
+            &message.message,
+        );
         self.messages.update(|messages| {
             messages.push((title.to_string(), message.clone()));
         });
@@ -2992,7 +4276,7 @@ impl WindowTabData {
                                 for range in x.from_ranges {
                                     item_children.push(scope.create_rw_signal(
                                         CallHierarchyItemData {
-                                            view_id: floem::ViewId::new(),
+                                            view_id: ViewId::new(),
                                             item: item.clone(),
                                             from_range: range,
                                             init: false,
@@ -3012,7 +4296,7 @@ impl WindowTabData {
                         }
                     }
                     Err(err) => {
-                        tracing::error!("{:?}", err);
+                        error!("{:?}", err);
                     }
                     Ok(_) => {}
                 }
@@ -3022,6 +4306,326 @@ impl WindowTabData {
             item.get_untracked().item.as_ref().clone(),
             send,
         );
+    }
+
+    fn apply_android_studio_layout(&self) {
+        let values: Vec<(&str, &str, toml_edit::Value)> = vec![
+            ("core", "color-theme", "Islands Dark".into()),
+            ("core", "icon-theme", "sparrow Modern".into()),
+            ("ui", "font-family", "Inter, Noto Sans, sans-serif".into()),
+            ("ui", "font-size", 13.into()),
+            ("ui", "icon-size", 16.into()),
+            ("ui", "header-height", 32.into()),
+            ("ui", "status-height", 24.into()),
+            ("ui", "tool-window-stripe-width", 35.into()),
+            ("ui", "list-line-height", 22.into()),
+            ("ui", "scroll-width", 8.into()),
+            ("ui", "open-editors-visible", false.into()),
+            ("ui", "rounded-corners", true.into()),
+            (
+                "editor",
+                "font-family",
+                "JetBrains Mono, Noto Sans Mono, monospace".into(),
+            ),
+            ("editor", "font-size", 14.into()),
+            ("editor", "line-height", 1.5.into()),
+            ("terminal", "font-family", "JetBrains Mono, Noto Sans Mono, monospace".into()),
+            ("terminal", "font-size", 13.into()),
+            ("terminal", "line-height", 1.4.into()),
+        ];
+        for (section, key, value) in values {
+            if SparrowConfig::update_file(section, key, value).is_none() {
+                self.show_alert(
+                    "Appearance".into(),
+                    "Could not save appearance settings.".into(),
+                    Vec::new(),
+                );
+                return;
+            }
+        }
+        self.reload_config();
+        let available = self.common.workbench_size.get_untracked();
+        self.panel.size.update(|size| {
+            size.left = 400.0_f64.min((available.width * 0.4).max(150.0));
+            size.right =
+                (self.layout_rect.get_untracked().width() * 0.243).max(250.0);
+            size.bottom = (self.layout_rect.get_untracked().height() * 342.0
+                / 1048.0)
+                .max(150.0);
+        });
+        self.panel
+            .panels
+            .set(crate::panel::data::default_panel_order());
+        self.panel.styles.update(|styles| {
+            for (_, style) in styles.iter_mut() {
+                style.shown = false;
+                style.maximized = false;
+            }
+        });
+        self.panel.show_panel(&PanelKind::FileExplorer);
+        if self.flutter_hot_reload.state.get_untracked()
+            == crate::dart::FlutterRunState::Running
+        {
+            self.panel.show_panel(&PanelKind::FlutterRun);
+        }
+    }
+
+    pub fn open_devtools(&self, page: crate::dart::devtools::DevToolsPage) {
+        if self.workspace.kind != SparrowWorkspaceType::Local {
+            self.show_alert(
+                "DevTools".into(),
+                "DevTools currently requires a local workspace.".into(),
+                Vec::new(),
+            );
+            return;
+        }
+        let vm = self.flutter_hot_reload.ws_uri.get_untracked().or_else(|| {
+            self.flutter_inspector
+                .vm_url
+                .get_untracked()
+                .map(|(_, url)| url)
+        });
+        self.devtools.open(self.workspace.path.clone(), vm, page);
+        self.show_panel(PanelKind::FlutterPerformance);
+    }
+
+    fn run_test_at_cursor(&self, debug: bool) {
+        use crate::dart::test_runner;
+
+        let Some(editor) = self.main_split.active_editor.get_untracked() else {
+            return;
+        };
+        let doc = editor.doc();
+        let Some(path) = doc.content.with_untracked(|c| c.path().cloned()) else {
+            return;
+        };
+        if !test_runner::is_test_file(&path) {
+            return;
+        }
+        let source = doc.buffer.with_untracked(|b| b.to_string());
+        let offset = editor.cursor().with_untracked(|c| c.offset());
+
+        let Some(test) = test_runner::find_test_at_offset(&source, offset) else {
+            self.show_alert(
+                "No test found".to_string(),
+                "Place the cursor inside a `test(...)` or `testWidgets(...)` block."
+                    .to_string(),
+                Vec::new(),
+            );
+            return;
+        };
+
+        self.prepare_flutter_tests(vec![(path, test.name)], debug, false);
+    }
+
+    fn rerun_flutter_tests(&self, failed_only: bool) {
+        let targets = if failed_only {
+            self.flutter_test.run.with_untracked(|r| r.failed_targets())
+        } else {
+            self.flutter_test.last_targets.get_untracked()
+        };
+        self.prepare_flutter_tests(
+            targets,
+            false,
+            failed_only || self.flutter_test.last_exact.get_untracked(),
+        );
+    }
+
+    fn resolve_workspace_dependencies(&self) {
+        let Some(root) = self.workspace.path.clone() else {
+            return;
+        };
+        let notifications = self.notifications;
+        if self.workspace.kind != SparrowWorkspaceType::Local {
+            crate::panel::workflow_tools::record(
+                notifications,
+                "Pub Get",
+                "Package resolution currently requires a local workspace.",
+            );
+            return;
+        }
+        // Read the current manifests only after every dirty manifest has been
+        // saved. Other editor buffers do not need saving for dependency resolution.
+        let manifests = self.main_split.docs.with_untracked(|docs| {
+            docs.values()
+                .filter(|doc| {
+                    doc.content.with_untracked(|content| {
+                        content.path().is_some_and(|path| {
+                            path.parent() == Some(root.as_path())
+                                && matches!(
+                                    path.file_name().and_then(|name| name.to_str()),
+                                    Some("pubspec.yaml" | "pubspec_overrides.yaml")
+                                )
+                        })
+                    }) && !doc.is_pristine()
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let scope = self.scope;
+        save_dependency_manifests(
+            manifests,
+            Box::new(move |result| {
+                if let Err(error) = result {
+                    crate::panel::workflow_tools::record(
+                        notifications,
+                        "Pub Get",
+                        &format!(
+                            "Could not save dependency manifests. Package resolution was not started.\n{error}"
+                        ),
+                    );
+                    return;
+                }
+                let send =
+                    create_ext_action(scope, move |(id, result): (u64, Result<(), String>)| {
+                        crate::panel::workflow_tools::record_pub_get_result(
+                            notifications,
+                            id,
+                            result,
+                        );
+                    });
+                let request = crate::dart::bootstrap::run_pub_get_observed(
+                    &root,
+                    Some(Box::new(move |id, result| send((id, result)))),
+                );
+                crate::panel::workflow_tools::record(
+                    notifications,
+                    "Pub Get",
+                    if request.joined {
+                        "Package resolution is already running; waiting for its result."
+                    } else {
+                        "Resolving package dependencies…"
+                    },
+                );
+            }),
+        );
+    }
+
+    fn prepare_flutter_tests(
+        &self,
+        targets: Vec<(PathBuf, String)>,
+        debug: bool,
+        exact: bool,
+    ) {
+        if self.flutter_test.run.with_untracked(|r| r.running) || targets.is_empty()
+        {
+            return;
+        }
+        if self.workspace.kind != SparrowWorkspaceType::Local {
+            self.show_alert(
+                "Flutter Test".into(),
+                "Flutter tests currently require a local workspace.".into(),
+                Vec::new(),
+            );
+            return;
+        }
+        if targets
+            .iter()
+            .any(|(path, _)| !crate::dart::test_runner::is_test_file(path))
+        {
+            return;
+        }
+        // Save all edited files before starting, including implementation files
+        // used by the tests. A failed save never launches stale code.
+        let dirty = self.main_split.docs.with_untracked(|docs| {
+            docs.values()
+                .filter(|doc| !doc.buffer.with_untracked(|b| b.is_pristine()))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        let internal = self.common.internal_command;
+        let remaining = Rc::new(std::cell::Cell::new(dirty.len()));
+        if dirty.is_empty() {
+            internal.send(InternalCommand::FlutterStartTests {
+                targets,
+                debug,
+                exact,
+            });
+        } else {
+            for doc in dirty {
+                let remaining = remaining.clone();
+                let targets = targets.clone();
+                doc.save(move || {
+                    remaining.set(remaining.get() - 1);
+                    if remaining.get() == 0 {
+                        internal.send(InternalCommand::FlutterStartTests {
+                            targets,
+                            debug,
+                            exact,
+                        });
+                    }
+                });
+            }
+        }
+    }
+
+    fn start_flutter_tests(
+        &self,
+        targets: Vec<(PathBuf, String)>,
+        debug: bool,
+        exact: bool,
+    ) {
+        if self.flutter_test.run.with_untracked(|r| r.running) {
+            return;
+        }
+        if debug {
+            let Some((path, name)) = targets.first() else {
+                return;
+            };
+            let root = crate::dart::test_runner::project_root(path);
+            let Some(flutter) =
+                crate::dart::sdk::find_flutter_binary(root.as_deref())
+            else {
+                self.show_alert(
+                    "Flutter SDK not found".into(),
+                    "Configure a Flutter SDK before debugging tests.".into(),
+                    Vec::new(),
+                );
+                return;
+            };
+            let config = RunDebugConfig {
+                ty: Some("flutter-test".into()),
+                name: format!("Debug Test: {name}"),
+                program: path.display().to_string(),
+                args: Some(if name.is_empty() {
+                    vec![]
+                } else {
+                    vec!["--plain-name".into(), name.clone()]
+                }),
+                cwd: root.map(|p| p.display().to_string()),
+                env: None,
+                prelaunch: None,
+                before_launch: Vec::new(),
+                store_in_project: false,
+                flutter_options: Default::default(),
+                debug_adapter: Some(sparrow_rpc::dap_types::RunDebugProgram {
+                    program: flutter.display().to_string(),
+                    args: Some(vec!["debug-adapter".into(), "--test".into()]),
+                }),
+                debug_command: None,
+                dap_id: Default::default(),
+                tracing_output: false,
+                config_source: Default::default(),
+            };
+            self.terminal.debug.active_dap.set(Some(config.dap_id));
+            self.terminal.debug.daps.update(|daps| {
+                daps.insert(
+                    config.dap_id,
+                    DapData::new(
+                        self.scope,
+                        config.dap_id,
+                        TermId::next(),
+                        self.common.clone(),
+                    ),
+                );
+            });
+            self.flutter_test.begin_debug(config.dap_id, targets);
+            self.show_panel(PanelKind::FlutterTest);
+            self.run_and_debug(self.scope, &RunDebugMode::Debug, &config);
+        } else {
+            self.flutter_test.start(targets, exact);
+            self.show_panel(PanelKind::FlutterTest);
+        }
     }
 }
 
@@ -3035,4 +4639,18 @@ fn open_uri(path: &Path) {
             error!("failed to open active file: {path:?}, error: {e}");
         }
     }
+}
+
+fn save_dependency_manifests(
+    mut docs: Vec<Rc<crate::doc::Doc>>,
+    complete: Box<dyn FnOnce(Result<(), String>)>,
+) {
+    let Some(doc) = docs.pop() else {
+        complete(Ok(()));
+        return;
+    };
+    doc.save_with_result(move |result| match result {
+        Ok(()) => save_dependency_manifests(docs, complete),
+        Err(error) => complete(Err(error)),
+    });
 }

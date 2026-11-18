@@ -37,6 +37,13 @@ impl SparrowColor {
         "sparrow.tab.active.background";
     pub const SPARROW_TAB_ACTIVE_FOREGROUND: &'static str =
         "sparrow.tab.active.foreground";
+    pub const SPARROW_WINDOW_BACKGROUND: &'static str = "sparrow.window.background";
+    pub const SPARROW_RUN_ICON: &'static str = "sparrow.run.icon";
+    pub const SPARROW_DEBUG_ICON: &'static str = "sparrow.debug.icon";
+    pub const SPARROW_HOT_RELOAD_ICON: &'static str = "sparrow.hot_reload.icon";
+    pub const SPARROW_HOT_RESTART_ICON: &'static str = "sparrow.hot_restart.icon";
+    pub const SPARROW_STOP_ICON: &'static str = "sparrow.stop.icon";
+    pub const SPARROW_TAB_ACTIVE_BORDER: &'static str = "sparrow.tab.active.border";
     pub const SPARROW_TAB_ACTIVE_UNDERLINE: &'static str =
         "sparrow.tab.active.underline";
 
@@ -58,11 +65,6 @@ impl SparrowColor {
     pub const SPARROW_REMOTE_CONNECTING: &'static str = "sparrow.remote.connecting";
     pub const SPARROW_REMOTE_DISCONNECTED: &'static str =
         "sparrow.remote.disconnected";
-
-    pub const SPARROW_PLUGIN_NAME: &'static str = "sparrow.plugin.name";
-    pub const SPARROW_PLUGIN_DESCRIPTION: &'static str =
-        "sparrow.plugin.description";
-    pub const SPARROW_PLUGIN_AUTHOR: &'static str = "sparrow.plugin.author";
 
     pub const EDITOR_BACKGROUND: &'static str = "editor.background";
     pub const EDITOR_FOREGROUND: &'static str = "editor.foreground";

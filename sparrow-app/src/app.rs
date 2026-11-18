@@ -1,10 +1,11 @@
+use crate::popup_menu::show_context_menu;
+use crate::popup_menu::{Menu, MenuItem};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::{
     io::{BufReader, IsTerminal, Read, Write},
     ops::Range,
     path::PathBuf,
-    process::Stdio,
     rc::Rc,
     sync::{
         Arc,
@@ -13,14 +14,62 @@ use std::{
     },
 };
 
+use crate::debug::{debug_floating_toolbar, run_config_modal};
+use crate::title::{branch_switcher, device_selector_overlay, project_switcher};
+use crate::{
+    about, alert,
+    command::{
+        CommandKind, InternalCommand, SparrowCommand, SparrowWorkbenchCommand,
+        WindowCommand,
+    },
+    config::{
+        SparrowConfig, color::SparrowColor, icon::SparrowIcons,
+        ui::TabSeparatorHeight, watcher::ConfigWatcher,
+    },
+    db::SparrowDb,
+    debug::RunDebugMode,
+    editor::{
+        diff::diff_show_more_section_view,
+        location::{EditorLocation, EditorPosition},
+        view::editor_container_view,
+    },
+    editor_tab::{EditorTabChild, EditorTabData},
+    focus_text::focus_text,
+    id::{EditorTabId, SplitId},
+    keymap::keymap_view,
+    keypress::keymap::KeyMap,
+    listener::Listener,
+    main_split::{
+        SplitContent, SplitData, SplitDirection, SplitMoveDirection, TabCloseKind,
+    },
+    markdown::MarkdownContent,
+    palette::{
+        PaletteStatus,
+        item::{PaletteItem, PaletteItemContent},
+    },
+    panel::{
+        position::PanelContainerPosition,
+        view::{
+            ISLAND_RADIUS, island_corners, panel_container_view, tool_window_stripe,
+        },
+    },
+    plugin::{PluginData, plugin_info_view},
+    settings::{settings_view, theme_color_settings_view},
+    status::status,
+    text_input::TextInputBuilder,
+    title::{title, window_controls_view},
+    tracing::*,
+    update::ReleaseInfo,
+    window::{TabsInfo, WindowData, WindowInfo},
+    window_tab::{Focus, WindowTabData},
+    workspace::{SparrowWorkspace, SparrowWorkspaceType},
+};
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
-use floem::{
+pub(crate) use floem::{
     IntoView, View,
-    action::show_context_menu,
     event::{Event, EventListener, EventPropagation},
     ext_event::{create_ext_action, create_signal_from_channel},
-    menu::{Menu, MenuItem},
     peniko::{
         Color,
         kurbo::{Point, Rect, Size},
@@ -53,6 +102,7 @@ use floem::{
 use lsp_types::{CompletionItemKind, MessageType, ShowMessageParams};
 use notify::Watcher;
 use serde::{Deserialize, Serialize};
+use sparrow_core::command::MultiSelectionCommand;
 use sparrow_core::{
     command::{EditCommand, FocusCommand},
     directory::Directory,
@@ -66,59 +116,16 @@ use sparrow_rpc::{
 };
 use tracing_subscriber::{filter::Targets, reload::Handle};
 
-use crate::{
-    about, alert,
-    code_action::CodeActionStatus,
-    command::{
-        CommandKind, InternalCommand, SparrowCommand, SparrowWorkbenchCommand,
-        WindowCommand,
-    },
-    config::{
-        SparrowConfig, color::SparrowColor, icon::SparrowIcons,
-        ui::TabSeparatorHeight, watcher::ConfigWatcher,
-    },
-    db::SparrowDb,
-    debug::RunDebugMode,
-    editor::{
-        diff::diff_show_more_section_view,
-        location::{EditorLocation, EditorPosition},
-        view::editor_container_view,
-    },
-    editor_tab::{EditorTabChild, EditorTabData},
-    focus_text::focus_text,
-    id::{EditorTabId, SplitId},
-    keymap::keymap_view,
-    keypress::keymap::KeyMap,
-    listener::Listener,
-    main_split::{
-        SplitContent, SplitData, SplitDirection, SplitMoveDirection, TabCloseKind,
-    },
-    markdown::MarkdownContent,
-    palette::{
-        PaletteStatus,
-        item::{PaletteItem, PaletteItemContent},
-    },
-    panel::{position::PanelContainerPosition, view::panel_container_view},
-    plugin::{PluginData, plugin_info_view},
-    settings::{settings_view, theme_color_settings_view},
-    status::status,
-    text_input::TextInputBuilder,
-    title::{title, window_controls_view},
-    tracing::*,
-    update::ReleaseInfo,
-    window::{TabsInfo, WindowData, WindowInfo},
-    window_tab::{Focus, WindowTabData},
-    workspace::{SparrowWorkspace, SparrowWorkspaceType},
-};
-
 mod grammars;
 mod logging;
 
 #[derive(Parser)]
-#[clap(name = "Lparrow")]
+#[clap(name = "Sparrow", about = "Native Dart and Flutter IDE")]
 #[clap(version=meta::VERSION)]
 #[derive(Debug)]
 struct Cli {
+    #[clap(long,hide=true)]
+    run_config_task: Option<String>,
     /// Launch new window even if sparrow is already running
     #[clap(short, long, action)]
     new: bool,
@@ -126,12 +133,13 @@ struct Cli {
     #[clap(short, long, action)]
     wait: bool,
 
-    /// Path(s) to plugins to load.
-    ///
-    /// This is primarily used for plugin development to make it easier to test changes to the
-    /// plugin without needing to copy the plugin to the plugins directory.
-    /// This will cause any plugin with the same author & name to not run.
-    #[clap(long, action)]
+    /// Additional local color/icon theme package directories.
+    #[clap(
+        long = "theme-path",
+        alias = "plugin-path",
+        value_name = "THEME_PATH",
+        action
+    )]
     plugin_path: Vec<PathBuf>,
 
     /// Paths to file(s) and/or folder(s) to open.
@@ -507,6 +515,7 @@ impl AppData {
         let config = window_data.config;
         // The KeyDown and PointerDown event handlers both need ownership of a WindowData object.
         let key_down_window_data = window_data.clone();
+        let key_up_window_data = window_data.clone();
         let view = stack((
             workspace_tab_header(window_data.clone()),
             window(window_data.clone()),
@@ -618,12 +627,64 @@ impl AppData {
 
         view.window_scale(move || window_scale.get())
             .keyboard_navigable()
+            .on_event(EventListener::KeyUp, move |event| {
+                // Floem sends keys directly to the focused field, without
+                // bubbling to its modal. Escape clears text-input focus on
+                // key-down; dismiss the topmost configuration modal on key-up.
+                if let Event::KeyUp(key) = event {
+                    if key.key.logical_key
+                        == floem::keyboard::Key::Named(
+                            floem::keyboard::NamedKey::Escape,
+                        )
+                    {
+                        if crate::modal_focus::consume_popup_escape()
+                            || crate::modal_focus::external_dialog_active()
+                        {
+                            return EventPropagation::Stop;
+                        }
+                        let active = key_up_window_data.active.get_untracked();
+                        if let Some((_, tab)) = key_up_window_data
+                            .window_tabs
+                            .with_untracked(|tabs| tabs.get(active).cloned())
+                        {
+                            let modal = if tab.settings_modal_visible.get_untracked()
+                            {
+                                Some(tab.settings_modal_visible)
+                            } else if tab.run_config_modal_visible.get_untracked() {
+                                Some(tab.run_config_modal_visible)
+                            } else if tab.flutter_project.active.get_untracked()
+                                && !tab.flutter_project.is_busy()
+                            {
+                                Some(tab.flutter_project.active)
+                            } else if tab.file_refactor.active.get_untracked()&&!tab.file_refactor.is_busy(){Some(tab.file_refactor.active)
+                            } else if tab.scaffold.active.get_untracked(){Some(tab.scaffold.active)
+                            } else if tab.formatting.active.get_untracked()&&!tab.formatting.is_busy(){Some(tab.formatting.active)
+                            } else if tab.project_search.active.get_untracked()&&!tab.project_search.is_busy(){Some(tab.project_search.active)
+                            } else if tab.git_actions.active.get_untracked()&&!tab.git_actions.is_busy(){Some(tab.git_actions.active)
+                            } else {
+                                None
+                            };
+                            if modal.is_none()&&tab.git_actions.active.get_untracked(){tab.git_actions.cancel_command();return EventPropagation::Stop;}
+                            if let Some(modal) = modal {
+                                modal.set(false);
+                                view_id.request_focus();
+                                return EventPropagation::Stop;
+                            }
+                        }
+                    }
+                }
+                EventPropagation::Continue
+            })
             .on_event(EventListener::KeyDown, move |event| {
                 if let Event::KeyDown(key_event) = event {
                     if key_down_window_data.key_down(key_event) {
                         view_id.request_focus();
+                        EventPropagation::Stop
+                    } else {
+                        // Let native inputs and Floem handle unbound keys,
+                        // especially Tab/Shift+Tab focus navigation in dialogs.
+                        EventPropagation::Continue
                     }
-                    EventPropagation::Stop
                 } else {
                     EventPropagation::Continue
                 }
@@ -696,7 +757,8 @@ fn editor_tab_header(
     let focus = window_tab_data.common.focus;
     let config = window_tab_data.common.config;
     let internal_command = window_tab_data.common.internal_command;
-    let workbench_command = window_tab_data.common.workbench_command;
+    let tab_commands = window_tab_data.common.sparrow_command;
+    let tab_focus = window_tab_data.main_split.active_editor_tab;
     let editor_tab_id =
         editor_tab.with_untracked(|editor_tab| editor_tab.editor_tab_id);
 
@@ -833,6 +895,13 @@ fn editor_tab_header(
                             end: style_helpers::span(1),
                         })
                     })
+                    .color(config.get().color(
+                        if editor_tab_active.get() == i.get() {
+                            SparrowColor::SPARROW_TAB_ACTIVE_FOREGROUND
+                        } else {
+                            SparrowColor::SPARROW_TAB_INACTIVE_FOREGROUND
+                        },
+                    ))
                     .apply_if(tab_close_button == TabCloseButton::Off, |s| {
                         s.padding_right(4.)
                     })
@@ -851,10 +920,7 @@ fn editor_tab_header(
             .style(move |s| {
                 s.items_center()
                     .justify_center()
-                    .border_left(if i.get() == 0 { 1.0 } else { 0.0 })
-                    .border_right(1.0)
-                    .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-                    .padding_horiz(6.)
+                    .padding_horiz(10.)
                     .gap(6.)
                     .grid()
                     .grid_template_columns(vec![auto(), fr(1_f32), auto()])
@@ -914,10 +980,41 @@ fn editor_tab_header(
                     let editor_tab_id =
                         editor_tab.with_untracked(|t| t.editor_tab_id);
 
+                    let index = i.get_untracked();
+                    tab_focus.set(Some(editor_tab_id));
+                    focus.set(Focus::Workbench);
+                    editor_tab.update(|tab| tab.active = index);
+                    let count = editor_tab.with_untracked(|tab| tab.children.len());
+                    let path = match &child_for_mouse_close_2 {
+                        EditorTabChild::Editor(id) => {
+                            editors.editor_untracked(*id).and_then(|editor| {
+                                editor.doc().content.with_untracked(|content| {
+                                    content.path().cloned()
+                                })
+                            })
+                        }
+                        _ => None,
+                    };
+                    let root = path
+                        .as_ref()
+                        .and_then(|_| {
+                            editors.editor_untracked(
+                                match &child_for_mouse_close_2 {
+                                    EditorTabChild::Editor(id) => *id,
+                                    _ => unreachable!(),
+                                },
+                            )
+                        })
+                        .and_then(|editor| editor.common.workspace.path.clone());
                     tab_secondary_click(
                         internal_command,
+                        tab_commands,
                         editor_tab_id,
                         child_for_mouse_close_2.clone(),
+                        index,
+                        count,
+                        path,
+                        root,
                     );
                 })
                 .on_event_stop(EventListener::DragStart, move |_| {
@@ -932,39 +1029,15 @@ fn editor_tab_header(
                 .draggable()
                 .dragging_style(move |s| {
                     let config = config.get();
-                    s.border(1.0)
-                        .border_radius(6.0)
-                        .background(
-                            config
-                                .color(SparrowColor::PANEL_BACKGROUND)
-                                .multiply_alpha(0.7),
-                        )
-                        .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                    s.border_radius(6.0).background(
+                        config
+                            .color(SparrowColor::PANEL_BACKGROUND)
+                            .multiply_alpha(0.7),
+                    )
                 })
                 .style(|s| {
                     s.align_items(Some(AlignItems::Center)).flex_grow(1.0f32)
                 }),
-            empty()
-                .style(move |s| {
-                    s.size_full()
-                        .border_bottom(if editor_tab_active.get() == i.get() {
-                            2.0
-                        } else {
-                            0.0
-                        })
-                        .border_color(config.get().color(if is_focused() {
-                            SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE
-                        } else {
-                            SparrowColor::SPARROW_TAB_INACTIVE_UNDERLINE
-                        }))
-                })
-                .style(|s| {
-                    s.absolute()
-                        .padding_horiz(3.0)
-                        .size_full()
-                        .pointer_events_none()
-                })
-                .debug_name("Drop Indicator"),
             empty()
                 .style(move |s| {
                     let i = i.get();
@@ -1002,13 +1075,34 @@ fn editor_tab_header(
         })
         .style(move |s| {
             let config = config.get();
-            s.height_full()
+            let active = editor_tab_active.get() == i.get();
+            let border = config.color(SparrowColor::SPARROW_TAB_ACTIVE_BORDER);
+
+            // Islands look: the active tab is a rounded pill with a thin blue outline,
+            // inactive tabs are plain text.
+            s.height((config.ui.header_height() as f32 - 8.0).max(24.0))
+                .margin_horiz(2.0)
                 .flex_col()
                 .items_center()
                 .justify_center()
+                .border_radius(if config.ui.rounded_corners { 4.0 } else { 0.0 })
                 .cursor(CursorStyle::Pointer)
+                .background(config.color(if active {
+                    SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND
+                } else {
+                    SparrowColor::SPARROW_TAB_INACTIVE_BACKGROUND
+                }))
+                .apply_if(active, |s| {
+                    s.border(1.0).border_color(if is_focused() {
+                        border
+                    } else {
+                        border.multiply_alpha(0.5)
+                    })
+                })
                 .hover(|s| {
-                    s.background(config.color(SparrowColor::HOVER_BACKGROUND))
+                    s.background(
+                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
                 })
         })
         .debug_name("Tab and Active Indicator")
@@ -1054,57 +1148,24 @@ fn editor_tab_header(
     stack((
         stack({
             let size = create_rw_signal(Size::ZERO);
-            (
-                clip(empty().style(move |s| {
-                    let config = config.get();
-                    s.absolute()
-                        .height_full()
-                        .width(size.get().width as f32)
-                        .background(config.color(SparrowColor::PANEL_BACKGROUND))
-                        .box_shadow_blur(3.0)
-                        .box_shadow_color(
-                            config.color(SparrowColor::SPARROW_DROPDOWN_SHADOW),
-                        )
-                }))
-                .style(move |s| {
-                    let scroll_offset = scroll_offset.get();
-                    s.absolute()
-                        .width(size.get().width as f32 + 30.0)
-                        .height_full()
-                        .apply_if(scroll_offset.x0 == 0.0, |s| s.hide())
-                }),
-                stack((
-                    clickable_icon(
-                        || SparrowIcons::TAB_PREVIOUS,
-                        move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::PreviousEditorTab);
-                        },
-                        || false,
-                        || false,
-                        || "Previous Tab",
-                        config,
+            (clip(empty().style(move |s| {
+                let config = config.get();
+                s.absolute()
+                    .height_full()
+                    .width(size.get().width as f32)
+                    .background(config.color(SparrowColor::PANEL_BACKGROUND))
+                    .box_shadow_blur(3.0)
+                    .box_shadow_color(
+                        config.color(SparrowColor::SPARROW_DROPDOWN_SHADOW),
                     )
-                    .style(|s| s.margin_horiz(6.0).margin_vert(7.0)),
-                    clickable_icon(
-                        || SparrowIcons::TAB_NEXT,
-                        move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::NextEditorTab);
-                        },
-                        || false,
-                        || false,
-                        || "Next Tab",
-                        config,
-                    )
-                    .style(|s| s.margin_right(6.0)),
-                ))
-                .on_resize(move |rect| {
-                    size.set(rect.size());
-                })
-                .debug_name("Next/Previoius Tab Buttons")
-                .style(move |s| s.items_center()),
-            )
+            }))
+            .style(move |s| {
+                let scroll_offset = scroll_offset.get();
+                s.absolute()
+                    .width(size.get().width as f32 + 30.0)
+                    .height_full()
+                    .apply_if(scroll_offset.x0 == 0.0, |s| s.hide())
+            }),)
         })
         .style(|s| s.flex_shrink(0f32)),
         container(
@@ -1171,6 +1232,7 @@ fn editor_tab_header(
                         })
                 }),
                 stack((
+                    crate::markdown_preview::toolbar(window_tab_data.clone()),
                     clickable_icon(
                         || SparrowIcons::SPLIT_HORIZONTAL,
                         move || {
@@ -1187,21 +1249,6 @@ fn editor_tab_header(
                         config,
                     )
                     .style(|s| s.margin_left(6.0)),
-                    clickable_icon(
-                        || SparrowIcons::CLOSE,
-                        move || {
-                            let editor_tab_id =
-                                editor_tab.with_untracked(|t| t.editor_tab_id);
-                            internal_command.send(InternalCommand::EditorTabClose {
-                                editor_tab_id,
-                            });
-                        },
-                        || false,
-                        || false,
-                        || "Close All",
-                        config,
-                    )
-                    .style(|s| s.margin_horiz(6.0)),
                 ))
                 .on_resize(move |rect| {
                     size.set(rect.size());
@@ -1224,10 +1271,11 @@ fn editor_tab_header(
     .style(move |s| {
         let config = config.get();
         s.items_center()
+            .padding_horiz(4.0)
             .max_width_full()
             .border_bottom(1.0)
-            .border_color(config.color(SparrowColor::SPARROW_BORDER))
-            .background(config.color(SparrowColor::PANEL_BACKGROUND))
+            .border_color(config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND))
+            .background(config.color(SparrowColor::EDITOR_BACKGROUND))
             .height(config.ui.header_height() as i32)
     })
     .debug_name("Editor Tab Header")
@@ -2051,7 +2099,8 @@ fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
     let plugin = window_tab_data.plugin.clone();
     let dragging: RwSignal<Option<(RwSignal<usize>, EditorTabId)>> =
         create_rw_signal(None);
-    split_list(
+    let hidden_panel = panel.clone();
+    let split = split_list(
         root_split,
         window_tab_data.clone(),
         plugin.clone(),
@@ -2059,16 +2108,27 @@ fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
     )
     .style(move |s| {
         let config = config.get();
-        let is_hidden = panel.panel_bottom_maximized(true)
-            && panel.is_container_shown(&PanelContainerPosition::Bottom, true);
         s.border_color(config.color(SparrowColor::SPARROW_BORDER))
             .background(config.color(SparrowColor::EDITOR_BACKGROUND))
-            .apply_if(is_hidden, |s| s.display(Display::None))
-            .width_full()
-            .flex_grow(1.0f32)
-            .flex_basis(0.0)
+            .size_full()
     })
-    .debug_name("Main Split")
+    .debug_name("Main Split");
+
+    // Islands look: the editor area is a rounded island.
+    stack((split, island_corners(config)))
+        .style(move |s| {
+            let config = config.get();
+            let is_hidden = hidden_panel.panel_bottom_maximized(true)
+                && hidden_panel
+                    .is_container_shown(&PanelContainerPosition::Bottom, true);
+            s.background(config.color(SparrowColor::EDITOR_BACKGROUND))
+                .border_radius(ISLAND_RADIUS)
+                .apply_if(is_hidden, |s| s.display(Display::None))
+                .width_full()
+                .flex_grow(1.0f32)
+                .flex_basis(0.0)
+        })
+        .debug_name("Editor Island")
 }
 
 pub fn not_clickable_icon<S: std::fmt::Display + 'static>(
@@ -2132,6 +2192,8 @@ pub fn clickable_icon_base(
     .style(move |s| {
         let config = config.get();
         s.padding(4.0)
+            .items_center()
+            .justify_center()
             .border_radius(6.0)
             .border(1.0)
             .border_color(Color::TRANSPARENT)
@@ -2184,6 +2246,7 @@ fn tooltip_tip<V: View + 'static>(
         s.padding_horiz(10.0)
             .padding_vert(5.0)
             .font_size(config.ui.font_size() as f32)
+            .line_height(1.4)
             .font_family(config.ui.font_family.clone())
             .color(config.color(SparrowColor::TOOLTIP_FOREGROUND))
             .background(config.color(SparrowColor::TOOLTIP_BACKGROUND))
@@ -2201,25 +2264,45 @@ fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
     let workbench_size = window_tab_data.common.workbench_size;
     let main_split_width = window_tab_data.main_split.width;
     stack((
-        panel_container_view(window_tab_data.clone(), PanelContainerPosition::Left),
-        {
-            let window_tab_data = window_tab_data.clone();
+        tool_window_stripe(window_tab_data.clone(), true),
+        stack((
             stack((
-                main_split(window_tab_data.clone()),
                 panel_container_view(
-                    window_tab_data,
-                    PanelContainerPosition::Bottom,
+                    window_tab_data.clone(),
+                    PanelContainerPosition::Left,
+                ),
+                main_split(window_tab_data.clone()).on_resize(move |rect| {
+                    let width = rect.width();
+                    if main_split_width.get_untracked() != width {
+                        main_split_width.set(width);
+                    }
+                }),
+                panel_container_view(
+                    window_tab_data.clone(),
+                    PanelContainerPosition::Right,
                 ),
             ))
-            .on_resize(move |rect| {
-                let width = rect.size().width;
-                if main_split_width.get_untracked() != width {
-                    main_split_width.set(width);
-                }
-            })
-            .style(|s| s.flex_col().flex_grow(1.0f32))
-        },
-        panel_container_view(window_tab_data.clone(), PanelContainerPosition::Right),
+            .style(|s| {
+                s.width_full()
+                    .flex_grow(1.0_f32)
+                    .flex_basis(0.0)
+                    .min_height(0.0)
+                    .gap(3.0)
+            }),
+            panel_container_view(
+                window_tab_data.clone(),
+                PanelContainerPosition::Bottom,
+            ),
+        ))
+        .style(|s| {
+            s.height_full()
+                .flex_col()
+                .flex_grow(1.0_f32)
+                .flex_basis(0.0)
+                .min_width(0.0)
+                .gap(3.0)
+        }),
+        tool_window_stripe(window_tab_data.clone(), false),
         window_message_view(window_tab_data.messages, window_tab_data.common.config),
     ))
     .on_resize(move |rect| {
@@ -2228,7 +2311,7 @@ fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
             workbench_size.set(size);
         }
     })
-    .style(move |s| s.size_full())
+    .style(move |s| s.size_full().gap(0.0).padding_bottom(2.0))
     .debug_name("Workbench")
 }
 
@@ -2603,7 +2686,7 @@ fn palette_item(
 
             let (svg_path, svg_color) = (
                 config.get().ui_svg(if *is_dir {
-                    SparrowIcons::DIRECTORY_CLOSED
+                    SparrowIcons::DIRECTORY
                 } else {
                     SparrowIcons::FILE
                 }),
@@ -2670,6 +2753,40 @@ fn palette_item(
                     move || indices.clone(),
                     move || config.get().color(SparrowColor::EDITOR_FOCUS),
                 )
+                .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
+            )
+        }
+        PaletteItemContent::PubPackage {
+            description,
+            version,
+            ..
+        } => {
+            let text = item.filter_text;
+            let indices = item.indices;
+            // Clone the borrowed fields so the closures can be `'static`.
+            let description = description.clone();
+            let version = version.clone();
+            container(
+                stack((
+                    focus_text(
+                        move || text.clone(),
+                        move || indices.clone(),
+                        move || config.get().color(SparrowColor::EDITOR_FOCUS),
+                    )
+                    .style(|s| s.margin_right(6.0).max_width_full()),
+                    label(move || description.clone()).style(move |s| {
+                        s.color(config.get().color(SparrowColor::EDITOR_DIM))
+                            .min_width(0.0)
+                            .flex_grow(1.0f32)
+                            .flex_basis(0.0)
+                            .text_ellipsis()
+                    }),
+                    label(move || version.clone()).style(move |s| {
+                        s.color(config.get().color(SparrowColor::EDITOR_DIM))
+                            .margin_left(6.0)
+                            .selectable(false)
+                    }),
+                ))
                 .style(|s| s.align_items(Some(AlignItems::Center)).max_width_full()),
             )
         }
@@ -3086,7 +3203,11 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
             move || hover_data.content.get(),
             move |_| id.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             move |content| match content {
-                MarkdownContent::Text(text_layout) => container(
+                MarkdownContent::Text(text_layout)
+                | MarkdownContent::LinkedText {
+                    layout: text_layout,
+                    ..
+                } => container(
                     rich_text(move || text_layout.clone())
                         .style(|s| s.max_width(600.0)),
                 )
@@ -3109,7 +3230,7 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
     .on_event_stop(EventListener::PointerDown, |_| {})
     .style(move |s| {
         let active = window_tab_data.common.hover.active.get();
-        if !active {
+        if !active || window_tab_data.common.focus.get() == Focus::CodeAction {
             s.hide()
         } else {
             let config = config.get();
@@ -3131,6 +3252,112 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
     .debug_name("Hover Layer")
 }
 
+fn signature_help(window_tab_data: Rc<WindowTabData>) -> impl View {
+    use floem::text::{Attrs, AttrsList, FamilyOwned, TextLayout, Weight};
+    use lsp_types::{ParameterInformation, ParameterLabel};
+
+    let sig = window_tab_data.common.signature_help;
+    let config = window_tab_data.common.config;
+    let layout_rect = create_rw_signal(Rect::ZERO);
+
+    // Helper: byte range of the active param within the label.
+    fn active_range(
+        label: &str,
+        params: Option<&[ParameterInformation]>,
+        active: Option<u32>,
+    ) -> Option<(usize, usize)> {
+        let idx = active? as usize;
+        let params = params?;
+        let param = params.get(idx)?;
+        match &param.label {
+            ParameterLabel::Simple(s) => {
+                let start = label.find(s)?;
+                Some((start, start + s.len()))
+            }
+            ParameterLabel::LabelOffsets(offsets) => {
+                let [s, e] = *offsets;
+                Some((
+                    utf16_to_byte(label, s as usize),
+                    utf16_to_byte(label, e as usize),
+                ))
+            }
+        }
+    }
+
+    fn utf16_to_byte(s: &str, u16_off: usize) -> usize {
+        let mut count = 0usize;
+        for (byte_idx, ch) in s.char_indices() {
+            if count >= u16_off {
+                return byte_idx;
+            }
+            count += ch.len_utf16();
+        }
+        s.len()
+    }
+
+    let rich = floem::views::rich_text(move || {
+        let sh = sig.get();
+        let cfg = config.get();
+        let Some(signature) = sh.current_signature() else {
+            return TextLayout::new();
+        };
+        let family: Vec<FamilyOwned> =
+            FamilyOwned::parse_list(&cfg.ui.font_family).collect();
+        let base_attrs = Attrs::new()
+            .family(&family)
+            .font_size(cfg.ui.font_size() as f32)
+            .color(cfg.color(SparrowColor::EDITOR_FOREGROUND));
+        let mut attrs_list = AttrsList::new(base_attrs.clone());
+
+        if let Some((start, end)) = active_range(
+            &signature.label,
+            signature.parameters.as_deref(),
+            sh.active_parameter,
+        ) {
+            let active_attrs = base_attrs
+                .color(cfg.color(SparrowColor::EDITOR_FOCUS))
+                .weight(Weight::BOLD);
+            attrs_list.add_span(start..end, active_attrs);
+        }
+
+        let mut layout = TextLayout::new();
+        layout.set_text(&signature.label, attrs_list, None);
+        layout
+    });
+
+    floem::views::stack((container(rich).style(move |s| {
+        let cfg = config.get();
+        s.padding_horiz(10.0)
+            .padding_vert(6.0)
+            .border(1.0)
+            .border_radius(6.0)
+            .border_color(cfg.color(SparrowColor::SPARROW_BORDER))
+            .background(cfg.color(SparrowColor::PANEL_BACKGROUND))
+            .box_shadow_blur(4.0)
+            .box_shadow_color(cfg.color(SparrowColor::SPARROW_DROPDOWN_SHADOW))
+            .max_width(600.0)
+            .set(PropagatePointerWheel, false)
+    }),))
+    .on_resize(move |rect| {
+        layout_rect.set(rect);
+    })
+    .on_event_stop(EventListener::PointerMove, |_| {})
+    .on_event_stop(EventListener::PointerDown, |_| {})
+    .style(move |s| {
+        if !sig.with(|s| s.is_active()) {
+            return s.hide();
+        }
+        match window_tab_data.signature_help_origin() {
+            Some(origin) => s
+                .position(Position::Absolute)
+                .margin_left(origin.x as f32)
+                .margin_top(origin.y as f32),
+            None => s.hide(),
+        }
+    })
+    .debug_name("Signature Help Layer")
+}
+
 fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
     let completion_data = window_tab_data.common.completion;
     let active_editor = window_tab_data.main_split.active_editor;
@@ -3143,6 +3370,9 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
             move || completion_data.with(|c| VectorItems(c.filtered_items.clone())),
             move |(i, _item)| (request_id(), *i),
             move |(i, item)| {
+                let detail = item.item.detail.clone().filter(|d| !d.is_empty());
+                let has_detail = detail.is_some();
+
                 stack((
                     container(
                         text(
@@ -3207,6 +3437,18 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
                                 )
                             })
                     }),
+                    label(move || detail.clone().unwrap_or_default()).style(
+                        move |s| {
+                            let c = config.get();
+                            s.margin_left(10.0)
+                                .min_width(0.0)
+                                .max_width(320.0)
+                                .text_ellipsis()
+                                .color(c.color(SparrowColor::EDITOR_DIM))
+                                .selectable(false)
+                                .apply_if(!has_detail, |s| s.hide())
+                        },
+                    ),
                 ))
                 .style(move |s| {
                     s.align_items(Some(AlignItems::Center))
@@ -3255,135 +3497,120 @@ fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
 }
 
 fn code_action(window_tab_data: Rc<WindowTabData>) -> impl View {
-    let config = window_tab_data.common.config;
-    let code_action = window_tab_data.code_action;
-    let (status, active) = code_action
-        .with_untracked(|code_action| (code_action.status, code_action.active));
-    let request_id =
-        move || code_action.with_untracked(|code_action| code_action.request_id);
-    scroll(
-        container(
-            dyn_stack(
-                move || {
-                    code_action.with(|code_action| {
-                        code_action.filtered_items.clone().into_iter().enumerate()
-                    })
-                },
-                move |(i, _item)| (request_id(), *i),
-                move |(i, item)| {
-                    container(
-                        text(item.title().replace('\n', " "))
-                            .style(|s| s.text_ellipsis().min_width(0.0)),
-                    )
-                    .on_click_stop(move |_| {
-                        let code_action = code_action.get_untracked();
-                        code_action.active.set(i);
-                        code_action.select();
-                    })
-                    .on_event_stop(EventListener::PointerDown, |_| {})
-                    .style(move |s| {
-                        let config = config.get();
-                        s.padding_horiz(10.0)
-                            .align_items(Some(AlignItems::Center))
-                            .min_width(0.0)
-                            .width_full()
-                            .line_height(1.8)
-                            .border_radius(6.0)
-                            .cursor(CursorStyle::Pointer)
-                            .apply_if(active.get() == i, |s| {
-                                s.background(
-                                    config.color(SparrowColor::COMPLETION_CURRENT),
-                                )
-                            })
-                            .hover(move |s| {
-                                s.background(
-                                    config.color(
-                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                    ),
-                                )
-                            })
-                    })
-                },
-            )
-            .style(|s| s.width_full().flex_col()),
-        )
-        .style(|s| s.width_full().padding_vert(4.0)),
-    )
-    .ensure_visible(move || {
-        let config = config.get();
-        let active = active.get();
-        Size::new(1.0, config.editor.line_height() as f64)
-            .to_rect()
-            .with_origin(Point::new(
-                0.0,
-                active as f64 * config.editor.line_height() as f64,
-            ))
-    })
-    .on_resize(move |rect| {
-        code_action.update(|c| {
-            c.layout_rect = rect;
-        });
-    })
-    .on_event_stop(EventListener::PointerMove, |_| {})
-    .style(move |s| {
-        let origin = window_tab_data.code_action_origin();
-        s.display(match status.get() {
-            CodeActionStatus::Inactive => Display::None,
-            CodeActionStatus::Active => Display::Flex,
-        })
-        .position(Position::Absolute)
-        .width(400.0)
-        .max_height(400.0)
-        .margin_left(origin.x as f32)
-        .margin_top(origin.y as f32)
-        .background(config.get().color(SparrowColor::COMPLETION_BACKGROUND))
-        .border_radius(6.0)
-    })
-    .debug_name("Code Action Layer")
+    crate::code_action_preview::view(window_tab_data)
 }
 
 fn rename(window_tab_data: Rc<WindowTabData>) -> impl View {
-    let editor = window_tab_data.rename.editor.clone();
-    let active = window_tab_data.rename.active;
-    let layout_rect = window_tab_data.rename.layout_rect;
+    let data = window_tab_data.rename.clone();
+    let editor = data.editor.clone();
+    let active = data.active;
+    let pending = data.pending;
+    let error = data.error;
+    let layout_rect = data.layout_rect;
     let config = window_tab_data.common.config;
-
-    container(
+    let apply = data.clone();
+    let preview = data.clone();
+    let cancel = data.clone();
+    stack((
+        label(|| "Rename")
+            .style(|s| s.font_bold().height(24.0).items_center()),
         container(
             TextInputBuilder::new()
-                .is_focused(move || active.get())
+                .is_focused(move || active.get() && !pending.get())
                 .build_editor(editor)
-                .style(|s| s.width(150.0)),
+                .style(|s| s.width_full()),
         )
+        .disabled(move || pending.get())
         .style(move |s| {
-            let config = config.get();
-            s.font_family(config.editor.font_family.clone())
-                .font_size(config.editor.font_size() as f32)
+            s.height(28.0)
+                .width_full()
+                .padding_horiz(6.0)
+                .items_center()
+                .font_family(config.get().editor.font_family.clone())
+                .font_size(config.get().editor.font_size() as f32)
                 .border(1.0)
-                .border_radius(6.0)
-                .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+                .border_radius(4.0)
+                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+                .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
         }),
-    )
-    .on_resize(move |rect| {
-        layout_rect.set(rect);
-    })
+        label(move || {
+            if pending.get() {
+                "Renaming…".into()
+            } else {
+                error.get()
+            }
+        })
+        .style(move |s| {
+            s.width_full()
+                .max_width(340.0)
+                .padding_vert(4.0)
+                .color(config.get().color(if error.get().is_empty() {
+                    SparrowColor::PANEL_FOREGROUND_DIM
+                } else {
+                    SparrowColor::SPARROW_ERROR
+                }))
+                .apply_if(!pending.get() && error.get().is_empty(), |s| s.hide())
+        }),
+        stack((
+            label(|| "Preview")
+                .on_click_stop(move |_| preview.confirm(true))
+                .style(move |s| {
+                    s.padding_horiz(8.0)
+                        .height(26.0)
+                        .items_center()
+                        .color(config.get().color(SparrowColor::EDITOR_LINK))
+                        .apply_if(pending.get(), |s| {
+                            s.color(
+                                config
+                                    .get()
+                                    .color(SparrowColor::PANEL_FOREGROUND_DIM),
+                            )
+                        })
+                }),
+            empty().style(|s| s.flex_grow(1.0_f32)),
+            label(|| "Cancel")
+                .on_click_stop(move |_| cancel.cancel())
+                .style(|s| s.padding_horiz(8.0).height(26.0).items_center()),
+            label(|| "Refactor  ↵")
+                .on_click_stop(move |_| apply.confirm(false))
+                .style(move |s| {
+                    s.padding_horiz(8.0).height(26.0).items_center().color(
+                        config.get().color(if pending.get() {
+                            SparrowColor::PANEL_FOREGROUND_DIM
+                        } else {
+                            SparrowColor::EDITOR_LINK
+                        }),
+                    )
+                }),
+        ))
+        .style(|s| s.width_full().items_center()),
+    ))
+    .on_resize(move |rect| layout_rect.set(rect))
     .on_event_stop(EventListener::PointerMove, |_| {})
     .on_event_stop(EventListener::PointerDown, |_| {})
     .style(move |s| {
-        let origin = window_tab_data.rename_origin();
-        s.position(Position::Absolute)
-            .apply_if(!active.get(), |s| s.hide())
+        let bounds = window_tab_data.common.workbench_size.get();
+        let height=layout_rect.get().height().max(180.0);
+        let origin=Point::new(((bounds.width-360.0)/2.0).max(0.0),((bounds.height-height)/2.0).max(0.0));
+        s.absolute()
             .margin_left(origin.x as f32)
             .margin_top(origin.y as f32)
+            .width(360.0)
+            .flex_col()
+            .padding(10.0)
+            .border(1.0)
+            .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
             .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
             .border_radius(6.0)
-            .padding(6.0)
+            .apply_if(!active.get(), |s| s.hide())
     })
     .debug_name("Rename Layer")
 }
 
-fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
+fn window_tab(
+    window_tab_data: Rc<WindowTabData>,
+    window_tabs: ReadSignal<im::Vector<(RwSignal<usize>, Rc<WindowTabData>)>>,
+) -> impl View {
     let source_control = window_tab_data.source_control.clone();
     let window_origin = window_tab_data.common.window_origin;
     let layout_rect = window_tab_data.layout_rect;
@@ -3391,11 +3618,37 @@ fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
     let workbench_command = window_tab_data.common.workbench_command;
     let window_tab_scope = window_tab_data.scope;
     let hover_active = window_tab_data.common.hover.active;
+    let title_menus = [
+        window_tab_data.project_menu_visible,
+        window_tab_data.branch_menu_visible,
+        window_tab_data.device_menu_visible,
+    ];
     let status_height = window_tab_data.status_height;
+    let project_chip_origin = create_rw_signal(Point::ZERO);
+    let branch_chip_origin = create_rw_signal(Point::ZERO);
+    let device_chip_origin = create_rw_signal(Point::ZERO);
+    let settings_modal = window_tab_data.settings_modal_visible;
+    let run_modal = window_tab_data.run_config_modal_visible;
+    let project_modal = window_tab_data.flutter_project.active;
+    let file_modal=window_tab_data.file_refactor.active;
+    let scaffold_modal=window_tab_data.scaffold.active;
+    let formatting_modal=window_tab_data.formatting.active;
+    let search_modal=window_tab_data.project_search.active;
+    let git_modal=window_tab_data.git_actions.active;
+    let symbol_modal=window_tab_data.rename.active;
+    let interaction_layer_open=move ||symbol_modal.get()||file_modal.get()||scaffold_modal.get()||formatting_modal.get()||search_modal.get()||git_modal.get();
+    let modal_open =
+        move || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || git_modal.get();
 
     let view = stack((
         stack((
-            title(window_tab_data.clone()),
+            title(
+                window_tab_data.clone(),
+                window_tabs,
+                project_chip_origin,
+                branch_chip_origin,
+                device_chip_origin,
+            ),
             workbench(window_tab_data.clone()),
             status(
                 window_tab_data.clone(),
@@ -3411,20 +3664,37 @@ fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
         .on_move(move |point| {
             window_origin.set(point);
         })
-        .style(|s| s.size_full().flex_col())
+        .style(move |s| {
+            s.size_full().flex_col().background(
+                config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
+            )
+        })
+        .disabled(modal_open)
         .debug_name("Base Layer"),
-        completion(window_tab_data.clone()),
-        hover(window_tab_data.clone()),
-        code_action(window_tab_data.clone()),
-        rename(window_tab_data.clone()),
-        palette(window_tab_data.clone()),
+        completion(window_tab_data.clone()).disabled(modal_open),
+        signature_help(window_tab_data.clone()).disabled(modal_open),
+        hover(window_tab_data.clone()).disabled(modal_open),
+        code_action(window_tab_data.clone()).disabled(modal_open),
+        stack((rename(window_tab_data.clone()).disabled(modal_open),crate::file_refactor::view(window_tab_data.clone()),crate::scaffold::view(window_tab_data.clone()),crate::formatting::view(window_tab_data.clone()),crate::project_search::view(window_tab_data.clone()),crate::git_actions::view(window_tab_data.clone()))).style(move |s|s.absolute().size_full().apply_if(!interaction_layer_open(),|s|s.hide())),
+
+        palette(window_tab_data.clone()).disabled(modal_open),
         about::about_popup(window_tab_data.clone()),
         alert::alert_box(window_tab_data.alert_data.clone()),
+        crate::dart::project_wizard::view(window_tab_data.clone()),
+        run_config_modal(window_tab_data.clone()),
+        crate::settings::modal::view(window_tab_data.clone()),
+        debug_floating_toolbar(window_tab_data.clone()).disabled(modal_open),
+        project_switcher(window_tab_data.clone(), window_tabs, project_chip_origin),
+        branch_switcher(window_tab_data.clone(), branch_chip_origin),
+        device_selector_overlay(window_tab_data.clone(), device_chip_origin),
     ))
     .on_cleanup(move || {
         window_tab_scope.dispose();
     })
-    .on_event_cont(EventListener::PointerMove, move |_| {
+    .on_event_cont(EventListener::PointerMove, move |event| {
+        if let Event::PointerMove(pointer) = event {
+            crate::popup_menu::pointer(pointer.pos);
+        }
         if hover_active.get_untracked() {
             hover_active.set(false);
         }
@@ -3435,12 +3705,18 @@ fn window_tab(window_tab_data: Rc<WindowTabData>) -> impl View {
             .color(config.color(SparrowColor::EDITOR_FOREGROUND))
             .background(config.color(SparrowColor::EDITOR_BACKGROUND))
             .font_size(config.ui.font_size() as f32)
+            .line_height(1.4)
             .apply_if(!config.ui.font_family.is_empty(), |s| {
                 s.font_family(config.ui.font_family.clone())
             })
             .class(floem::views::scroll::Handle, |s| {
                 s.background(config.color(SparrowColor::SPARROW_SCROLL_BAR))
             })
+    })
+    .on_event_cont(EventListener::WindowLostFocus, move |_| {
+        for menu in title_menus {
+            menu.set(false);
+        }
     })
     .debug_name("Window Tab");
 
@@ -3731,6 +4007,7 @@ fn workspace_tab_header(window_data: WindowData) -> impl View {
             .width_full()
             .height(37.0)
             .font_size(config.ui.font_size() as f32)
+            .line_height(1.4)
             .apply_if(!config.ui.font_family.is_empty(), |s| {
                 s.font_family(config.ui.font_family.clone())
             })
@@ -3755,8 +4032,8 @@ fn window(window_data: WindowData) -> impl View {
     let ime_enabled = window_data.ime_enabled;
     let window_maximized = window_data.common.window_maximized;
 
-    tab(active, items, key, |(_, window_tab_data)| {
-        window_tab(window_tab_data)
+    tab(active, items, key, move |(_, window_tab_data)| {
+        window_tab(window_tab_data, window_tabs)
     })
     .window_title(move || {
         let active = active();
@@ -3793,9 +4070,14 @@ fn window(window_data: WindowData) -> impl View {
             window_tab.common.keypress.track();
             let workbench_command = window_tab.common.workbench_command;
             let sparrow_command = window_tab.common.sparrow_command;
-            window_menu(sparrow_command, workbench_command)
+            window_menu(
+                sparrow_command,
+                workbench_command,
+                crate::menus::MenuContext::from_window(window_tab),
+            )
+            .into_native()
         } else {
-            Menu::new("Sparrow")
+            Menu::new("Sparrow").into_native()
         }
     })
     .style(|s| s.size_full())
@@ -3804,6 +4086,7 @@ fn window(window_data: WindowData) -> impl View {
 
 pub fn launch() {
     let cli = Cli::parse();
+    if let Some(json)=cli.run_config_task.as_deref(){let code=match crate::dart::run_config::execute_task_snapshot(json){Ok(code)=>code,Err(error)=>{eprintln!("{error}");1}};std::process::exit(code);}
 
     if !cli.wait {
         logging::panic_hook();
@@ -3815,6 +4098,29 @@ pub fn launch() {
     #[cfg(feature = "vendored-fonts")]
     {
         use floem::text::{FONT_SYSTEM, fontdb::Source};
+
+        for bytes in [
+            include_bytes!("../../extra/fonts/CupertinoIcons/CupertinoIcons.ttf").as_slice(),
+            include_bytes!(
+                "../../extra/fonts/MaterialIcons/MaterialIcons-Regular.otf"
+            )
+            .as_slice(),
+            include_bytes!("../../extra/fonts/Inter/Inter-Regular.otf").as_slice(),
+            include_bytes!("../../extra/fonts/Inter/Inter-SemiBold.otf").as_slice(),
+            include_bytes!(
+                "../../extra/fonts/JetBrainsMono/JetBrainsMono-Regular.ttf"
+            )
+            .as_slice(),
+            include_bytes!(
+                "../../extra/fonts/JetBrainsMono/JetBrainsMono-Italic.ttf"
+            )
+            .as_slice(),
+        ] {
+            FONT_SYSTEM
+                .lock()
+                .db_mut()
+                .load_font_source(Source::Binary(Arc::new(bytes)));
+        }
 
         const FONT_DEJAVU_SANS_REGULAR: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -3845,47 +4151,47 @@ pub fn launch() {
 
     // small hack to unblock terminal if launched from it
     // launch it as a separate process that waits
-    if !cli.wait {
-        let mut args = std::env::args().collect::<Vec<_>>();
-        args.push("--wait".to_string());
-        let mut cmd = std::process::Command::new(&args[0]);
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW);
-
-        let stderr_file_path =
-            Directory::logs_directory().unwrap().join("stderr.log");
-        let stderr_file = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .read(true)
-            .open(stderr_file_path)
-            .unwrap();
-        let stderr = Stdio::from(stderr_file);
-
-        let stdout_file_path =
-            Directory::logs_directory().unwrap().join("stdout.log");
-        let stdout_file = std::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .read(true)
-            .open(stdout_file_path)
-            .unwrap();
-        let stdout = Stdio::from(stdout_file);
-
-        if let Err(why) = cmd
-            .args(&args[1..])
-            .stderr(stderr)
-            .stdout(stdout)
-            .env("SPARROW_LOG", "sparrow_app::app=error,off")
-            .spawn()
-        {
-            eprintln!("Failed to launch Sparrow: {why}");
-            std::process::exit(1);
-        };
-        return;
-    }
+    // if !cli.wait {
+    //     let mut args = std::env::args().collect::<Vec<_>>();
+    //     args.push("--wait".to_string());
+    //     let mut cmd = std::process::Command::new(&args[0]);
+    //     #[cfg(target_os = "windows")]
+    //     cmd.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW);
+    //
+    //     let stderr_file_path =
+    //         Directory::logs_directory().unwrap().join("stderr.log");
+    //     let stderr_file = std::fs::OpenOptions::new()
+    //         .write(true)
+    //         .truncate(true)
+    //         .create(true)
+    //         .read(true)
+    //         .open(stderr_file_path)
+    //         .unwrap();
+    //     let stderr = Stdio::from(stderr_file);
+    //
+    //     let stdout_file_path =
+    //         Directory::logs_directory().unwrap().join("stdout.log");
+    //     let stdout_file = std::fs::OpenOptions::new()
+    //         .write(true)
+    //         .truncate(true)
+    //         .create(true)
+    //         .read(true)
+    //         .open(stdout_file_path)
+    //         .unwrap();
+    //     let stdout = Stdio::from(stdout_file);
+    //
+    //     if let Err(why) = cmd
+    //         .args(&args[1..])
+    //         .stderr(stderr)
+    //         .stdout(stdout)
+    //         .env("SPARROW_LOG", "sparrow_app::app=error,off")
+    //         .spawn()
+    //     {
+    //         eprintln!("Failed to launch Sparrow: {why}");
+    //         std::process::exit(1);
+    //     };
+    //     return;
+    // }
 
     // If the cli is not requesting a new window, and we're not developing a plugin, we try to open
     // in the existing Sparrow process
@@ -3898,7 +4204,36 @@ pub fn launch() {
                 return;
             }
             Err(err) => {
-                tracing::error!("{:?}", err);
+                // Cold start on a fresh install, or a stale socket left
+                // behind by a previous crash. Both mean "start a new
+                // instance" — not an error. A stale `.sock` file is
+                // cleaned up here so the next startup is quiet.
+                let kind = err.downcast_ref::<std::io::Error>().map(|e| e.kind());
+                match kind {
+                    Some(
+                        std::io::ErrorKind::NotFound
+                        | std::io::ErrorKind::ConnectionRefused,
+                    ) => {
+                        trace!(
+                            TraceLevel::TRACE,
+                            "no existing Sparrow instance ({err:#})"
+                        );
+                        if let Some(path) = Directory::local_socket() {
+                            if path.exists() {
+                                if let Err(rm) = std::fs::remove_file(&path) {
+                                    tracing::warn!(
+                                        "could not remove stale socket {path:?}: {rm}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Genuinely unexpected — permission denied, disk
+                        // full, filesystem error. Worth logging loudly.
+                        tracing::error!("{err:?}");
+                    }
+                }
             }
         }
     }
@@ -4263,120 +4598,519 @@ fn listen_local_socket(tx: SyncSender<CoreNotification>) -> Result<()> {
 pub fn window_menu(
     sparrow_command: Listener<SparrowCommand>,
     workbench_command: Listener<SparrowWorkbenchCommand>,
+    context: crate::menus::MenuContext,
 ) -> Menu {
-    Menu::new("Sparrow")
-        .entry({
-            let mut menu = Menu::new("Sparrow")
-                .entry(MenuItem::new("About Sparrow").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
-                }))
-                .separator()
-                .entry(
-                    Menu::new("Settings...")
-                        .entry(MenuItem::new("Open Settings").action(move || {
-                            workbench_command
-                                .send(SparrowWorkbenchCommand::OpenSettings);
-                        }))
-                        .entry(MenuItem::new("Open Keyboard Shortcuts").action(
-                            move || {
-                                workbench_command.send(
-                                    SparrowWorkbenchCommand::OpenKeyboardShortcuts,
-                                );
-                            },
-                        )),
-                )
-                .separator()
-                .entry(MenuItem::new("Quit Sparrow").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::Quit);
-                }));
-            if cfg!(target_os = "macos") {
-                menu = menu
-                    .separator()
-                    .entry(MenuItem::new("Hide Sparrow"))
-                    .entry(MenuItem::new("Hide Others"))
-                    .entry(MenuItem::new("Show All"))
-            }
-            menu
-        })
-        .separator()
-        .entry(
-            Menu::new("File")
-                .entry(MenuItem::new("New File").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::NewFile);
-                }))
-                .separator()
-                .entry(MenuItem::new("Open").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::OpenFile);
-                }))
-                .entry(MenuItem::new("Open Folder").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::OpenFolder);
-                }))
-                .separator()
-                .entry(MenuItem::new("Save").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Focus(FocusCommand::Save),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Save All").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::SaveAll);
-                }))
-                .separator()
-                .entry(MenuItem::new("Close Folder").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::CloseFolder);
-                }))
-                .entry(MenuItem::new("Close Window").action(move || {
-                    workbench_command.send(SparrowWorkbenchCommand::CloseWindow);
-                })),
-        )
-        .entry(
-            Menu::new("Edit")
-                .entry(MenuItem::new("Cut").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::ClipboardCut),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Copy").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::ClipboardCopy),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Paste").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::ClipboardPaste),
-                        data: None,
-                    });
-                }))
-                .separator()
-                .entry(MenuItem::new("Undo").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::Undo),
-                        data: None,
-                    });
-                }))
-                .entry(MenuItem::new("Redo").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Edit(EditCommand::Redo),
-                        data: None,
-                    });
-                }))
-                .separator()
-                .entry(MenuItem::new("Find").action(move || {
-                    sparrow_command.send(SparrowCommand {
-                        kind: CommandKind::Focus(FocusCommand::Search),
-                        data: None,
-                    });
-                })),
-        )
+    use crate::command::SparrowWorkbenchCommand::*;
+
+    let mut menu = Menu::new("");
+
+    // ── FILE ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("File")
+            .entry(MenuItem::new("New...").action(move || {
+                workbench_command.send(NewFile);
+            }))
+            .entry(MenuItem::new("Open...").action(move || {
+                workbench_command.send(OpenFile);
+            }))
+            .entry(MenuItem::new("Open Folder...").action(move || {
+                workbench_command.send(OpenFolder);
+            }))
+            .entry(MenuItem::new("Recent Projects").action(move || {
+                workbench_command.send(PaletteWorkspace);
+            }))
+            .separator()
+            .entry(MenuItem::new("Close Project").action(move || {
+                workbench_command.send(CloseFolder);
+            }))
+            .entry(MenuItem::new("Settings...").action(move || {
+                workbench_command.send(OpenSettings);
+            }))
+            .entry(MenuItem::new("Project Structure...").enabled(false))
+            .entry(MenuItem::new("Plugins...").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Save All").action(move || {
+                workbench_command.send(SaveAll);
+            }))
+            .entry(MenuItem::new("Reload All from Disk").enabled(false))
+            .entry(MenuItem::new("Invalidate Caches...").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Exit").action(move || {
+                workbench_command.send(Quit);
+            })),
+    );
+
+    // ── EDIT ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Edit")
+            .entry(MenuItem::new("Undo").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::Undo),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Redo").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::Redo),
+                    data: None,
+                });
+            }))
+            .separator()
+            .entry(MenuItem::new("Cut").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::ClipboardCut),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Copy").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::ClipboardCopy),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Paste").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::ClipboardPaste),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Find...").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::Search),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Find Usages").action(move || {
+                workbench_command.send(FindReferences);
+            }))
+            .separator()
+            .entry(MenuItem::new("Select All").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::MultiSelection(
+                        MultiSelectionCommand::SelectAllCurrent,
+                    ),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Duplicate Line").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::DuplicateLineDown),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Join Lines").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::JoinLines),
+                    data: None,
+                });
+            }))
+            .separator()
+            .entry(MenuItem::new("Indent Selection").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::IndentLine),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Unindent Line or Selection").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::OutdentLine),
+                    data: None,
+                });
+            })),
+    );
+
+    // ── VIEW ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("View")
+            .entry(
+                {
+                    use strum::IntoEnumIterator;
+                    let mut tools=Menu::new("Tool Windows");
+                    for kind in crate::panel::kind::PanelKind::iter().filter(|k|*k!=crate::panel::kind::PanelKind::DocumentSymbol){tools=tools.entry(MenuItem::new(kind.title()).action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(ShowPanel),data:serde_json::to_value(kind).ok()})));}tools
+                }
+            )
+            .entry(
+                Menu::new("Appearance")
+                    .entry(MenuItem::new("Change Color Theme").action(move || {
+                        workbench_command.send(ChangeColorTheme);
+                    }))
+                    .entry(MenuItem::new("Change Icon Theme").action(move || {
+                        workbench_command.send(ChangeIconTheme);
+                    }))
+                    .entry(MenuItem::new("Zoom In").action(move || {
+                        workbench_command.send(ZoomIn);
+                    }))
+                    .entry(MenuItem::new("Zoom Out").action(move || {
+                        workbench_command.send(ZoomOut);
+                    }))
+                    .entry(MenuItem::new("Reset Zoom").action(move || {
+                        workbench_command.send(ZoomReset);
+                    })),
+            )
+            .separator()
+            .entry(MenuItem::new("Recent Files").action(move || {
+                workbench_command.send(PaletteHelpAndFile);
+            }))
+            .entry(MenuItem::new("Active Editor").enabled(false)),
+    );
+
+    // ── NAVIGATE ────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Navigate")
+            .entry(MenuItem::new("Back").action(move || {
+                workbench_command.send(JumpLocationBackward);
+            }))
+            .entry(MenuItem::new("Forward").action(move || {
+                workbench_command.send(JumpLocationForward);
+            }))
+            .separator()
+            .entry(MenuItem::new("Search Everywhere").action(move || {
+                workbench_command.send(SearchEverywhere);
+            }))
+            .entry(MenuItem::new("Class...").action(move || {
+                workbench_command.send(PaletteWorkspaceSymbol);
+            }))
+            .entry(MenuItem::new("File...").action(move || {
+                workbench_command.send(Palette);
+            }))
+            .entry(MenuItem::new("Symbol...").action(move || {
+                workbench_command.send(PaletteSymbol);
+            }))
+            .entry(MenuItem::new("Line:Column...").action(move || {
+                workbench_command.send(PaletteLine);
+            }))
+            .separator()
+            .entry(MenuItem::new("Next Highlighted Error").action(move || {
+                workbench_command.send(NextError);
+            }))
+            .entry(MenuItem::new("Previous Highlighted Error").action(move || {
+                workbench_command.send(PreviousError);
+            }))
+            .separator()
+            .entry(MenuItem::new("Declaration or Usages").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::GotoDefinition),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Type Declaration").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::GotoTypeDefinition),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Super Method").enabled(false))
+            .entry(MenuItem::new("Test").enabled(false))
+            .entry(MenuItem::new("File Structure").action(move || {
+                workbench_command.send(PaletteSymbol);
+            }))
+            .entry(MenuItem::new("Call Hierarchy").action(move || {
+                workbench_command.send(ShowCallHierarchy);
+            }))
+            .entry(MenuItem::new("Type Hierarchy").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Implementation(s)").action(move || {
+                workbench_command.send(GoToImplementation);
+            }))
+            .entry(MenuItem::new("References").action(move || {
+                workbench_command.send(FindReferences);
+            })),
+    );
+
+    // ── CODE ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Code")
+            .entry(MenuItem::new("Override Methods...").enabled(false))
+            .entry(MenuItem::new("Implement Methods...").enabled(false))
+            .entry(MenuItem::new("Generate...").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Code Completion").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::GetCompletion),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Inspect Code...").enabled(false))
+            .entry(MenuItem::new("Analyze Code").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Comment with Line Comment").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::ToggleLineComment),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Reformat Code").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::FormatDocument),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Reformat Code Options…").action(move ||workbench_command.send(ReformatCodeOptions)))
+            .entry(
+                MenuItem::new("Optimize Imports")
+                    .enabled(context.dart_editor)
+                    .action(move || workbench_command.send(OptimizeImports)),
+            )
+            .separator()
+            .entry(MenuItem::new("Move Statement Down").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::MoveLineDown),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Move Statement Up").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Edit(EditCommand::MoveLineUp),
+                    data: None,
+                });
+            }))
+            .entry(MenuItem::new("Move Element Left").enabled(false))
+            .entry(MenuItem::new("Move Element Right").enabled(false)),
+    );
+
+    // ── REFACTOR ────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Refactor")
+            .entry(MenuItem::new("Refactor This...").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Focus(FocusCommand::ShowCodeActions),
+                    data: None,
+                });
+            }))
+            .entry(
+                MenuItem::new("Rename File...")
+                    .action(move || workbench_command.send(RenameActiveFile)),
+            )
+            .separator()
+            .entry(MenuItem::new("Extract/Introduce...").enabled(context.dart_editor).action(move ||workbench_command.send(RefactorExtract)))
+            .entry(MenuItem::new("Inline...").enabled(context.dart_editor).action(move ||workbench_command.send(RefactorInline)))
+            .entry(MenuItem::new("Move File...").enabled(context.dart_editor).action(move ||workbench_command.send(MoveActiveFile)))
+            .entry(MenuItem::new("Copy File...").action(move ||workbench_command.send(CopyActiveFile)))
+            .entry(MenuItem::new("Safe Delete...").enabled(context.dart_editor).action(move ||workbench_command.send(SafeDeleteFile))),
+    );
+
+    // ── BUILD ───────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Build")
+            .entry(MenuItem::new("Build Project").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(FlutterProjectTask),data:Some(serde_json::json!(["build"]))})))
+            .entry(MenuItem::new("Rebuild Project").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(FlutterProjectTask),data:Some(serde_json::json!(["clean"]))})))
+            .entry(MenuItem::new("Generate App Bundles or APKs").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(FlutterProjectTask),data:Some(serde_json::json!(["build", "apk"]))})))
+            .entry(MenuItem::new("Analyze APK...").enabled(false)),
+    );
+
+    // ── RUN ─────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Run")
+            .entry(
+                MenuItem::new(context.run_label)
+                    .enabled(context.can_run)
+                    .action(move || {
+                        workbench_command.send(RunSelectedConfiguration);
+                    }),
+            )
+            .entry(
+                MenuItem::new(context.debug_label)
+                    .enabled(context.can_run)
+                    .action(move || {
+                        workbench_command.send(DebugSelectedConfiguration);
+                    }),
+            )
+            .entry(MenuItem::new("Edit Configurations...").action(move || {
+                workbench_command.send(EditRunConfigurations);
+            }))
+            .separator()
+            .entry(MenuItem::new("Stop").enabled(context.can_stop).action(
+                move || {
+                    workbench_command.send(RunAndDebugStop);
+                },
+            ))
+            .separator()
+            .entry(
+                MenuItem::new("Flutter Hot Reload")
+                    .enabled(context.can_reload)
+                    .action(move || {
+                        workbench_command.send(FlutterHotReload);
+                    }),
+            )
+            .entry(
+                MenuItem::new("Flutter Hot Restart")
+                    .enabled(context.can_reload)
+                    .action(move || {
+                        workbench_command.send(FlutterHotRestart);
+                    }),
+            )
+            .separator()
+            .entry(
+                MenuItem::new("Toggle Breakpoint")
+                    .enabled(context.dart_editor)
+                    .action(move || workbench_command.send(ToggleBreakpoint)),
+            )
+            .entry(MenuItem::new("View Breakpoints...").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Workbench(ShowPanel),
+                    data: Some(
+                        serde_json::to_value(crate::panel::kind::PanelKind::Debug)
+                            .expect("panel kind serializes"),
+                    ),
+                });
+            })),
+    );
+
+    // ── TOOLS ───────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Tools")
+            .entry(MenuItem::new("Device Manager").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Workbench(ShowPanel),
+                    data: Some(
+                        serde_json::to_value(
+                            crate::panel::kind::PanelKind::DeviceManager,
+                        )
+                        .expect("panel kind serializes"),
+                    ),
+                });
+            }))
+            .entry(MenuItem::new("SDK Manager").enabled(false))
+            .entry(MenuItem::new("Resource Manager").enabled(false))
+            .separator()
+            .entry(MenuItem::new("Layout Inspector").enabled(false))
+            .entry(MenuItem::new("Create Command Line Launcher...").enabled(false))
+            .separator()
+            .entry(
+                Menu::new("Flutter")
+                    .entry(MenuItem::new("Open Widget Tree").action(move || {
+                        sparrow_command.send(SparrowCommand {
+                            kind: CommandKind::Workbench(ShowPanel),
+                            data: Some(
+                                serde_json::to_value(
+                                    crate::panel::kind::PanelKind::WidgetTree,
+                                )
+                                .expect("panel kind serializes"),
+                            ),
+                        });
+                    }))
+                    .entry(MenuItem::new("Open Outline").action(move || {
+                        sparrow_command.send(SparrowCommand {
+                            kind: CommandKind::Workbench(ShowPanel),
+                            data: Some(
+                                serde_json::to_value(
+                                    crate::panel::kind::PanelKind::DartOutline,
+                                )
+                                .expect("panel kind serializes"),
+                            ),
+                        });
+                    })),
+            ),
+    );
+
+    // ── GIT ─────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Git")
+            .entry(MenuItem::new("Commit...").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Workbench(ShowPanel),
+                    data: serde_json::to_value(
+                        crate::panel::kind::PanelKind::SourceControl,
+                    )
+                    .ok(),
+                });
+            }))
+            .entry(MenuItem::new("Push...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["push"]))})))
+            .entry(MenuItem::new("Update Project...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["pull", "--ff-only"]))})))
+            .entry(MenuItem::new("Pull...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["pull", "--ff-only"]))})))
+            .entry(MenuItem::new("Fetch...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["fetch", "--all", "--prune"]))})))
+            .separator()
+            .entry(MenuItem::new("Merge...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["merge", "--no-edit", "HEAD"]))})))
+            .entry(MenuItem::new("Rebase...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["rebase", "HEAD"]))})))
+            .entry(MenuItem::new("Branches...").action(move || {
+                workbench_command.send(PaletteSCMReferences);
+            }))
+            .entry(MenuItem::new("Reset HEAD...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["reset", "--soft", "HEAD"]))})))
+            .separator()
+            .entry(MenuItem::new("Show Git Log").action(move || {
+                sparrow_command.send(SparrowCommand {
+                    kind: CommandKind::Workbench(ShowPanel),
+                    data: serde_json::to_value(
+                        crate::panel::kind::PanelKind::GitHistory,
+                    )
+                    .ok(),
+                });
+            }))
+            .entry(MenuItem::new("Manage Remotes...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["remote", "-v"]))})))
+            .entry(MenuItem::new("Clone...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["clone"]))}))),
+    );
+
+    // ── WINDOW ──────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Window")
+            .entry(
+                Menu::new("Layouts")
+                    .entry(MenuItem::new("Toggle Left Panel").action(move || {
+                        workbench_command.send(TogglePanelLeftVisual);
+                    }))
+                    .entry(MenuItem::new("Toggle Right Panel").action(move || {
+                        workbench_command.send(TogglePanelRightVisual);
+                    }))
+                    .entry(MenuItem::new("Toggle Bottom Panel").action(move || {
+                        workbench_command.send(TogglePanelBottomVisual);
+                    })),
+            )
+            .entry(MenuItem::new("Next Editor Tab").action(move || {
+                workbench_command.send(NextEditorTab);
+            }))
+            .entry(MenuItem::new("Previous Editor Tab").action(move || {
+                workbench_command.send(PreviousEditorTab);
+            }))
+            .separator()
+            .entry(MenuItem::new("Next Window Tab").action(move || {
+                workbench_command.send(NextWindowTab);
+            }))
+            .entry(MenuItem::new("Previous Window Tab").action(move || {
+                workbench_command.send(PreviousWindowTab);
+            }))
+            .separator()
+            .entry(MenuItem::new("New Window").action(move || {
+                workbench_command.send(NewWindow);
+            })),
+    );
+
+    // ── HELP ────────────────────────────────────────────────────────
+    menu = menu.entry(
+        Menu::new("Help")
+            .entry(MenuItem::new("Find Action...").action(move || {
+                workbench_command.send(PaletteCommand);
+            }))
+            .separator()
+            .entry(MenuItem::new("Keyboard Shortcuts").action(move || {
+                workbench_command.send(OpenKeyboardShortcuts);
+            }))
+            .entry(MenuItem::new("Open Logs Directory").action(move || {
+                workbench_command.send(OpenLogsDirectory);
+            }))
+            .entry(MenuItem::new("Check for Updates...").action(move || {
+                workbench_command.send(RestartToUpdate);
+            }))
+            .separator()
+            .entry(MenuItem::new("About Sparrow").action(move || {
+                workbench_command.send(ShowAbout);
+            })),
+    );
+
+    menu
 }
+
 fn tab_secondary_click(
     internal_command: Listener<InternalCommand>,
+    commands: Listener<SparrowCommand>,
     editor_tab_id: EditorTabId,
     child: EditorTabChild,
+    index: usize,
+    count: usize,
+    path: Option<PathBuf>,
+    workspace: Option<PathBuf>,
 ) {
     let mut menu = Menu::new("");
+    let child_unmodified = child.clone();
     let child_other = child.clone();
     let child_right = child.clone();
     let child_left = child.clone();
@@ -4387,28 +5121,119 @@ fn tab_secondary_click(
                 child: child.clone(),
             });
         }))
-        .entry(MenuItem::new("Close Other Tabs").action(move || {
-            internal_command.send(InternalCommand::EditorTabCloseByKind {
-                editor_tab_id,
-                child: child_other.clone(),
-                kind: TabCloseKind::CloseOther,
-            });
-        }))
+        .entry(MenuItem::new("Close Other Tabs").enabled(count > 1).action(
+            move || {
+                internal_command.send(InternalCommand::EditorTabCloseByKind {
+                    editor_tab_id,
+                    child: child_other.clone(),
+                    kind: TabCloseKind::CloseOther,
+                });
+            },
+        ))
         .entry(MenuItem::new("Close All Tabs").action(move || {
             internal_command.send(InternalCommand::EditorTabClose { editor_tab_id });
         }))
-        .entry(MenuItem::new("Close Tabs to the Right").action(move || {
+        .entry(
+            MenuItem::new("Close Tabs to the Right")
+                .enabled(index + 1 < count)
+                .action(move || {
+                    internal_command.send(InternalCommand::EditorTabCloseByKind {
+                        editor_tab_id,
+                        child: child_right.clone(),
+                        kind: TabCloseKind::CloseToRight,
+                    });
+                }),
+        )
+        .entry(
+            MenuItem::new("Close Tabs to the Left")
+                .enabled(index > 0)
+                .action(move || {
+                    internal_command.send(InternalCommand::EditorTabCloseByKind {
+                        editor_tab_id,
+                        child: child_left.clone(),
+                        kind: TabCloseKind::CloseToLeft,
+                    });
+                }),
+        );
+    menu = menu
+        .entry(MenuItem::new("Close Unmodified Tabs").action(move || {
             internal_command.send(InternalCommand::EditorTabCloseByKind {
                 editor_tab_id,
-                child: child_right.clone(),
-                kind: TabCloseKind::CloseToRight,
+                child: child_unmodified.clone(),
+                kind: TabCloseKind::CloseUnmodified,
             });
         }))
-        .entry(MenuItem::new("Close Tabs to the Left").action(move || {
-            internal_command.send(InternalCommand::EditorTabCloseByKind {
+        .separator();
+    if let Some(path) = path {
+        let copy_path = path.clone();
+        menu = menu
+            .entry(MenuItem::new("Copy Path/Reference...").action(move || {
+                let path = copy_path.clone();
+                let root = workspace.clone();
+                floem::action::exec_after(std::time::Duration::ZERO, move |_| {
+                    show_context_menu(crate::menus::copy_path_menu(path, root), None)
+                });
+            }))
+            .separator();
+        let is_dart = path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("dart"));
+        for (label, command) in [
+            ("Run", SparrowWorkbenchCommand::RunCurrentFile),
+            ("Debug", SparrowWorkbenchCommand::DebugCurrentFile),
+        ] {
+            if is_dart {
+                let target = path.clone();
+                let name = target
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                menu = menu.entry(
+                    MenuItem::new(format!("{label} '{name}'")).action(move || {
+                        commands.send(SparrowCommand {
+                            kind: CommandKind::Workbench(command.clone()),
+                            data: serde_json::to_value(&target).ok(),
+                        })
+                    }),
+                );
+            }
+        }
+        menu = menu
+            .entry(MenuItem::new("Rename File...").action(move || {
+                commands.send(SparrowCommand {
+                    kind: CommandKind::Workbench(
+                        SparrowWorkbenchCommand::RenameActiveFile,
+                    ),
+                    data: serde_json::to_value(&path).ok(),
+                })
+            }))
+            .separator();
+    }
+    for (label, direction) in [
+        ("Split and Move Right", SplitMoveDirection::Right),
+        ("Split and Move Down", SplitMoveDirection::Down),
+    ] {
+        menu =
+            menu.entry(MenuItem::new(label).enabled(count > 1).action(move || {
+                internal_command.send(InternalCommand::SplitAndMove {
+                    editor_tab_id,
+                    index,
+                    direction,
+                })
+            }));
+    }
+    menu = menu
+        .entry(MenuItem::new("Split Right").action(move || {
+            internal_command.send(InternalCommand::Split {
+                direction: SplitDirection::Vertical,
                 editor_tab_id,
-                child: child_left.clone(),
-                kind: TabCloseKind::CloseToLeft,
+            });
+        }))
+        .entry(MenuItem::new("Split Down").action(move || {
+            internal_command.send(InternalCommand::Split {
+                direction: SplitDirection::Horizontal,
+                editor_tab_id,
             });
         }));
     show_context_menu(menu, None);

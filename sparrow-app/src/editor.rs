@@ -1,18 +1,11 @@
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
-};
-
+use crate::popup_menu::show_context_menu;
+use crate::popup_menu::{Menu, MenuItem};
 use floem::{
     ViewId,
-    action::{TimerToken, exec_after, show_context_menu},
+    action::{TimerToken, exec_after},
     ext_event::create_ext_action,
     keyboard::Modifiers,
     kurbo::{Point, Rect, Vec2},
-    menu::{Menu, MenuItem},
     pointer::{MouseButton, PointerInputEvent, PointerMoveEvent},
     prelude::SignalTrack,
     reactive::{
@@ -34,7 +27,7 @@ use floem::{
 use itertools::Itertools;
 use lapce_xi_rope::{Rope, RopeDelta, Transformer};
 use lsp_types::{
-    CodeActionResponse, CompletionItem, CompletionTextEdit, GotoDefinitionResponse,
+    CompletionItem, CompletionTextEdit, GotoDefinitionResponse,
     HoverContents, InlayHint, InlayHintLabel, InlineCompletionTriggerKind, Location,
     MarkedString, MarkupKind, Range, TextEdit,
 };
@@ -56,7 +49,17 @@ use sparrow_core::{
     rope_text_pos::RopeTextPosition,
     selection::{InsertDrift, SelRegion, Selection},
 };
-use sparrow_rpc::{buffer::BufferId, plugin::PluginId, proxy::ProxyResponse};
+use sparrow_rpc::{
+    buffer::BufferId, file_line::FileLine, plugin::PluginId, proxy::ProxyResponse,
+};
+use std::path::PathBuf;
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 use view::StickyHeaderInfo;
 
 use self::{
@@ -427,6 +430,7 @@ impl EditorData {
     }
 
     fn run_edit_command(&self, cmd: &EditCommand) -> CommandExecuted {
+        if matches!(cmd,EditCommand::Undo|EditCommand::Redo) && crate::workspace_undo::replay(self,*cmd==EditCommand::Redo) {return CommandExecuted::Yes;}
         let doc = self.doc();
         let text = self.editor.rope_text();
         let is_local = doc.content.with_untracked(|content| content.is_local());
@@ -702,6 +706,7 @@ impl EditorData {
         });
 
         self.editor.cursor.set(cursor);
+        self.cancel_signature_help();
 
         if self.snippet.with_untracked(|s| s.is_some()) {
             self.snippet.update(|snippet| {
@@ -783,6 +788,7 @@ impl EditorData {
         match cmd {
             FocusCommand::ModalClose => {
                 self.cancel_completion();
+                self.cancel_signature_help();
             }
             FocusCommand::SplitVertical => {
                 if let Some(editor_tab_id) =
@@ -1259,6 +1265,64 @@ impl EditorData {
             (start_position, position)
         });
 
+        // ── Dart fast path ─────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            use floem::ext_event::create_ext_action;
+
+            let internal_command = self.common.internal_command;
+            let cursor = self.cursor().read_only();
+            let trigger = create_ext_action(
+                self.scope,
+                move |locations: Vec<lsp_types::Location>| {
+                    // Race guard: user may have moved the cursor while the
+                    // request was in flight.
+                    let current_offset = cursor.with_untracked(|c| c.offset());
+                    if current_offset != offset {
+                        return;
+                    }
+                    if locations.is_empty() {
+                        return;
+                    }
+                    if locations.len() == 1 {
+                        let loc = &locations[0];
+                        internal_command.send(InternalCommand::JumpToLocation {
+                            location: EditorLocation {
+                                path: path_from_url(&loc.uri),
+                                position: Some(EditorPosition::Position(
+                                    loc.range.start,
+                                )),
+                                scroll_offset: None,
+                                ignore_unconfirmed: false,
+                                same_editor_tab: false,
+                            },
+                        });
+                    } else {
+                        internal_command.send(InternalCommand::PaletteReferences {
+                            references: locations
+                                .into_iter()
+                                .map(|l| EditorLocation {
+                                    path: path_from_url(&l.uri),
+                                    position: Some(EditorPosition::Position(
+                                        l.range.start,
+                                    )),
+                                    scroll_offset: None,
+                                    ignore_unconfirmed: false,
+                                    same_editor_tab: false,
+                                })
+                                .collect(),
+                        });
+                    }
+                },
+            );
+            self.common.dart_lsp.definition(
+                &path,
+                position.line,
+                position.character,
+                move |locations| trigger(locations),
+            );
+            return;
+        }
+
         enum DefinitionOrReference {
             Location(EditorLocation),
             References(Vec<Location>),
@@ -1435,6 +1499,29 @@ impl EditorData {
         );
     }
 
+    /// Read `FileLine { path, position, content }` for each location by
+    /// reading the source file from disk. Skips files that can't be read
+    /// (deleted, permission, etc.).
+    fn fetch_file_lines(locations: &[lsp_types::Location]) -> Vec<FileLine> {
+        locations
+            .iter()
+            .filter_map(|loc| {
+                let path = path_from_url(&loc.uri);
+                let line_idx = loc.range.start.line as usize;
+                let content = std::fs::read_to_string(&path)
+                    .ok()?
+                    .lines()
+                    .nth(line_idx)?
+                    .to_string();
+                Some(FileLine {
+                    path,
+                    position: loc.range.start,
+                    content,
+                })
+            })
+            .collect()
+    }
+
     pub fn find_reference(&self, window_tab_data: WindowTabData) {
         let doc = self.doc();
         let path = match if doc.loaded() {
@@ -1453,6 +1540,40 @@ impl EditorData {
             let position = buffer.offset_to_position(offset);
             (start_position, position)
         });
+
+        // ── Dart fast path ─────────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            let scope = window_tab_data.scope;
+            let cursor = self.cursor().read_only();
+            let trigger = create_ext_action(self.scope, {
+                let window_tab_data = window_tab_data.clone();
+                move |locations: Vec<lsp_types::Location>| {
+                    let current_offset = cursor.with_untracked(|c| c.offset());
+                    if current_offset != offset {
+                        return;
+                    }
+                    if locations.is_empty() {
+                        window_tab_data.show_panel(PanelKind::References);
+                        return;
+                    }
+                    let items = Self::fetch_file_lines(&locations);
+                    window_tab_data
+                        .main_split
+                        .references
+                        .update(|x| *x = init_implementation_root(items, scope));
+                    window_tab_data.show_panel(PanelKind::References);
+                }
+            });
+            self.common.dart_lsp.references(
+                &path,
+                position.line,
+                position.character,
+                true,
+                move |locations| trigger(locations),
+            );
+            return;
+        }
+
         let scope = window_tab_data.scope;
         let update_implementation = create_ext_action(self.scope, {
             let window_tab_data = window_tab_data.clone();
@@ -1728,6 +1849,41 @@ impl EditorData {
         self.cancel_completion();
         let doc = self.doc();
         if let Some(item) = item {
+            // Dart fast path — resolve first so we get the full edit
+            // (textEdit, additionalTextEdits for auto-imports, detail,
+            // documentation).
+            if item.item.data.as_ref().is_some_and(|v| v["sparrowAsset"] == true || v["sparrowYaml"] == true) {
+                if let Err(err) = self.apply_completion_item(&item.item) { tracing::error!("asset completion: {err}"); }
+                return;
+            }
+            if item.plugin_id == PluginId(0) {
+                use floem::ext_event::create_ext_action;
+                let editor = self.clone();
+                let fallback = item.item.clone();
+                let trigger = create_ext_action(
+                    self.scope,
+                    move |resolved: Option<lsp_types::CompletionItem>| {
+                        let item = resolved.unwrap_or(fallback);
+                        if let Err(err) = editor.apply_completion_item(&item) {
+                            tracing::error!("completionItem/resolve then apply: {err:?}");
+                        }
+                    },
+                );
+                self.common
+                    .dart_lsp
+                    .resolve_completion(item.item, move |resolved| trigger(resolved));
+
+                // After completion, if the inserted text opened a call,
+                // signature help should show. Do it on a small delay so the
+                // cursor has landed in the new text.
+                let editor = self.clone();
+                floem::action::exec_after(
+                    std::time::Duration::from_millis(20),
+                    move |_| editor.update_signature_help(Some('(')),
+                );
+                return;
+            }
+
             if item.item.data.is_some() {
                 let editor = self.clone();
                 let rev = doc.buffer.with_untracked(|buffer| buffer.rev());
@@ -1785,6 +1941,94 @@ impl EditorData {
         self.doc().clear_completion_lens()
     }
 
+    /// Ask the Dart LSP for signature help at the cursor.
+    ///
+    /// `trigger_char` is `Some("(")` or `Some(",")` when the user just
+    /// typed one of those, `None` when re-fetching because the cursor
+    /// moved (active-param update).
+    fn update_signature_help(&self, trigger_char: Option<char>) {
+        use floem::ext_event::create_ext_action;
+        use lsp_types::Position as LspPosition;
+
+        let doc = self.doc();
+        let path = match if doc.loaded() {
+            doc.content.with_untracked(|c| c.path().cloned())
+        } else {
+            None
+        } {
+            Some(p) => p,
+            None => return,
+        };
+        if !crate::dart::is_dart_path(&path) || !self.common.dart_lsp.is_available() {
+            return;
+        }
+
+        let offset = self.cursor().with_untracked(|c| c.offset());
+        let position: LspPosition = doc
+            .buffer
+            .with_untracked(|b| b.offset_to_position(offset));
+
+        let (trigger_kind, trigger_str) = match trigger_char {
+            Some(ch) => (2u32, Some(ch.to_string())),
+            None => (3u32, None),
+        };
+
+        let request_id = self
+            .common
+            .signature_help
+            .with_untracked(|s| s.request_id)
+            + 1;
+        self.common.signature_help.update(|s| {
+            s.request_id = request_id;
+            s.editor_id = Some(self.id());
+            s.offset = offset;
+            // Do not clear existing signatures until the response arrives
+            // — keeps the popup from flickering during re-fetch.
+        });
+
+        let editor = self.clone();
+        let common = self.common.clone();
+        let trigger = create_ext_action(
+            self.scope,
+            move |help: Option<lsp_types::SignatureHelp>| {
+                let current_offset = editor
+                    .cursor()
+                    .with_untracked(|c| c.offset());
+                // Reject stale responses if the cursor moved.
+                let req_offset =
+                    common.signature_help.with_untracked(|s| s.offset);
+                if current_offset < req_offset {
+                    return;
+                }
+                let mut data = common.signature_help.get_untracked();
+                data.receive(request_id, help);
+                common.signature_help.set(data);
+            },
+        );
+
+        self.common.dart_lsp.signature_help(
+            &path,
+            position.line,
+            position.character,
+            trigger_kind,
+            trigger_str.as_deref(),
+            move |help| trigger(help),
+        );
+    }
+
+    fn cancel_signature_help(&self) {
+        if !self.signature_help_active() {
+            return;
+        }
+        self.common.signature_help.update(|s| s.cancel());
+    }
+
+    fn signature_help_active(&self) -> bool {
+        self.common
+            .signature_help
+            .with_untracked(|s| s.is_active())
+    }
+
     /// Update the displayed autocompletion box
     /// Sends a request to the LSP for completion information
     fn update_completion(&self, display_if_empty_input: bool) {
@@ -1804,6 +2048,131 @@ impl EditorData {
         };
 
         let offset = self.cursor().with_untracked(|c| c.offset());
+        if crate::doc::yaml_schema::supports(&path) {
+            let source = doc.buffer.with_untracked(|b| b.to_string());
+            if let Some(request) = crate::doc::pubdev::completion_request(&path, &source, offset) {
+                let revision = doc.rev();
+                let request_id = self.common.completion.with_untracked(|c| c.request_id) + 1;
+                self.common.completion.update(|c| {
+                    c.request_id = request_id;
+                    c.status = CompletionStatus::Started;
+                    c.offset = request.start;
+                    c.path = path.clone();
+                    c.input = request.input.clone();
+                    c.filtered_items.clear();
+                    c.input_items.clear();
+                    c.active.set(0);
+                    c.latest_editor_id = Some(self.id());
+                });
+                let editor = self.clone();
+                floem::action::exec_after(std::time::Duration::from_millis(200), move |_| {
+                    if editor.doc().rev() != revision
+                        || editor.cursor().with_untracked(|c| c.offset()) != offset
+                        || editor.common.completion.with_untracked(|c| c.request_id != request_id || c.status == CompletionStatus::Inactive) { return; }
+                    let deliver = create_ext_action(editor.scope, move |items: Vec<CompletionItem>| {
+                        if editor.doc().rev() != revision
+                            || editor.cursor().with_untracked(|c| c.offset()) != offset
+                            || editor.doc().content.with_untracked(|c| c.path().cloned()) != Some(path)
+                            || editor.common.completion.with_untracked(|c| c.request_id != request_id || c.status == CompletionStatus::Inactive) { return; }
+                        if items.is_empty() { editor.cancel_completion(); return; }
+                        editor.common.completion.update(|c| c.receive_direct(request_id, items, PluginId(0)));
+                        editor.common.completion.get_untracked().update_document_completion(&editor, offset);
+                    });
+                    rayon::spawn(move || deliver(request.complete()));
+                });
+                return;
+            }
+            if let Some((start, items)) = crate::doc::yaml_schema::completions(&path, &source, offset) {
+                self.common.completion.update(|c| {
+                    c.request_id += 1;
+                    c.status = CompletionStatus::Started;
+                    c.offset = start;
+                    c.path = path.clone();
+                    c.input = source[start..offset].into();
+                    c.filtered_items.clear();
+                    c.input_items.clear();
+                    c.active.set(0);
+                    c.latest_editor_id = Some(self.id());
+                    c.receive_direct(c.request_id, items, PluginId(0));
+                });
+                self.common.completion.get_untracked().update_document_completion(self, offset);
+            } else {
+                self.cancel_completion();
+            }
+            return;
+        }
+        if crate::dart::is_dart_path(&path)
+            && self.common.workspace.kind
+                == crate::workspace::SparrowWorkspaceType::Local
+        {
+            let source = doc.buffer.with_untracked(|b| b.to_string());
+            let root = crate::dart::test_runner::project_root(&path);
+            if let Some(root) = &root {
+                crate::dart::assets::start(root.clone());
+            }
+            if let Some((start, paths)) = root
+                .and_then(|root| crate::dart::assets::complete(&root, &source, offset))
+            {
+                let items = doc.buffer.with_untracked(|b| {
+                    paths
+                        .into_iter()
+                        .map(|asset| lsp_types::CompletionItem {
+                            label: asset.clone(),
+                            data: Some(serde_json::json!({"sparrowAsset":true})),
+                            kind: Some(lsp_types::CompletionItemKind::FILE),
+                            text_edit: Some(lsp_types::CompletionTextEdit::Edit(
+                                lsp_types::TextEdit {
+                                    range: lsp_types::Range::new(
+                                        b.offset_to_position(start),
+                                        b.offset_to_position(
+                                            offset
+                                                + source[offset..]
+                                                    .find(
+                                                        source.as_bytes()[start - 1]
+                                                            as char,
+                                                    )
+                                                    .unwrap_or(0),
+                                        ),
+                                    ),
+                                    new_text: asset
+                                        .replace('\\', "\\\\")
+                                        .replace('$', "\\$")
+                                        .replace(
+                                            source.as_bytes()[start - 1] as char,
+                                            &format!(
+                                                "\\{}",
+                                                source.as_bytes()[start - 1] as char
+                                            ),
+                                        ),
+                                },
+                            )),
+                            ..Default::default()
+                        })
+                        .collect::<Vec<_>>()
+                });
+                self.common.completion.update(|c| {
+                    c.request_id += 1;
+                    c.status = CompletionStatus::Started;
+                    c.offset = start;
+                    c.path = path.clone();
+                    c.input = source[start..offset].into();
+                    c.filtered_items.clear();
+                    c.input_items.clear();
+                    c.active.set(0);
+                    c.latest_editor_id = Some(self.id());
+                    c.receive_direct(
+                        c.request_id,
+                        items,
+                        sparrow_rpc::plugin::PluginId(0),
+                    );
+                });
+                self.common
+                    .completion
+                    .get_untracked()
+                    .update_document_completion(self, offset);
+                return;
+            }
+        }
         let (start_offset, input, char) = doc.buffer.with_untracked(|buffer| {
             let start_offset = buffer.prev_code_boundary(offset);
             let end_offset = buffer.next_code_boundary(offset);
@@ -1820,6 +2189,20 @@ impl EditorData {
         if !display_if_empty_input && input.is_empty() && char != "." && char != ":"
         {
             self.cancel_completion();
+            return;
+        }
+
+        // ── Dart fast path ─────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            // `display_if_empty_input` is true only for explicit Ctrl+Space.
+            self.update_completion_dart(
+                path,
+                start_offset,
+                input,
+                char,
+                offset,
+                display_if_empty_input,
+            );
             return;
         }
 
@@ -1900,6 +2283,121 @@ impl EditorData {
         });
     }
 
+    /// Completion via the direct Dart LSP. One request per call — the server
+    /// handles prefix matching server-side, so we don't build an
+    /// input→items cache. Subsequent keystrokes bump `request_id`, which
+    /// makes any in-flight response a no-op.
+    fn update_completion_dart(
+        &self,
+        path: PathBuf,
+        start_offset: usize,
+        input: String,
+        char_before: String,
+        cursor_offset: usize,
+        invoked: bool,
+    ) {
+        use floem::ext_event::create_ext_action;
+        use sparrow_rpc::plugin::PluginId;
+
+        let position = self
+            .doc()
+            .buffer
+            .with_untracked(|b| b.offset_to_position(cursor_offset));
+
+        // Only pass `triggerCharacter` if the server advertised it in
+        // `completionProvider.triggerCharacters` — otherwise the server
+        // treats the whole request as malformed on some versions.
+        let trigger_chars = self.common.dart_lsp.trigger_characters();
+        let trigger_character = if !invoked
+            && char_before.chars().count() == 1
+            && trigger_chars.iter().any(|c| c == &char_before)
+        {
+            Some(char_before.clone())
+        } else {
+            None
+        };
+
+        // LSP spec:
+        //   kind 1 (Invoked)          — typing an identifier character,
+        //                               Ctrl+Space, or programmatic
+        //   kind 2 (TriggerCharacter) — ONLY when a trigger char was typed
+        //                               (requires `triggerCharacter` field)
+        //
+        // We used to send kind=2 for every character, which violates the
+        // spec and makes Dart return empty/no-op for parameter positions.
+        let trigger_kind = if trigger_character.is_some() { 2 } else { 1 };
+
+        let request_id = self.common.completion.with_untracked(|c| c.request_id) + 1;
+        self.common.completion.update(|c| {
+            c.request_id = request_id;
+            c.status = CompletionStatus::Started;
+            c.offset = start_offset;
+            c.path = path.clone();
+            c.input = input;
+            c.filtered_items.clear();
+            c.input_items.clear();
+            c.active.set(0);
+            c.latest_editor_id = Some(self.id());
+        });
+
+        let editor = self.clone();
+        let common = self.common.clone();
+
+        let trigger = create_ext_action(
+            self.scope,
+            move |result: (Option<Vec<lsp_types::CompletionItem>>, bool)| {
+                let (items, _is_incomplete) = result;
+                if let Some(ref items) = items {
+                    let labels: Vec<&str> =
+                        items.iter().take(8).map(|i| i.label.as_str()).collect();
+                    tracing::debug!(
+                    "dart completion: {} items, first 8: {:?}",
+                    items.len(),
+                    labels
+                );
+                } else {
+                    tracing::debug!("dart completion: null result (server returned nothing)");
+                }
+                
+                let mut completion_data = common.completion.get_untracked();
+                match items {
+                    Some(items) if !items.is_empty() => {
+                        // IMPORTANT: `item.data` is preserved here. It's the
+                        // only thing that lets `completionItem/resolve` work
+                        // later, which is the only way to get auto-imports
+                        // and snippet-shaped `textEdit`s.
+                        completion_data.receive_direct(
+                            request_id,
+                            items,
+                            PluginId(0),
+                        );
+                        common.completion.set(completion_data);
+                        common
+                            .completion
+                            .get_untracked()
+                            .update_document_completion(&editor, cursor_offset);
+                    }
+                    _ => {
+                        if completion_data.request_id == request_id {
+                            completion_data.status = CompletionStatus::Inactive;
+                            completion_data.filtered_items.clear();
+                            common.completion.set(completion_data);
+                        }
+                    }
+                }
+            },
+        );
+
+        self.common.dart_lsp.completion_with_trigger(
+            &path,
+            position.line,
+            position.character,
+            trigger_kind,
+            trigger_character.as_deref(),
+            move |items, is_incomplete| trigger((items, is_incomplete)),
+        );
+    }
+
     /// Check if there are completions that are being rendered
     fn has_completions(&self) -> bool {
         self.common.completion.with_untracked(|completion| {
@@ -1909,85 +2407,126 @@ impl EditorData {
     }
 
     fn apply_completion_item(&self, item: &CompletionItem) -> anyhow::Result<()> {
+        use lsp_types::{CompletionItemKind, InsertTextFormat};
+
         let doc = self.doc();
         let buffer = doc.buffer.get_untracked();
         let cursor = self.cursor().get_untracked();
-        // Get all the edits which would be applied in places other than right where the cursor is
-        let additional_edit: Vec<_> = item
-            .additional_text_edits
-            .as_ref()
-            .into_iter()
-            .flatten()
-            .map(|edit| {
-                let selection = sparrow_core::selection::Selection::region(
-                    buffer.offset_of_position(&edit.range.start),
-                    buffer.offset_of_position(&edit.range.end),
-                );
-                (selection, edit.new_text.as_str())
-            })
-            .collect::<Vec<(sparrow_core::selection::Selection, &str)>>();
+
+        // Additional edits (auto-imports, additional locations).
+        let additional_edit_owned: Vec<(sparrow_core::selection::Selection, String)> =
+            item.additional_text_edits
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .map(|edit| {
+                    let selection = sparrow_core::selection::Selection::region(
+                        buffer.offset_of_position(&edit.range.start),
+                        buffer.offset_of_position(&edit.range.end),
+                    );
+                    (selection, edit.new_text.clone())
+                })
+                .collect();
+        let additional_edit: Vec<(sparrow_core::selection::Selection, &str)> =
+            additional_edit_owned
+                .iter()
+                .map(|(s, t)| (s.clone(), t.as_str()))
+                .collect();
 
         let text_format = item
             .insert_text_format
-            .unwrap_or(lsp_types::InsertTextFormat::PLAIN_TEXT);
-        if let Some(edit) = &item.text_edit {
-            match edit {
-                CompletionTextEdit::Edit(edit) => {
-                    let offset = cursor.offset();
-                    let start_offset = buffer.prev_code_boundary(offset);
-                    let end_offset = buffer.next_code_boundary(offset);
-                    let edit_start = buffer.offset_of_position(&edit.range.start);
-                    let edit_end = buffer.offset_of_position(&edit.range.end);
+            .unwrap_or(InsertTextFormat::PLAIN_TEXT);
 
-                    let selection = sparrow_core::selection::Selection::region(
-                        start_offset.min(edit_start),
-                        end_offset.max(edit_end),
-                    );
-                    match text_format {
-                        lsp_types::InsertTextFormat::PLAIN_TEXT => {
-                            self.do_edit(
-                                &selection,
-                                &[
-                                    &[(selection.clone(), edit.new_text.as_str())][..],
-                                    &additional_edit[..],
-                                ]
-                                .concat(),
-                            );
-                            return Ok(());
-                        }
-                        lsp_types::InsertTextFormat::SNIPPET => {
-                            self.completion_apply_snippet(
-                                &edit.new_text,
-                                &selection,
-                                additional_edit,
-                                start_offset,
-                            )?;
-                            return Ok(());
-                        }
-                        _ => {}
-                    }
-                }
-                CompletionTextEdit::InsertAndReplace(_) => (),
+        // Extract raw text and replacement range from `textEdit` if present,
+        // otherwise from `insertText`, otherwise the label.
+        let (raw_insert, replace_start, replace_end) = match &item.text_edit {
+            Some(CompletionTextEdit::Edit(e)) => (
+                e.new_text.clone(),
+                buffer.offset_of_position(&e.range.start),
+                buffer.offset_of_position(&e.range.end),
+            ),
+            Some(CompletionTextEdit::InsertAndReplace(ir)) => (
+                ir.new_text.clone(),
+                buffer.offset_of_position(&ir.replace.start),
+                buffer.offset_of_position(&ir.replace.end),
+            ),
+            None => {
+                let offset = cursor.offset();
+                let s = buffer.prev_code_boundary(offset);
+                let e = buffer.next_code_boundary(offset);
+                let text = item
+                    .insert_text
+                    .clone()
+                    .unwrap_or_else(|| item.label.clone());
+                (text, s, e)
             }
+        };
+
+        let snippet_by_flag = text_format == InsertTextFormat::SNIPPET;
+        let snippet_by_content = Self::looks_like_snippet(&raw_insert);
+
+        // Defensive parens: for callable kinds whose insert text lacks a
+        // call expression, add `($0)` ourselves. This makes `Ro` → `Row()`
+        // work even when the server sends bare `Row` (older Dart SDKs, or
+        // when the server couldn't attach a snippet for some reason).
+        let is_callable = matches!(
+        item.kind,
+        Some(CompletionItemKind::CONSTRUCTOR)
+            | Some(CompletionItemKind::FUNCTION)
+            | Some(CompletionItemKind::METHOD)
+    );
+        let needs_parens = is_callable
+            && !raw_insert.contains('(')
+            && !raw_insert.contains(';')
+            && !raw_insert.contains('=')
+            && !raw_insert.contains('.');
+
+        let (final_text, is_snippet) = if needs_parens {
+            // `Row` → `Row($0)` (cursor inside).
+            (format!("{}($0)", raw_insert), true)
+        } else {
+            (raw_insert, snippet_by_flag || snippet_by_content)
+        };
+
+        let selection =
+            sparrow_core::selection::Selection::region(replace_start, replace_end);
+
+        if is_snippet {
+            self.completion_apply_snippet(
+                &final_text,
+                &selection,
+                additional_edit,
+                replace_start,
+            )?;
+        } else {
+            self.do_edit(
+                &selection,
+                &[
+                    &[(selection.clone(), final_text.as_str())][..],
+                    &additional_edit[..],
+                ]
+                    .concat(),
+            );
         }
 
-        let offset = cursor.offset();
-        let start_offset = buffer.prev_code_boundary(offset);
-        let end_offset = buffer.next_code_boundary(offset);
-        let selection = Selection::region(start_offset, end_offset);
-
-        self.do_edit(
-            &selection,
-            &[
-                &[(
-                    selection.clone(),
-                    item.insert_text.as_deref().unwrap_or(item.label.as_str()),
-                )][..],
-                &additional_edit[..],
-            ]
-            .concat(),
-        );
         Ok(())
+    }
+
+    /// Heuristic: does `text` contain an LSP-style snippet placeholder
+    /// (`$0`, `$1`, `${1:…}`, etc.)?
+    fn looks_like_snippet(text: &str) -> bool {
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i + 1 < bytes.len() {
+            if bytes[i] == b'$' {
+                let next = bytes[i + 1];
+                if next == b'{' || next.is_ascii_digit() {
+                    return true;
+                }
+            }
+            i += 1;
+        }
+        false
     }
 
     pub fn completion_apply_snippet(
@@ -2226,94 +2765,157 @@ impl EditorData {
         }
     }
 
-    pub fn get_code_actions(&self) {
+    /// Fetch once for a particular buffer location; results are delivered on the UI thread.
+    pub fn request_code_actions(&self,callback:impl FnOnce(Result<(PluginId,Vec<lsp_types::CodeActionOrCommand>),String>)+'static){self.request_code_actions_with_kind(None,callback);}
+    pub fn request_code_actions_with_kind(
+        &self,
+        kind:Option<String>,
+        callback: impl FnOnce(
+            Result<(PluginId, Vec<lsp_types::CodeActionOrCommand>), String>,
+        ) + 'static,
+    ) {
         let doc = self.doc();
-        let path = match if doc.loaded() {
-            doc.content.with_untracked(|c| c.path().cloned())
-        } else {
-            None
-        } {
-            Some(path) => path,
-            None => return,
+        let Some(path) = doc
+            .content
+            .with_untracked(|c| c.path().cloned())
+            .filter(|_| doc.loaded())
+        else {
+            callback(Err("The source document is not ready.".into()));
+            return;
         };
-
         let offset = self.cursor().with_untracked(|c| c.offset());
-        let exists = doc
-            .code_actions()
-            .with_untracked(|c| c.contains_key(&offset));
-
-        if exists {
+        let position = doc.buffer.with_untracked(|b| b.offset_to_position(offset));
+        let diagnostics: Vec<_> = doc
+            .diagnostics()
+            .diagnostics_span
+            .get_untracked()
+            .iter_chunks(offset..offset)
+            .filter(|(range, _)| range.start <= offset && range.end >= offset)
+            .map(|(_, d)| d.clone())
+            .collect();
+        if crate::doc::yaml_schema::supports(&path) {
+            let source = doc.buffer.with_untracked(|b| b.to_string());
+            let actions = if kind.as_deref().is_none_or(|k| "quickfix".starts_with(k)) {
+                let mut actions = crate::doc::yaml_schema::code_actions(&path, &source, position.line);
+                actions.extend(crate::doc::pubdev::code_actions(&path, &source, position.line));
+                actions
+            } else { Vec::new() };
+            callback(Ok((PluginId(0), actions)));
             return;
         }
+        if crate::dart::is_dart_path(&path) {
+            if !self.common.dart_lsp.is_available() {
+                callback(Err(
+                    self.common.dart_lsp.unavailable_reason(),
+                ));
+                return;
+            }
+            let content = doc.buffer.with_untracked(|b| b.to_string());
+            let request_kind=kind.clone();
+            let selection=self.cursor().with_untracked(|cursor|doc.buffer.with_untracked(|b|cursor.edit_selection(b)));
+            let range=doc.buffer.with_untracked(|b|lsp_types::Range::new(b.offset_to_position(selection.min_offset()),b.offset_to_position(selection.max_offset())));
+            let local = crate::dart::generate_flutter_code_actions(
+                &path,
+                &content,
+                position.line as usize,
+                position.character as usize,
+            );
+            let send = create_ext_action(
+                self.scope,
+                move |result: Result<
+                    Vec<lsp_types::CodeActionOrCommand>,
+                    String,
+                >| {
+                    callback(result.map(|actions| {
+                        let mut combined = local;
+                        for action in actions {
+                            let title = |a: &lsp_types::CodeActionOrCommand| match a
+                            {
+                                lsp_types::CodeActionOrCommand::CodeAction(a) => {
+                                    a.title.clone()
+                                }
+                                lsp_types::CodeActionOrCommand::Command(a) => {
+                                    a.title.clone()
+                                }
+                            };
+                            if !combined
+                                .iter()
+                                .any(|existing| title(existing) == title(&action))
+                            {
+                                combined.push(action);
+                            }
+                        }
+                        if let Some(kind)=&kind{combined.retain(|action|match action{lsp_types::CodeActionOrCommand::CodeAction(a)=>a.kind.as_ref().is_some_and(|k|k.as_str().starts_with(kind))||a.title.to_lowercase().contains(kind.rsplit('.').next().unwrap_or(kind)),lsp_types::CodeActionOrCommand::Command(a)=>a.title.to_lowercase().contains(kind.rsplit('.').next().unwrap_or(kind))});}
+                        (PluginId(0), combined)
+                    }));
+                },
+            );
+            self.common.dart_lsp.code_actions_range_result(
+                &path,
+                range,
+                &diagnostics,
+                request_kind.as_deref(),
+                move |result| send(result),
+            );
+        } else {
+            let send = create_ext_action(self.scope, move |result| callback(result));
+            self.common.proxy.get_code_actions(
+                path,
+                position,
+                diagnostics,
+                move |result| {
+                    send(match result {
+                        Ok(ProxyResponse::GetCodeActionsResponse {
+                            plugin_id,
+                            resp,
+                        }) => Ok((plugin_id, resp)),
+                        _ => {
+                            Err("Could not fetch quick fixes. Please retry.".into())
+                        }
+                    })
+                },
+            );
+        }
+    }
 
-        // insert some empty data, so that we won't make the request again
-        doc.code_actions().update(|c| {
-            c.insert(offset, (PluginId(0), im::Vector::new()));
+    pub fn get_code_actions(&self) {
+        let doc = self.doc();
+        let offset = self.cursor().with_untracked(|c| c.offset());
+        if !doc.loaded()
+            || doc
+                .code_actions()
+                .with_untracked(|cache| cache.contains_key(&offset))
+        {
+            return;
+        }
+        let revision = doc.rev();
+        doc.code_actions().update(|cache| {
+            cache.insert(offset, (PluginId(0), im::Vector::new()));
         });
-
-        let (position, rev, diagnostics) = doc.buffer.with_untracked(|buffer| {
-            let position = buffer.offset_to_position(offset);
-            let rev = doc.rev();
-
-            // Get the diagnostics for the current line, which the LSP might use to inform
-            // what code actions are available (such as fixes for the diagnostics).
-            let diagnostics = doc
-                .diagnostics()
-                .diagnostics_span
-                .get_untracked()
-                .iter_chunks(offset..offset)
-                .filter(|(iv, _diag)| iv.start <= offset && iv.end >= offset)
-                .map(|(_iv, diag)| diag)
-                .cloned()
-                .collect();
-
-            (position, rev, diagnostics)
+        self.request_code_actions(move |result| {
+            if doc.rev() != revision {
+                return;
+            }
+            doc.code_actions().update(|cache| match result {
+                Ok((plugin_id, actions)) => {
+                    cache.insert(offset, (plugin_id, actions.into_iter().collect()));
+                }
+                Err(_) => {
+                    cache.remove(&offset);
+                }
+            });
         });
-
-        let send = create_ext_action(
-            self.scope,
-            move |resp: (PluginId, CodeActionResponse)| {
-                if doc.rev() == rev {
-                    doc.code_actions().update(|c| {
-                        c.insert(offset, (resp.0, resp.1.into()));
-                    });
-                }
-            },
-        );
-
-        self.common.proxy.get_code_actions(
-            path,
-            position,
-            diagnostics,
-            move |result| {
-                if let Ok(ProxyResponse::GetCodeActionsResponse {
-                    plugin_id,
-                    resp,
-                }) = result
-                {
-                    send((plugin_id, resp))
-                }
-            },
-        );
     }
 
     pub fn show_code_actions(&self, mouse_click: bool) {
-        let offset = self.cursor().with_untracked(|c| c.offset());
-        let doc = self.doc();
-        let code_actions = doc
-            .code_actions()
-            .with_untracked(|c| c.get(&offset).cloned());
-        if let Some((plugin_id, code_actions)) = code_actions {
-            if !code_actions.is_empty() {
-                self.common.internal_command.send(
-                    InternalCommand::ShowCodeActions {
-                        offset,
-                        mouse_click,
-                        plugin_id,
-                        code_actions,
-                    },
-                );
-            }
+        if self.doc().loaded() {
+            self.common
+                .internal_command
+                .send(InternalCommand::RequestCodeActions {
+                    offset: self.cursor().with_untracked(|c| c.offset()),
+                    mouse_click,
+                    kind:None,
+                });
         }
     }
 
@@ -2329,6 +2931,7 @@ impl EditorData {
         let doc = self.doc();
         let is_pristine = doc.is_pristine();
         let content = doc.content.get_untracked();
+        if content.read_only() { return; }
 
         if let DocContent::Scratch { .. } = &content {
             self.common
@@ -2526,83 +3129,57 @@ impl EditorData {
 
     fn rename(&self) {
         let doc = self.doc();
-        let path = match if doc.loaded() {
-            doc.content.with_untracked(|c| c.path().cloned())
-        } else {
-            None
-        } {
-            Some(path) => path,
-            None => return,
+        let Some(path) = doc
+            .content
+            .with_untracked(|c| c.path().cloned())
+            .filter(|_| doc.loaded())
+        else {
+            return;
         };
-
+        if doc.content.with_untracked(|c| c.read_only()) {
+            self.common
+                .internal_command
+                .send(InternalCommand::ShowAlert {
+                    title: "Rename".into(),
+                    msg: "SDK and dependency source is read-only.".into(),
+                    buttons: Vec::new(),
+                });
+            return;
+        }
         let offset = self.cursor().with_untracked(|c| c.offset());
-        let (position, rev) = doc
-            .buffer
-            .with_untracked(|buffer| (buffer.offset_to_position(offset), doc.rev()));
-
-        let cursor = self.cursor();
-        let buffer = doc.buffer;
-        let internal_command = self.common.internal_command;
-        let local_path = path.clone();
-        let send = create_ext_action(self.scope, move |result| {
-            if let Ok(ProxyResponse::PrepareRename { resp }) = result {
-                if buffer.with_untracked(|buffer| buffer.rev()) != rev {
-                    return;
-                }
-
-                if cursor.with_untracked(|c| c.offset()) != offset {
-                    return;
-                }
-
-                let (start, _end, position, placeholder) =
-                    buffer.with_untracked(|buffer| match resp {
-                        lsp_types::PrepareRenameResponse::Range(range) => (
-                            buffer.offset_of_position(&range.start),
-                            buffer.offset_of_position(&range.end),
-                            range.start,
-                            None,
-                        ),
-                        lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-                            range,
-                            placeholder,
-                        } => (
-                            buffer.offset_of_position(&range.start),
-                            buffer.offset_of_position(&range.end),
-                            range.start,
-                            Some(placeholder),
-                        ),
-                        lsp_types::PrepareRenameResponse::DefaultBehavior {
-                            ..
-                        } => {
-                            let start = buffer.prev_code_boundary(offset);
-                            let position = buffer.offset_to_position(start);
-                            (
-                                start,
-                                buffer.next_code_boundary(offset),
-                                position,
-                                None,
-                            )
-                        }
-                    });
-                let placeholder = placeholder.unwrap_or_else(|| {
-                    buffer.with_untracked(|buffer| {
-                        let (start, end) = buffer.select_word(offset);
-                        buffer.slice_to_cow(start..end).to_string()
+        let position = doc.buffer.with_untracked(|b| b.offset_to_position(offset));
+        let revision = doc.rev();
+        let commands = self.common.internal_command;
+        let target = path.clone();
+        let send = create_ext_action(self.scope, move |response| {
+            commands.send(InternalCommand::PreparedRename {
+                path: target,
+                offset,
+                revision,
+                response,
+            })
+        });
+        if crate::dart::is_dart_path(&path) {
+            if self.common.dart_lsp.is_available() {
+                self.common.dart_lsp.prepare_rename_result(
+                    &path,
+                    position.line,
+                    position.character,
+                    move |result| send(result),
+                );
+            } else {
+                send(Err(self.common.dart_lsp.unavailable_reason()));
+            }
+        } else {
+            self.common
+                .proxy
+                .prepare_rename(path, position, move |result| {
+                    send(match result {
+                        Ok(ProxyResponse::PrepareRename { resp }) => Ok(Some(resp)),
+                        _ => Err("This symbol cannot be renamed.".into()),
                     })
                 });
-                internal_command.send(InternalCommand::StartRename {
-                    path: local_path.clone(),
-                    placeholder,
-                    start,
-                    position,
-                });
-            }
-        });
-        self.common
-            .proxy
-            .prepare_rename(path, position, move |result| {
-                send(result);
-            });
+        }
     }
 
     #[instrument]
@@ -2937,6 +3514,9 @@ impl EditorData {
                 ]
             } else {
                 vec![
+                    Some(CommandKind::Focus(FocusCommand::ShowCodeActions)),
+                    Some(CommandKind::Focus(FocusCommand::FormatDocument)),
+                    None,
                     Some(CommandKind::Focus(FocusCommand::GotoDefinition)),
                     Some(CommandKind::Focus(FocusCommand::GotoTypeDefinition)),
                     Some(CommandKind::Workbench(
@@ -2949,9 +3529,9 @@ impl EditorData {
                         SparrowWorkbenchCommand::GoToImplementation,
                     )),
                     Some(CommandKind::Focus(FocusCommand::Rename)),
-                    Some(CommandKind::Workbench(
-                        SparrowWorkbenchCommand::RunInTerminal,
-                    )),
+                    Some(CommandKind::Workbench(SparrowWorkbenchCommand::RunCurrentFile)),
+                    Some(CommandKind::Workbench(SparrowWorkbenchCommand::DebugCurrentFile)),
+                    Some(CommandKind::Workbench(SparrowWorkbenchCommand::ProfileCurrentFile)),
                     None,
                     Some(CommandKind::Workbench(
                         SparrowWorkbenchCommand::RevealInPanel,
@@ -2989,18 +3569,55 @@ impl EditorData {
             )));
         }
         let sparrow_command = self.common.sparrow_command;
+        let executable=path.as_deref().is_some_and(crate::dart::is_dart_path)&&doc.buffer.with_untracked(|b|crate::dart::regex::has_entry_point(&b.to_string()));
         for cmd in cmds {
             if let Some(cmd) = cmd {
-                menu = menu.entry(
-                    MenuItem::new(cmd.desc().unwrap_or_else(|| cmd.str())).action(
-                        move || {
-                            sparrow_command.send(SparrowCommand {
-                                kind: cmd.clone(),
-                                data: None,
-                            })
-                        },
-                    ),
+                if matches!(&cmd,CommandKind::Workbench(SparrowWorkbenchCommand::RunCurrentFile|SparrowWorkbenchCommand::DebugCurrentFile|SparrowWorkbenchCommand::ProfileCurrentFile))&&!executable{continue;}
+                if matches!(&cmd,CommandKind::Workbench(SparrowWorkbenchCommand::ProfileCurrentFile))&&path.as_deref().is_none_or(|p|crate::dart::test_runner::is_test_file(p)||!crate::dart::test_runner::project_root(p).as_deref().is_some_and(crate::dart::is_flutter_project)){continue;}
+                let file_command = matches!(
+                    &cmd,
+                    CommandKind::Workbench(
+                        SparrowWorkbenchCommand::RunCurrentFile
+                            | SparrowWorkbenchCommand::DebugCurrentFile
+                            | SparrowWorkbenchCommand::ProfileCurrentFile
+                    )
                 );
+                let target = if file_command {
+                    path.clone().map(|path| {
+                        serde_json::to_value(path).expect("path serializes")
+                    })
+                } else {
+                    None
+                };
+                let label = match &cmd {
+                    CommandKind::Workbench(
+                        SparrowWorkbenchCommand::RunCurrentFile,
+                    ) => format!(
+                        "Run '{}'",
+                        path.as_ref()
+                            .unwrap()
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                    ),
+                    CommandKind::Workbench(
+                        SparrowWorkbenchCommand::DebugCurrentFile,
+                    ) => format!(
+                        "Debug '{}'",
+                        path.as_ref()
+                            .unwrap()
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                    ),
+                    _ => cmd.desc().unwrap_or_else(|| cmd.str()).to_owned(),
+                };
+                menu = menu.entry(MenuItem::new(label).action(move || {
+                    sparrow_command.send(SparrowCommand {
+                        kind: cmd.clone(),
+                        data: target.clone(),
+                    })
+                }));
             } else {
                 menu = menu.separator();
             }
@@ -3024,7 +3641,40 @@ impl EditorData {
         let config = self.common.config;
         let hover_data = self.common.hover.clone();
         let editor_id = self.id();
+        let revision = doc.rev();
+        let hover_focus = self.common.focus;
+
+        // ── Dart fast path ─────────────────────────────────────────
+        // Skip the proxy round-trip; talk directly to the warm LSP.
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            use floem::ext_event::create_ext_action;
+
+            let hover_data_cb = hover_data.clone();
+            // `create_ext_action` returns a `Send` trigger; the closure it
+            // wraps runs on the UI thread, so it may freely touch RwSignals.
+            let trigger = create_ext_action(
+                self.scope,
+                move |hover: Option<lsp_types::Hover>| {
+                    if doc.rev() != revision || hover_focus.get_untracked() == Focus::CodeAction { return; }
+                    let Some(hover) = hover else { return };
+                    let content = parse_hover_resp(hover, &config.get_untracked());
+                    hover_data_cb.content.set(content);
+                    hover_data_cb.offset.set(offset);
+                    hover_data_cb.editor_id.set(editor_id);
+                    hover_data_cb.active.set(true);
+                },
+            );
+            self.common.dart_lsp.hover(
+                &path,
+                position.line,
+                position.character,
+                move |hover| trigger(hover),
+            );
+            return;
+        }
+
         let send = create_ext_action(self.scope, move |resp| {
+            if doc.rev() != revision || hover_focus.get_untracked() == Focus::CodeAction { return; }
             if let Ok(ProxyResponse::HoverResponse { hover, .. }) = resp {
                 let content = parse_hover_resp(hover, &config.get_untracked());
                 hover_data.content.set(content);
@@ -3447,6 +4097,22 @@ impl KeyPressFocus for EditorData {
                 );
 
                 self.apply_deltas(&deltas);
+                // Signature help trigger
+                if let Some(ch) = c.chars().next() {
+                    match ch {
+                        '(' | ',' => {
+                            self.update_signature_help(Some(ch));
+                        }
+                        ')' | ';' | '}' => {
+                            self.cancel_signature_help();
+                        }
+                        _ if self.signature_help_active() => {
+                            // Update active-param highlight as user types
+                            self.update_signature_help(None);
+                        }
+                        _ => {}
+                    }
+                }
             } else if let Some(direction) = self.inline_find.get_untracked() {
                 self.inline_find(direction.clone(), c);
                 self.last_inline_find.set(Some((direction, c.to_string())));
@@ -3478,6 +4144,11 @@ impl DocSignal {
         (doc as Rc<dyn ::std::any::Any>)
             .downcast()
             .expect("doc is not Rc<Doc>")
+    }
+
+    pub fn try_get_untracked(&self) -> Option<Rc<Doc>> {
+        let doc=self.inner.try_get_untracked()?;
+        (doc as Rc<dyn ::std::any::Any>).downcast().ok()
     }
 
     pub fn get_untracked(&self) -> Rc<Doc> {

@@ -14,7 +14,7 @@ use sparrow_rpc::plugin::VoltID;
 use crate::{
     app::{AppData, AppInfo},
     doc::DocInfo,
-    panel::{data::PanelOrder, kind::PanelKind},
+    panel::data::PanelOrder,
     window::{WindowData, WindowInfo},
     window_tab::WindowTabData,
     workspace::{SparrowWorkspace, WorkspaceInfo},
@@ -223,6 +223,9 @@ impl SparrowDb {
         Ok(())
     }
 
+    pub fn save_workspace_info(&self, workspace:SparrowWorkspace, info:WorkspaceInfo) {
+        let _=self.save_tx.send(SaveEvent::Workspace(workspace,info));
+    }
     pub fn save_window_tab(&self, data: Rc<WindowTabData>) -> Result<()> {
         let workspace = (*data.workspace).clone();
         let workspace_info = data.workspace_info();
@@ -238,6 +241,15 @@ impl SparrowDb {
         &self,
         workspace: &SparrowWorkspace,
     ) -> Result<WorkspaceInfo> {
+        if workspace.kind.is_local() {
+            if let Some(root)=workspace.path.as_deref() {
+                match crate::project_session::read(root) {
+                    Ok(Some(info))=>return Ok(info),
+                    Ok(None)=>{},
+                    Err(error)=>tracing::warn!("Project session could not be restored: {error}"),
+                }
+            }
+        }
         let info = std::fs::read_to_string(
             self.workspace_folder
                 .join(workspace_folder_name(workspace))
@@ -258,6 +270,11 @@ impl SparrowDb {
         }
         let workspace_info = serde_json::to_string_pretty(info)?;
         std::fs::write(folder.join(WORKSPACE_INFO), workspace_info)?;
+        if workspace.kind.is_local() {
+            if let Some(root)=workspace.path.as_deref() {
+                if let Err(error)=crate::project_session::write(root,info){tracing::warn!("Could not save project-local workspace: {error}");}
+            }
+        }
         Ok(())
     }
 
@@ -370,16 +387,7 @@ impl SparrowDb {
 
     pub fn get_panel_orders(&self) -> Result<PanelOrder> {
         let panel_orders = std::fs::read_to_string(self.folder.join(PANEL_ORDERS))?;
-        let mut panel_orders: PanelOrder = serde_json::from_str(&panel_orders)?;
-
-        use strum::IntoEnumIterator;
-        for kind in PanelKind::iter() {
-            if kind.position(&panel_orders).is_none() {
-                let panels =
-                    panel_orders.entry(kind.default_position()).or_default();
-                panels.push_back(kind);
-            }
-        }
+        let panel_orders: PanelOrder = serde_json::from_str(&panel_orders)?;
 
         Ok(panel_orders)
     }

@@ -11,6 +11,7 @@ impl SparrowIcons {
     pub const LINK: &'static str = "link";
     pub const ERROR: &'static str = "error";
     pub const ADD: &'static str = "add";
+    pub const REMOVE: &'static str = "minus";
     pub const CLOSE: &'static str = "close";
     pub const REMOTE: &'static str = "remote";
     pub const PROBLEM: &'static str = "error";
@@ -72,8 +73,7 @@ impl SparrowIcons {
     pub const ITEM_OPENED: &'static str = "item.opened";
     pub const ITEM_CLOSED: &'static str = "item.closed";
 
-    pub const DIRECTORY_CLOSED: &'static str = "directory.closed";
-    pub const DIRECTORY_OPENED: &'static str = "directory.opened";
+    pub const DIRECTORY: &'static str = "directory";
 
     pub const PANEL_RESTORE: &'static str = "panel.restore";
     pub const PANEL_MAXIMISE: &'static str = "panel.maximise";
@@ -168,4 +168,49 @@ impl SparrowIcons {
         "completion_item_kind.struct";
     pub const COMPLETION_ITEM_KIND_VARIABLE: &'static str =
         "completion_item_kind.variable";
+
+    // ── Dart / Flutter branding ──
+    pub const DART:              &'static str = "dart_logo";
+    pub const FLUTTER:           &'static str = "flutter_logo";
+    pub const PUB:               &'static str = "pub_logo";
+    pub const MATERIAL:          &'static str = "material_logo";
+    pub const CUPERTINO:         &'static str = "cupertino_logo";
+
+    // ── Widget tree ──
+    pub const WIDGET:            &'static str = "widget";
+    pub const WIDGET_STATEFUL:   &'static str = "widget_stateful";
+    pub const WIDGET_STATELESS:  &'static str = "widget_stateless";
+    pub const WIDGET_INHERITED:  &'static str = "widget_inherited";
+    pub const WIDGET_BUILDER:    &'static str = "widget_builder";
+    pub const WIDGET_KEY:        &'static str = "widget_key";
+    pub const WIDGET_LIST:       &'static str = "widget_list";
+    pub const WIDGET_GRID:       &'static str = "widget_grid";
+    pub const WIDGET_LAYOUT:     &'static str = "widget_layout";
+
+    // ── Dart language features ──
+    pub const DART_MIXIN:        &'static str = "dart_mixin";
+    pub const DART_EXTENSION:    &'static str = "dart_extension";
+    pub const DART_TOPLEVEL_FN:  &'static str = "dart_toplevel_fn";
+    pub const DART_CONSTRUCTOR:  &'static str = "dart_constructor";
+    pub const DART_GETTER:       &'static str = "dart_getter";
+    pub const DART_SETTER:       &'static str = "dart_setter";
+    pub const DART_FUTURE:       &'static str = "dart_future";
+    pub const DART_STREAM:       &'static str = "dart_stream";
+    pub const DART_ISOLATE:      &'static str = "dart_isolate";
+
+    // ── Flutter dev tools & devices ──
+    pub const FLUTTER_HOT_RELOAD:  &'static str = "flutter_hot_reload";
+    pub const FLUTTER_HOT_RESTART: &'static str = "flutter_hot_restart";
+    pub const FLUTTER_STOP:        &'static str = "flutter_stop";
+    pub const FLUTTER_ATTACH:      &'static str = "flutter_attach";
+    pub const FLUTTER_DEVICE:      &'static str = "flutter_device";
+    pub const FLUTTER_INSPECTOR:   &'static str = "flutter_inspector";
+    pub const FLUTTER_OUTLINE:     &'static str = "flutter_outline";
+    pub const FLUTTER_PERFORMANCE: &'static str = "flutter_performance";
+    pub const FLUTTER_RUN:         &'static str = "flutter_run";
+    pub const DEVICE_MANAGER:      &'static str = "device_manager";
+
+    pub const DEVICE_MOBILE:       &'static str = "device.mobile";
+    pub const DEVICE_DESKTOP:      &'static str = "device.desktop";
+    pub const DEVICE_WEB:          &'static str = "device.web";
 }

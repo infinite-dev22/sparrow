@@ -1,0 +1,303 @@
+{
+  "package": "lucide-static",
+  "version": "1.64.0",
+  "variants": {
+    "filetype-generated.svg": {
+      "icon": "file-cog",
+      "stroke": "#69b7db",
+      "customized": true
+    },
+    "filetype-freezed.svg": {
+      "icon": "snowflake",
+      "stroke": "#83c9e8",
+      "customized": true
+    },
+    "filetype-mocks.svg": {
+      "icon": "file-scan",
+      "stroke": "#aa8ee3",
+      "customized": true
+    },
+    "filetype-metadata.svg": {
+      "icon": "file-clock",
+      "stroke": "#68b7dd",
+      "customized": true
+    },
+    "filetype-packages.svg": {
+      "icon": "boxes",
+      "stroke": "#77b7cf",
+      "customized": true
+    },
+    "filetype-rive.svg": {
+      "icon": "spline",
+      "stroke": "#e1b36c",
+      "customized": true
+    },
+    "filetype-shader.svg": {
+      "icon": "sparkles",
+      "stroke": "#b49ae5",
+      "customized": true
+    },
+    "filetype-database.svg": {
+      "icon": "database",
+      "stroke": "#cba66c",
+      "customized": true
+    },
+    "filetype-audio.svg": {
+      "icon": "file-music",
+      "stroke": "#b79be5",
+      "customized": true
+    },
+    "filetype-video.svg": {
+      "icon": "file-video-camera",
+      "stroke": "#cf91b0",
+      "customized": true
+    },
+    "filetype-model.svg": {
+      "icon": "file-axis-3d",
+      "stroke": "#80bcb2",
+      "customized": true
+    },
+    "filetype-csv.svg": {
+      "icon": "file-spreadsheet",
+      "stroke": "#84b998",
+      "customized": true
+    },
+    "filetype-text.svg": {
+      "icon": "file-text",
+      "stroke": "#a8adb8",
+      "customized": true
+    },
+    "filetype-kotlin.svg": {
+      "icon": "file-code",
+      "stroke": "#b49ae5",
+      "customized": true
+    },
+    "filetype-java.svg": {
+      "icon": "coffee",
+      "stroke": "#dba16d",
+      "customized": true
+    },
+    "filetype-gradle.svg": {
+      "icon": "file-cog",
+      "stroke": "#81b8aa",
+      "customized": true
+    },
+    "filetype-properties.svg": {
+      "icon": "file-sliders",
+      "stroke": "#a9b5c9",
+      "customized": true
+    },
+    "filetype-proguard.svg": {
+      "icon": "shield-check",
+      "stroke": "#88b5a2",
+      "customized": true
+    },
+    "filetype-keystore.svg": {
+      "icon": "file-key",
+      "stroke": "#d5b36f",
+      "customized": true
+    },
+    "filetype-archive.svg": {
+      "icon": "file-archive",
+      "stroke": "#c5ac80",
+      "customized": true
+    },
+    "filetype-swift.svg": {
+      "icon": "file-code",
+      "stroke": "#e6a07e",
+      "customized": true
+    },
+    "filetype-objc.svg": {
+      "icon": "file-code",
+      "stroke": "#86afd9",
+      "customized": true
+    },
+    "filetype-header.svg": {
+      "icon": "file-code-corner",
+      "stroke": "#b294cb",
+      "customized": true
+    },
+    "filetype-plist.svg": {
+      "icon": "list-tree",
+      "stroke": "#a8b7d1",
+      "customized": true
+    },
+    "filetype-entitlements.svg": {
+      "icon": "file-lock",
+      "stroke": "#b59bcf",
+      "customized": true
+    },
+    "filetype-xcode.svg": {
+      "icon": "folder-code",
+      "stroke": "#89b2df",
+      "customized": true
+    },
+    "filetype-pods.svg": {
+      "icon": "package",
+      "stroke": "#d88e94",
+      "customized": true
+    },
+    "filetype-interface.svg": {
+      "icon": "panels-top-left",
+      "stroke": "#a9a0da",
+      "customized": true
+    },
+    "filetype-apple-assets.svg": {
+      "icon": "images",
+      "stroke": "#a0b9d4",
+      "customized": true
+    },
+    "filetype-framework.svg": {
+      "icon": "blocks",
+      "stroke": "#a1b2d0",
+      "customized": true
+    },
+    "filetype-html.svg": {
+      "icon": "file-code",
+      "stroke": "#de997b",
+      "customized": true
+    },
+    "filetype-css.svg": {
+      "icon": "file-code-corner",
+      "stroke": "#83aee2",
+      "customized": true
+    },
+    "filetype-javascript.svg": {
+      "icon": "file-code",
+      "stroke": "#d6bf75",
+      "customized": true
+    },
+    "filetype-wasm.svg": {
+      "icon": "binary",
+      "stroke": "#ac9bdd",
+      "customized": true
+    },
+    "filetype-c.svg": {
+      "icon": "file-code",
+      "stroke": "#93aed0",
+      "customized": true
+    },
+    "filetype-cpp.svg": {
+      "icon": "file-code-corner",
+      "stroke": "#83b5df",
+      "customized": true
+    },
+    "filetype-cmake.svg": {
+      "icon": "triangle",
+      "stroke": "#94b9a5",
+      "customized": true
+    },
+    "filetype-resource.svg": {
+      "icon": "panels-top-left",
+      "stroke": "#b2a2cf",
+      "customized": true
+    },
+    "filetype-binary.svg": {
+      "icon": "file-digit",
+      "stroke": "#9bacc0",
+      "customized": true
+    },
+    "filetype-desktop.svg": {
+      "icon": "monitor",
+      "stroke": "#9ab4ca",
+      "customized": true
+    },
+    "filetype-env.svg": {
+      "icon": "file-key",
+      "stroke": "#c8b378",
+      "customized": true
+    },
+    "filetype-git.svg": {
+      "icon": "git-branch",
+      "stroke": "#ce927d",
+      "customized": true
+    },
+    "filetype-ide.svg": {
+      "icon": "folder-cog",
+      "stroke": "#af9dce",
+      "customized": true
+    },
+    "filetype-shell.svg": {
+      "icon": "file-terminal",
+      "stroke": "#8fbd9c",
+      "customized": true
+    },
+    "filetype-batch.svg": {
+      "icon": "file-terminal",
+      "stroke": "#91accc",
+      "customized": true
+    },
+    "filetype-powershell.svg": {
+      "icon": "file-terminal",
+      "stroke": "#7fb2df",
+      "customized": true
+    },
+    "filetype-package.svg": {
+      "icon": "package",
+      "stroke": "#70b9da",
+      "customized": true
+    },
+    "filetype-lock.svg": {
+      "icon": "file-lock",
+      "stroke": "#c8b378",
+      "customized": true
+    },
+    "filetype-config.svg": {
+      "icon": "file-cog",
+      "stroke": "#a8b4c9",
+      "customized": true
+    },
+    "filetype-build.svg": {
+      "icon": "hammer",
+      "stroke": "#a7b994",
+      "customized": true
+    },
+    "filetype-yaml.svg": {
+      "icon": "file-sliders",
+      "stroke": "#af9ecb",
+      "customized": true
+    },
+    "filetype-localization.svg": {
+      "icon": "languages",
+      "stroke": "#8bbfa8",
+      "customized": true
+    },
+    "filetype-image.svg": {
+      "icon": "file-image",
+      "stroke": "#b69cdd",
+      "customized": true
+    },
+    "filetype-vector.svg": {
+      "icon": "pen-tool",
+      "stroke": "#c6a3d7",
+      "customized": true
+    },
+    "filetype-font.svg": {
+      "icon": "file-type",
+      "stroke": "#c1a2cc",
+      "customized": true
+    },
+    "filetype-json.svg": {
+      "icon": "file-braces",
+      "stroke": "#d2b97a",
+      "customized": true
+    },
+    "filetype-xml.svg": {
+      "icon": "file-code",
+      "stroke": "#dba875",
+      "customized": true
+    },
+    "filetype-markdown.svg": {
+      "icon": "notebook-pen",
+      "stroke": "#91b4da",
+      "customized": true
+    },
+    "filetype-docker.svg": {
+      "icon": "brand-docker",
+      "source": "Tabler Icons",
+      "stroke": "#4285f4",
+      "customized": true
+    }
+  },
+  "note": "Historical Lucide bases for the initial import; SVG assets include subsequent project artwork edits and are authoritative."
+}

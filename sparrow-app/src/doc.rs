@@ -1,3 +1,6 @@
+mod yaml;
+pub(crate) mod yaml_schema;
+pub(crate) mod pubdev;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -41,7 +44,7 @@ use lapce_xi_rope::{
 };
 use lsp_types::{
     CodeActionOrCommand, CodeLens, Diagnostic, DiagnosticSeverity,
-    DocumentSymbolResponse, InlayHint, InlayHintLabel, TextEdit,
+    InlayHint, InlayHintLabel, TextEdit,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -81,10 +84,7 @@ use crate::{
     history::DocumentHistory,
     keypress::KeyPressFocus,
     main_split::Editors,
-    panel::{
-        document_symbol::{SymbolData, SymbolInformationItemData},
-        kind::PanelKind,
-    },
+    panel::kind::PanelKind,
     window_tab::{CommonData, Focus},
     workspace::SparrowWorkspace,
 };
@@ -94,6 +94,20 @@ pub struct DiagnosticData {
     pub expanded: RwSignal<bool>,
     pub diagnostics: RwSignal<im::Vector<Diagnostic>>,
     pub diagnostics_span: RwSignal<Spans<Diagnostic>>,
+}
+
+impl DiagnosticData {
+    /// A language server update must not erase local YAML parser diagnostics.
+    pub(crate) fn set_external(&self, external: impl IntoIterator<Item = Diagnostic>) {
+        let builtin = self.diagnostics.get_untracked().into_iter().filter(yaml::is_builtin);
+        self.diagnostics.set(external.into_iter().chain(builtin)
+            .sorted_by_key(|diagnostic| diagnostic.range.start).collect());
+    }
+    fn set_yaml(&self, diagnostics: Vec<Diagnostic>) {
+        let external = self.diagnostics.get_untracked().into_iter().filter(|d| !yaml::is_builtin(d));
+        self.diagnostics.set(external.chain(diagnostics)
+            .sorted_by_key(|diagnostic| diagnostic.range.start).collect());
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,6 +233,8 @@ pub struct Doc {
     semantic_styles: RwSignal<Option<Spans<Style>>>,
     /// Inlay hints for the document
     pub inlay_hints: RwSignal<Option<Spans<InlayHint>>>,
+    /// Closing labels for Flutter/Dart widget trees
+    pub closing_labels: RwSignal<Option<Vec<crate::dart::ClosingLabel>>>,
     /// Current completion lens text, if any.
     /// This will be displayed even on views that are not focused.
     pub completion_lens: RwSignal<Option<String>>,
@@ -255,10 +271,8 @@ pub struct Doc {
     /// The diagnostics for the document
     pub diagnostics: DiagnosticData,
 
-    editors: Editors,
+    pub(crate) editors: Editors,
     pub common: Rc<CommonData>,
-
-    pub document_symbol_data: RwSignal<Option<SymbolData>>,
 
     get_highlights_status: RwSignal<DocumentHighlightsStatus>,
     pub highlights: RwSignal<Option<Vec<DocumentHighlight>>>,
@@ -274,6 +288,8 @@ impl Doc {
     ) -> Self {
         let syntax = Syntax::init(&path);
         let config = common.config.get_untracked();
+        let read_only = matches!(common.workspace.kind, crate::workspace::SparrowWorkspaceType::Local)
+            && crate::dart::library_access::read_only(&path, common.workspace.path.as_deref());
         Doc {
             scope: cx,
             buffer_id: BufferId::next(),
@@ -287,6 +303,7 @@ impl Doc {
             ))),
             semantic_styles: cx.create_rw_signal(None),
             inlay_hints: cx.create_rw_signal(None),
+            closing_labels: cx.create_rw_signal(None),
             diagnostics,
             completion_lens: cx.create_rw_signal(None),
             completion_pos: cx.create_rw_signal((0, 0)),
@@ -295,7 +312,7 @@ impl Doc {
             cache_rev: cx.create_rw_signal(0),
             content: cx.create_rw_signal(DocContent::File {
                 path,
-                read_only: false,
+                read_only,
             }),
             loaded: cx.create_rw_signal(false),
             histories: cx.create_rw_signal(im::HashMap::new()),
@@ -307,7 +324,6 @@ impl Doc {
             editors,
             common,
             code_lens: cx.create_rw_signal(im::HashMap::new()),
-            document_symbol_data: cx.create_rw_signal(None),
             folding_ranges: cx.create_rw_signal(FoldingRanges::default()),
             get_highlights_status: cx
                 .create_rw_signal(DocumentHighlightsStatus::Ready),
@@ -340,6 +356,7 @@ impl Doc {
             ))),
             semantic_styles: cx.create_rw_signal(None),
             inlay_hints: cx.create_rw_signal(None),
+            closing_labels: cx.create_rw_signal(None),
             diagnostics: DiagnosticData {
                 expanded: cx.create_rw_signal(true),
                 diagnostics: cx.create_rw_signal(im::Vector::new()),
@@ -361,7 +378,6 @@ impl Doc {
             editors,
             common,
             code_lens: cx.create_rw_signal(im::HashMap::new()),
-            document_symbol_data: cx.create_rw_signal(None),
             folding_ranges: cx.create_rw_signal(FoldingRanges::default()),
             get_highlights_status: cx
                 .create_rw_signal(DocumentHighlightsStatus::Ready),
@@ -394,6 +410,7 @@ impl Doc {
             ))),
             semantic_styles: cx.create_rw_signal(None),
             inlay_hints: cx.create_rw_signal(None),
+            closing_labels: cx.create_rw_signal(None),
             diagnostics: DiagnosticData {
                 expanded: cx.create_rw_signal(true),
                 diagnostics: cx.create_rw_signal(im::Vector::new()),
@@ -415,7 +432,6 @@ impl Doc {
             editors,
             common,
             code_lens: cx.create_rw_signal(im::HashMap::new()),
-            document_symbol_data: cx.create_rw_signal(None),
             folding_ranges: cx.create_rw_signal(FoldingRanges::default()),
             get_highlights_status: cx
                 .create_rw_signal(DocumentHighlightsStatus::Ready),
@@ -480,11 +496,13 @@ impl Doc {
             }
             self.clear_sticky_headers_cache();
         });
+        self.queue_yaml_lint();
     }
 
     /// Set the syntax highlighting this document should use.
     pub fn set_language(&self, language: SparrowLanguage) {
         self.syntax.set(Syntax::from_language(language));
+        self.queue_yaml_lint();
     }
 
     pub fn find(&self) -> &Find {
@@ -584,7 +602,7 @@ impl Doc {
             buffer.set_cursor_before(old_cursor);
             buffer.set_cursor_after(cursor.mode.clone());
         });
-        self.apply_deltas(&deltas);
+        self.apply_deltas_with_kind(&deltas,crate::workspace_undo::ChangeKind::Insert);
         deltas
     }
 
@@ -597,11 +615,13 @@ impl Doc {
             return None;
         }
 
+        let unchanged=self.buffer.with_untracked(|buffer|edits.iter().all(|(selection,text)|selection.as_ref().regions().iter().all(|region|buffer.slice_to_cow(region.min()..region.max()).as_ref()==*text)));
+        if unchanged {return None;}
         let (text, delta, inval_lines) = self
             .buffer
             .try_update(|buffer| buffer.edit(edits, edit_type))
             .unwrap();
-        self.apply_deltas(&[(text.clone(), delta.clone(), inval_lines.clone())]);
+        self.apply_deltas_with_kind(&[(text.clone(), delta.clone(), inval_lines.clone())],crate::workspace_undo::ChangeKind::from_edit_type(edit_type));
         Some((text, delta, inval_lines))
     }
 
@@ -620,6 +640,7 @@ impl Doc {
         }
 
         let mut clipboard = SystemClipboard::new();
+        let kind=crate::workspace_undo::ChangeKind::command(cmd,cursor);
         let old_cursor = cursor.mode.clone();
         let deltas = self.syntax.with_untracked(|syntax| {
             self.buffer
@@ -647,13 +668,20 @@ impl Doc {
                 buffer.set_cursor_before(old_cursor);
                 buffer.set_cursor_after(cursor.mode.clone());
             });
-            self.apply_deltas(&deltas);
+            self.apply_deltas_with_kind(&deltas,kind);
         }
 
         deltas
     }
 
     pub fn apply_deltas(&self, deltas: &[(Rope, RopeDelta, InvalLines)]) {
+        self.apply_deltas_with_kind(deltas,crate::workspace_undo::ChangeKind::Other);
+    }
+
+    pub(crate) fn apply_deltas_with_kind(&self,deltas:&[(Rope,RopeDelta,InvalLines)],kind:crate::workspace_undo::ChangeKind) {
+        if self.content.with_untracked(|c|c.is_file()) {
+            self.common.workspace_undo.borrow_mut().observe(self.buffer_id,kind,deltas.len(),self.rev());
+        }
         let rev = self.rev() - deltas.len() as u64;
         batch(|| {
             for (i, (_, delta, inval)) in deltas.iter().enumerate() {
@@ -704,6 +732,7 @@ impl Doc {
     fn on_update(&self, edits: Option<SmallVec<[SyntaxEdit; 3]>>) {
         batch(|| {
             self.trigger_syntax_change(edits);
+            self.queue_yaml_lint();
             self.trigger_head_change();
             self.check_auto_save();
             self.get_inlay_hints();
@@ -713,8 +742,63 @@ impl Doc {
             self.clear_code_actions();
             self.clear_style_cache();
             self.get_code_lens();
-            self.get_document_symbol();
             self.get_folding_range();
+        });
+    }
+
+    fn queue_yaml_lint(&self) {
+        if self.syntax.with_untracked(|s| s.language) != SparrowLanguage::Yaml {
+            if self.diagnostics.diagnostics.with_untracked(|d| d.iter().any(yaml::is_builtin)) {
+                self.diagnostics.set_yaml(vec![]);
+                self.init_diagnostics();
+            }
+            return;
+        }
+        if !self.loaded() { return; }
+        let revision = self.rev();
+        let doc = self.clone();
+        exec_after(Duration::from_millis(150), move |_| {
+            if doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) != Some(revision)
+                || doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) != Some(SparrowLanguage::Yaml)
+            { return; }
+            let text = doc.buffer.with_untracked(|b| b.to_string());
+            let path = doc.content.with_untracked(|c| c.path().cloned());
+            let scope = doc.scope;
+            let package_doc = doc.clone();
+            let atomic_revision = doc.buffer.with_untracked(|b| b.atomic_rev());
+            let publish_packages = create_ext_action(scope, move |diagnostics| {
+                if package_doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) == Some(revision)
+                    && package_doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) == Some(SparrowLanguage::Yaml)
+                {
+                    package_doc.diagnostics.set_yaml(diagnostics);
+                    package_doc.init_diagnostics();
+                    package_doc.clear_code_actions();
+                }
+            });
+            let publish = create_ext_action(scope, move |diagnostics| {
+                if doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) == Some(revision)
+                    && doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) == Some(SparrowLanguage::Yaml)
+                {
+                    doc.diagnostics.set_yaml(diagnostics);
+                    doc.init_diagnostics();
+                }
+            });
+            rayon::spawn(move || {
+                let mut diagnostics = yaml::diagnostics(&text);
+                let syntax_valid = diagnostics.is_empty();
+                if syntax_valid {
+                    if let Some(path) = &path {
+                        diagnostics.extend(yaml_schema::diagnostics(path, &text));
+                    }
+                }
+                publish(diagnostics.clone());
+                if syntax_valid {
+                    if let Some(path) = path {
+                        diagnostics.extend(pubdev::diagnostics(&path, &text, || atomic_revision.load(atomic::Ordering::Acquire) != revision));
+                    }
+                }
+                publish_packages(diagnostics);
+            });
         });
     }
 
@@ -920,17 +1004,63 @@ impl Doc {
         if !self.loaded() {
             return;
         }
-
         let path =
             if let DocContent::File { path, .. } = self.content.get_untracked() {
                 path
             } else {
                 return;
             };
-
+        if !crate::dart::is_dart_path(&path) || !self.common.dart_lsp.is_available() { return; }
         let (atomic_rev, rev, len) = self
             .buffer
             .with_untracked(|b| (b.atomic_rev(), b.rev(), b.len()));
+
+        // ── Dart fast path ─────────────────────────────────────────
+        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+            // File loading can request styles before the active-editor effect
+            // publishes didOpen. Always synchronize this loaded buffer first.
+            let content = self.buffer.with_untracked(|buffer| buffer.to_string());
+            self.common
+                .dart_lsp
+                .sync_document(path.clone(), Some((content, rev as i64)));
+            // Legend might not be captured yet — Ready notification will
+            // trigger a re-request once it is.
+            if self.common.dart_lsp.semantic_tokens_legend().is_none() {
+                return;
+            }
+            let doc = self.clone();
+            let trigger = create_ext_action(
+                self.scope,
+                move |tokens: Option<lsp_types::SemanticTokens>| {
+                    let Some(tokens) = tokens else { return };
+                    if doc.buffer.with_untracked(|b| b.rev()) != rev {
+                        return;
+                    }
+                    let Some(legend) = doc.common.dart_lsp.semantic_tokens_legend()
+                    else {
+                        return;
+                    };
+                    let source = doc.buffer.with_untracked(|b| b.text().clone());
+                    let line_styles =
+                        crate::dart::semantic_tokens::decode(&tokens, &source, &legend);
+                    let mut styles_span = SpansBuilder::new(len);
+                    for style in line_styles {
+                        styles_span.add_span(
+                            Interval::new(style.start, style.end),
+                            style.style,
+                        );
+                    }
+                    let spans = styles_span.build();
+                    doc.semantic_styles.set(Some(spans));
+                    doc.clear_style_cache();
+                },
+            );
+            let path_clone = path.clone();
+            self.common
+                .dart_lsp
+                .semantic_tokens(&path_clone, move |t| trigger(t));
+            return;
+        }
 
         let doc = self.clone();
         let send = create_ext_action(self.scope, move |styles| {
@@ -975,6 +1105,7 @@ impl Doc {
     }
 
     pub fn get_code_lens(&self) {
+        if !self.loaded() || !self.content.with_untracked(|c|c.path().is_some_and(|path|crate::dart::is_dart_path(path))) {return;}
         let cx = self.scope;
         let doc = self.clone();
         self.code_lens.update(|code_lens| {
@@ -1021,46 +1152,6 @@ impl Doc {
         }
     }
 
-    pub fn get_document_symbol(&self) {
-        let cx = self.scope;
-        let doc = self.clone();
-        let rev = self.rev();
-        if let DocContent::File { path, .. } = doc.content.get_untracked() {
-            let send = create_ext_action(cx, {
-                let path = path.clone();
-                move |result| {
-                    if rev != doc.rev() {
-                        return;
-                    }
-                    if let Ok(ProxyResponse::GetDocumentSymbols { resp }) = result {
-                        let items: Vec<RwSignal<SymbolInformationItemData>> =
-                            match resp {
-                                DocumentSymbolResponse::Flat(_symbols) => {
-                                    Vec::with_capacity(0)
-                                }
-                                DocumentSymbolResponse::Nested(symbols) => symbols
-                                    .into_iter()
-                                    .map(|x| {
-                                        cx.create_rw_signal(
-                                            SymbolInformationItemData::from((x, cx)),
-                                        )
-                                    })
-                                    .collect(),
-                            };
-                        let symbol_new = Some(SymbolData::new(items, path, cx));
-                        doc.document_symbol_data.update(|symbol| {
-                            *symbol = symbol_new;
-                        });
-                    }
-                }
-            });
-
-            self.common.proxy.get_document_symbols(path, move |result| {
-                send(result);
-            });
-        }
-    }
-
     /// Request inlay hints for the buffer from the LSP through the proxy.
     pub fn get_inlay_hints(&self) {
         if !self.loaded() {
@@ -1073,6 +1164,7 @@ impl Doc {
             } else {
                 return;
             };
+        if !crate::dart::is_dart_path(&path) || !self.common.dart_lsp.is_available() { return; }
 
         let (buffer, rev, len) = self
             .buffer
@@ -1209,6 +1301,28 @@ impl Doc {
     }
 
     fn update_breakpoints(&self, delta: &RopeDelta, path: &Path, old_text: &Rope) {
+        // Each delta has its own old text. The buffer already contains the final
+        // edit batch, so consulting it here moves markers twice in multi-edits.
+        let new_text = delta.apply(old_text);
+        let (range, _) = delta.summary();
+        let reload_delta;
+        let delta = if range.start() == 0 && range.end() == old_text.len() {
+            // Reload represents the entire buffer as one replacement. Preserve
+            // markers outside the actual changed text instead of collapsing them.
+            reload_delta = minimal_marker_delta(old_text, &new_text);
+            &reload_delta
+        } else { delta };
+        if self.common.bookmarks.with_untracked(|items| items.contains_key(path)) {
+            self.common.bookmarks.update(|items| {
+                if let Some(lines) = items.get_mut(path) {
+                    let mut transform = Transformer::new(delta);
+                    *lines = lines.iter().map(|line| {
+                        let offset = transform.transform(old_text.offset_of_line(*line), false);
+                        new_text.line_of_offset(offset)
+                    }).collect();
+                }
+            });
+        }
         if self
             .common
             .breakpoints
@@ -1217,20 +1331,20 @@ impl Doc {
             self.common.breakpoints.update(|breakpoints| {
                 if let Some(path_breakpoints) = breakpoints.get_mut(path) {
                     let mut transformer = Transformer::new(delta);
-                    self.buffer.with_untracked(|buffer| {
+                    {
                         *path_breakpoints = path_breakpoints
                             .clone()
                             .into_values()
                             .map(|mut b| {
                                 let offset = old_text.offset_of_line(b.line);
                                 let offset = transformer.transform(offset, false);
-                                let line = buffer.line_of_offset(offset);
+                                let line = new_text.line_of_offset(offset);
                                 b.line = line;
                                 b.offset = offset;
                                 (b.line, b)
                             })
                             .collect();
-                    });
+                    }
                 }
             });
         }
@@ -1457,26 +1571,39 @@ impl Doc {
     }
 
     pub fn save(&self, after_action: impl FnOnce() + 'static) {
-        let content = self.content.get_untracked();
-        if let DocContent::File { path, .. } = content {
-            let rev = self.rev();
-            let buffer = self.buffer;
-            let send = create_ext_action(self.scope, move |result| {
-                if let Ok(ProxyResponse::SaveResponse {}) = result {
-                    let current_rev = buffer.with_untracked(|buffer| buffer.rev());
-                    if current_rev == rev {
-                        buffer.update(|buffer| {
-                            buffer.set_pristine();
-                        });
-                        after_action();
-                    }
-                }
-            });
+        self.save_with_result(move |result| {
+            if result.is_ok() {
+                after_action();
+            }
+        });
+    }
 
-            self.common.proxy.save(rev, path, true, move |result| {
-                send(result);
-            })
+    /// Save the current revision and report failures to workflows that must wait
+    /// for disk contents, such as package resolution.
+    pub fn save_with_result(&self, after_action: impl FnOnce(Result<(), String>) + 'static) {
+        let content = self.content.get_untracked();
+        if content.read_only() {
+            after_action(Err("The document is read-only.".into()));
+            return;
         }
+        let DocContent::File { path, .. } = content else {
+            after_action(Err("The document has no file path.".into()));
+            return;
+        };
+        let rev = self.rev();
+        let buffer = self.buffer;
+        let display_path = path.display().to_string();
+        let send = create_ext_action(self.scope, move |result| {
+            let current_rev = buffer.with_untracked(|buffer| buffer.rev());
+            let result = saved_revision_result(rev, current_rev, result);
+            if result.is_ok() {
+                buffer.update(|buffer| buffer.set_pristine());
+            }
+            after_action(result.map_err(|error| format!("{display_path}: {error}")));
+        });
+        self.common
+            .proxy
+            .save(rev, path, true, move |result| send(result));
     }
 
     pub fn set_inline_completion(
@@ -1760,7 +1887,7 @@ impl Document for Doc {
             .buffer
             .try_update(|buffer| buffer.edit(iter, edit_type))
             .unwrap();
-        self.apply_deltas(&[delta]);
+        self.apply_deltas_with_kind(&[delta],crate::workspace_undo::ChangeKind::from_edit_type(edit_type));
     }
 }
 
@@ -1929,6 +2056,36 @@ impl DocumentPhantom for Doc {
             });
 
         text.append(&mut diag_text);
+
+        // ── Flutter / Dart Closing Labels ─────────────────────────────
+        if let Some(labels) = self.closing_labels.get_untracked().filter(|_| config.editor.enable_inlay_hints) {
+            for label in labels {
+                if label.range.end.line as usize == line {
+                    let source_line = self.buffer.with_untracked(|buffer| {
+                        buffer.text().slice_to_cow(start_offset..end_offset).into_owned()
+                    });
+                    let col = crate::dart::closing_labels::inlay_column(
+                        &source_line, label.range.end.character as usize,
+                    );
+                    // Existing source comments already identify the widget.
+                    if source_line.get(col..).is_some_and(|tail| {
+                        tail.contains(&format!("// {}", label.label))
+                    }) {
+                        continue;
+                    }
+                    text.push(PhantomText {
+                        kind: PhantomTextKind::InlayHint,
+                        col,
+                        text: format!(" {} ", label.label),
+                        affinity: Some(CursorAffinity::Forward),
+                        fg: Some(config.color(SparrowColor::INLAY_HINT_FOREGROUND)),
+                        font_size: Some(config.editor.inlay_hint_font_size()),
+                        bg: None,
+                        under_line: None,
+                    });
+                }
+            }
+        }
 
         let (completion_line, completion_col) = self.completion_pos.get_untracked();
         let completion_text = config
@@ -2158,6 +2315,38 @@ impl Styling for DocStyling {
                 }
             }
         }
+        let (line_start, line_end) = self.doc.buffer.with_untracked(|b| {
+            (b.offset_of_line(line), b.offset_of_line(line + 1))
+        });
+        self.doc
+            .diagnostics
+            .diagnostics_span
+            .with_untracked(|diagnostics| {
+                for (range, diagnostic) in
+                    diagnostics.iter_chunks(line_start..line_end)
+                {
+                    if diagnostic.tags.as_ref().is_some_and(|tags| {
+                        tags.contains(&lsp_types::DiagnosticTag::UNNECESSARY)
+                    }) {
+                        let start = phantom_text.col_after(
+                            range.start().max(line_start) - line_start,
+                            true,
+                        );
+                        let end = phantom_text.col_after(
+                            range.end().min(line_end) - line_start,
+                            false,
+                        );
+                        if start < end {
+                            attrs_list.add_span(
+                                start..end,
+                                default
+                                    .clone()
+                                    .color(config.color(SparrowColor::EDITOR_DIM)),
+                            );
+                        }
+                    }
+                }
+            });
     }
 
     fn apply_layout_styles(
@@ -2205,14 +2394,35 @@ impl Styling for DocStyling {
                     let start = iv.start();
                     let end = iv.end();
 
-                    if start <= end_offset
-                        && end >= start_offset
-                        && diag.severity < Some(DiagnosticSeverity::HINT)
-                    {
-                        let start = start.saturating_sub(start_offset);
-                        let end = end - start_offset;
+                    if start <= end_offset && end >= start_offset {
+                        let start = start.max(start_offset) - start_offset;
+                        let end = end.min(end_offset) - start_offset;
                         let start = phantom_text.col_after(start, true);
                         let end = phantom_text.col_after(end, false);
+
+                        if diag.tags.as_ref().is_some_and(|tags| {
+                            tags.contains(&lsp_types::DiagnosticTag::DEPRECATED)
+                        }) {
+                            let styles = extra_styles_for_range(
+                                layout,
+                                start,
+                                end,
+                                None,
+                                Some(config.color(SparrowColor::EDITOR_FOREGROUND)),
+                                None,
+                            )
+                            .map(|mut style| {
+                                style.height *= 0.55;
+                                style
+                            });
+                            layout_line.extra_style.extend(styles);
+                            return;
+                        }
+                        if diag.severity.is_some_and(|severity| {
+                            severity >= DiagnosticSeverity::HINT
+                        }) {
+                            return;
+                        }
 
                         match (diag.severity, max_severity) {
                             (Some(severity), Some(max)) => {
@@ -2247,7 +2457,9 @@ impl Styling for DocStyling {
         });
 
         // Add the styling for the diagnostic severity, if applicable
-        if let Some(max_severity) = max_severity {
+        if let Some(max_severity) =
+            max_severity.filter(|_| config.editor.enable_error_lens)
+        {
             let theme_prop = if max_severity == DiagnosticSeverity::ERROR {
                 SparrowColor::ERROR_LENS_ERROR_BACKGROUND
             } else if max_severity == DiagnosticSeverity::WARNING {
@@ -2335,7 +2547,7 @@ fn should_blink(
     }
 }
 
-fn extra_styles_for_range(
+pub(crate) fn extra_styles_for_range(
     text_layout: &TextLayout,
     start: usize,
     end: usize,
@@ -2383,4 +2595,71 @@ fn extra_styles_for_range(
                 wave_line,
             })
         })
+}
+
+/// A successful disk write must still match the editor revision before a caller
+/// starts a process that reads the file.
+fn saved_revision_result(
+    saved: u64,
+    current: u64,
+    response: Result<ProxyResponse, sparrow_rpc::RpcError>,
+) -> Result<(), String> {
+    match response {
+        Ok(ProxyResponse::SaveResponse {}) if saved == current => Ok(()),
+        Ok(ProxyResponse::SaveResponse {}) => Err(
+            "The document changed while saving. Run the command again to use the latest changes."
+                .into(),
+        ),
+        Err(error) => Err(error.message),
+        Ok(_) => Err("Unexpected response while saving the document.".into()),
+    }
+}
+
+#[cfg(test)]
+mod save_result_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_save_requires_matching_revision_and_propagates_disk_errors() {
+        assert!(saved_revision_result(4, 4, Ok(ProxyResponse::SaveResponse {})).is_ok());
+        assert!(
+            saved_revision_result(4, 5, Ok(ProxyResponse::SaveResponse {}))
+                .unwrap_err()
+                .contains("changed while saving")
+        );
+        let result = saved_revision_result(
+            4,
+            4,
+            Err(sparrow_rpc::RpcError {
+                code: 0,
+                message: "Permission denied".into(),
+            }),
+        );
+        assert_eq!(result.unwrap_err(), "Permission denied");
+    }
+}
+
+
+fn minimal_marker_delta(old: &Rope, new: &Rope) -> RopeDelta {
+    let old_text=old.to_string(); let new_text=new.to_string();
+    let prefix=old_text.chars().zip(new_text.chars()).take_while(|(a,b)|a==b).map(|(c,_)|c.len_utf8()).sum::<usize>();
+    let suffix=old_text[prefix..].chars().rev().zip(new_text[prefix..].chars().rev()).take_while(|(a,b)|a==b).map(|(c,_)|c.len_utf8()).sum::<usize>();
+    RopeDelta::simple_edit(Interval::new(prefix, old.len()-suffix), Rope::from(&new_text[prefix..new.len()-suffix]),old.len())
+}
+#[cfg(test)]
+mod gutter_reload_tests {
+    use super::*;
+    #[test]
+    fn reload_preserves_markers_and_tracks_inserted_lines_with_unicode() {
+        let old=Rope::from("// café\nfirst\nsecond\nlast\n");
+        let same_line_edit=Rope::from("// café\nfirst changed\nsecond\nlast\n");
+        let delta=minimal_marker_delta(&old,&same_line_edit);
+        let offset=Transformer::new(&delta).transform(old.offset_of_line(2),false);
+        assert_eq!(same_line_edit.line_of_offset(offset),2);
+        let inserted=Rope::from("// café\ninserted\nfirst\nsecond\nlast\n");
+        let delta=minimal_marker_delta(&old,&inserted);
+        let offset=Transformer::new(&delta).transform(old.offset_of_line(2),false);
+        assert_eq!(inserted.line_of_offset(offset),3);
+        assert_eq!(delta.apply(&old).to_string(),inserted.to_string());
+    }
 }

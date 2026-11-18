@@ -155,6 +155,16 @@ impl std::fmt::Display for SparrowWorkspace {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct WorkspaceInfo {
+    #[serde(default)]
+    pub commit_message: String,
+    #[serde(default)]
+    pub amend_commit: bool,
+    #[serde(default)]
+    pub selected_run_configuration: Option<String>,
+    #[serde(default)]
+    pub document_views: std::collections::BTreeMap<PathBuf, String>,
+    #[serde(default)]
+    pub bookmarks: std::collections::BTreeMap<PathBuf, std::collections::BTreeSet<usize>>,
     pub split: SplitInfo,
     pub panel: PanelInfo,
     pub breakpoints: HashMap<PathBuf, Vec<SparrowBreakpoint>>,

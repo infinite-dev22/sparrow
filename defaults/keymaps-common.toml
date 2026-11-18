@@ -82,6 +82,11 @@ command = "previous_editor_tab"
 # --------------------------------- Rich Language Editing ----------------------------
 
 [[keymaps]]
+key = "shift+F6"
+command = "rename_symbol"
+when = "!file_explorer_focus"
+
+[[keymaps]]
 key = "F2"
 command = "rename_symbol"
 when = "!file_explorer_focus"
@@ -120,6 +125,39 @@ mode = "i"
 [[keymaps]]
 key = "Ctrl+`"
 command = "toggle_terminal_focus"
+
+[[keymaps]]
+key = "shift+F10"
+command = "run_selected_configuration"
+
+[[keymaps]]
+key = "shift+F9"
+command = "debug_selected_configuration"
+
+[[keymaps]]
+key = "ctrl+F2"
+command = "palette.run_and_debug_stop"
+
+# --------------------------------- Flutter -------------------------------------------
+
+[[keymaps]]
+key = "F5"
+command = "flutter_run"
+
+[[keymaps]]
+key = "ctrl+F5"
+command = "flutter_hot_reload"
+when = "!file_explorer_focus"
+
+[[keymaps]]
+key = "ctrl+shift+F5"
+command = "flutter_hot_restart"
+when = "!file_explorer_focus"
+
+[[keymaps]]
+key = "shift+F5"
+command = "flutter_stop"
+when = "!file_explorer_focus"
 
 # ------------------------------------ File Explorer ---------------------------------
 
@@ -749,3 +787,37 @@ mode = "v"
 key = "shift+c"
 command = "delete_to_end_and_insert"
 mode = "n"
+
+[[keymaps]]
+key = "ctrl+t"
+command = "flutter_run_test_at_cursor"
+when = "editor_focus"
+[[keymaps]]
+key = "F11"
+command = "toggle_bookmark"
+when = "editor_focus"
+
+[[keymaps]]
+key = "ctrl+alt+l"
+command = "format_document"
+when = "editor_focus"
+
+[[keymaps]]
+key = "ctrl+shift+alt+l"
+command = "reformat_code_options"
+
+[[keymaps]]
+key = "ctrl+r"
+command = "replace_in_editor"
+when = "editor_focus"
+mode = "i"
+
+[[keymaps]]
+key = "shift+f6"
+command = "rename_symbol"
+when = "editor_focus"
+
+[[keymaps]]
+key = "shift+f6"
+command = "file_explorer.rename"
+when = "file_explorer_focus"

@@ -1,0 +1,719 @@
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_]*$",
+      "description": "Dart package name in lower_case_with_underscores; cannot start with a digit."
+    },
+    "version": {
+      "type": "string",
+      "description": "Package version, optionally with a +build suffix.",
+      "format": "semver"
+    },
+    "description": {
+      "type": "string",
+      "description": ""
+    },
+    "homepage": {
+      "type": "string",
+      "description": ""
+    },
+    "repository": {
+      "type": "string",
+      "description": ""
+    },
+    "issue_tracker": {
+      "type": "string",
+      "description": ""
+    },
+    "documentation": {
+      "type": "string",
+      "description": ""
+    },
+    "publish_to": {
+      "type": "string",
+      "description": ""
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "sdk": {
+          "type": "string",
+          "description": "Dart SDK version constraint."
+        },
+        "flutter": {
+          "type": "string",
+          "description": "Flutter SDK version constraint."
+        }
+      },
+      "required": [
+        "sdk"
+      ]
+    },
+    "dependencies": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": [
+          "string",
+          "object",
+          "null"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Package version constraint."
+          },
+          "sdk": {
+            "enum": [
+              "flutter",
+              "dart"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Local package directory."
+          },
+          "git": {
+            "type": [
+              "string",
+              "object"
+            ],
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": ""
+              },
+              "ref": {
+                "type": "string",
+                "description": ""
+              },
+              "path": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "additionalProperties": false
+          },
+          "hosted": {
+            "type": [
+              "string",
+              "object"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": ""
+              },
+              "url": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Package names mapped to constraints or dependency sources."
+    },
+    "dev_dependencies": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": [
+          "string",
+          "object",
+          "null"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Package version constraint."
+          },
+          "sdk": {
+            "enum": [
+              "flutter",
+              "dart"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Local package directory."
+          },
+          "git": {
+            "type": [
+              "string",
+              "object"
+            ],
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": ""
+              },
+              "ref": {
+                "type": "string",
+                "description": ""
+              },
+              "path": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "additionalProperties": false
+          },
+          "hosted": {
+            "type": [
+              "string",
+              "object"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": ""
+              },
+              "url": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Package names mapped to constraints or dependency sources."
+    },
+    "dependency_overrides": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": {
+        "type": [
+          "string",
+          "object",
+          "null"
+        ],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Package version constraint."
+          },
+          "sdk": {
+            "enum": [
+              "flutter",
+              "dart"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Local package directory."
+          },
+          "git": {
+            "type": [
+              "string",
+              "object"
+            ],
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": ""
+              },
+              "ref": {
+                "type": "string",
+                "description": ""
+              },
+              "path": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "additionalProperties": false
+          },
+          "hosted": {
+            "type": [
+              "string",
+              "object"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": ""
+              },
+              "url": {
+                "type": "string",
+                "description": ""
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "description": "Package names mapped to constraints or dependency sources."
+    },
+    "executables": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "platforms": {
+      "type": "object",
+      "properties": {
+        "android": {
+          "type": "null"
+        },
+        "ios": {
+          "type": "null"
+        },
+        "linux": {
+          "type": "null"
+        },
+        "macos": {
+          "type": "null"
+        },
+        "web": {
+          "type": "null"
+        },
+        "windows": {
+          "type": "null"
+        }
+      }
+    },
+    "funding": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": ""
+      }
+    },
+    "false_secrets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": ""
+      }
+    },
+    "topics": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": ""
+      }
+    },
+    "ignored_advisories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": ""
+      }
+    },
+    "workspace": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": ""
+      }
+    },
+    "resolution": {
+      "enum": [
+        "workspace"
+      ]
+    },
+    "hooks": {
+      "type": "object",
+      "properties": {}
+    },
+    "screenshots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": ""
+          },
+          "path": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "required": [
+          "description",
+          "path"
+        ]
+      }
+    },
+    "flutter": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "uses-material-design": {
+          "type": "boolean",
+          "description": "Include the Material Icons font."
+        },
+        "generate": {
+          "type": "boolean",
+          "description": "Generate localization code."
+        },
+        "default-flavor": {
+          "type": "string",
+          "description": ""
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "object"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": ""
+              },
+              "flavors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "description": ""
+                }
+              },
+              "transformers": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {}
+                }
+              }
+            }
+          }
+        },
+        "shaders": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "licenses": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": ""
+          }
+        },
+        "fonts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "family": {
+                "type": "string",
+                "description": ""
+              },
+              "fonts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "asset": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "weight": {
+                      "type": "integer",
+                      "minimum": 100,
+                      "maximum": 900
+                    },
+                    "style": {
+                      "enum": [
+                        "normal",
+                        "italic"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "asset"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "family",
+              "fonts"
+            ]
+          }
+        },
+        "deferred-components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": ""
+              },
+              "libraries": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "description": ""
+                }
+              },
+              "assets": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "description": ""
+                }
+              }
+            }
+          }
+        },
+        "module": {
+          "type": "object",
+          "properties": {}
+        },
+        "plugin": {
+          "type": "object",
+          "properties": {
+            "platforms": {
+              "type": "object",
+              "properties": {
+                "android": {
+                  "type": "object",
+                  "properties": {
+                    "pluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "dartPluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "fileName": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "default_package": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "ffiPlugin": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "sharedDarwinSource": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "package": {
+                      "type": "string",
+                      "description": ""
+                    }
+                  }
+                },
+                "ios": {
+                  "type": "object",
+                  "properties": {
+                    "pluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "dartPluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "fileName": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "default_package": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "ffiPlugin": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "sharedDarwinSource": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "package": {
+                      "type": "string",
+                      "description": ""
+                    }
+                  }
+                },
+                "linux": {
+                  "type": "object",
+                  "properties": {
+                    "pluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "dartPluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "fileName": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "default_package": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "ffiPlugin": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "sharedDarwinSource": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "package": {
+                      "type": "string",
+                      "description": ""
+                    }
+                  }
+                },
+                "macos": {
+                  "type": "object",
+                  "properties": {
+                    "pluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "dartPluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "fileName": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "default_package": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "ffiPlugin": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "sharedDarwinSource": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "package": {
+                      "type": "string",
+                      "description": ""
+                    }
+                  }
+                },
+                "web": {
+                  "type": "object",
+                  "properties": {
+                    "pluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "dartPluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "fileName": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "default_package": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "ffiPlugin": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "sharedDarwinSource": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "package": {
+                      "type": "string",
+                      "description": ""
+                    }
+                  }
+                },
+                "windows": {
+                  "type": "object",
+                  "properties": {
+                    "pluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "dartPluginClass": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "fileName": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "default_package": {
+                      "type": "string",
+                      "description": ""
+                    },
+                    "ffiPlugin": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "sharedDarwinSource": {
+                      "type": "boolean",
+                      "description": ""
+                    },
+                    "package": {
+                      "type": "string",
+                      "description": ""
+                    }
+                  }
+                }
+              }
+            },
+            "implements": {
+              "type": "string",
+              "description": ""
+            }
+          }
+        },
+        "config": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    }
+  },
+  "required": [
+    "name",
+    "environment"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pubspec.yaml",
+  "x-sources": [
+    "https://dart.dev/tools/pub/pubspec",
+    "https://docs.flutter.dev/tools/pubspec"
+  ]
+}

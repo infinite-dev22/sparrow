@@ -67,7 +67,15 @@ pub fn file_explorer_panel(
     let config = window_tab_data.common.config;
     let data = window_tab_data.file_explorer.clone();
     let source_control = window_tab_data.source_control.clone();
-    PanelBuilder::new(config, position)
+    let (project_info, project_watch) = super::project::load(window_tab_data.common.clone());
+    let library_watch = project_watch.libraries();
+    let header = crate::panel::chrome::header(
+        window_tab_data.clone(),
+        PanelKind::FileExplorer,
+        "Project",
+        floem::views::empty(),
+    );
+    let open_editors = PanelBuilder::new(config, position)
         .add_height_style(
             "Open Editors",
             150.0,
@@ -76,16 +84,22 @@ pub fn file_explorer_panel(
             window_tab_data.panel.section_open(PanelSection::OpenEditor),
             move |s| s.apply_if(!config.get().ui.open_editors_visible, |s| s.hide()),
         )
-        .add(
-            "File Explorer",
-            container(file_explorer_view(data, source_control))
-                .style(|s| s.size_full()),
-            window_tab_data
-                .panel
-                .section_open(PanelSection::FileExplorer),
-        )
-        .build()
-        .debug_name("File Explorer Panel")
+        .build();
+    stack((
+        header,
+        open_editors,
+        container(file_explorer_view(data, source_control, project_info, window_tab_data, library_watch)).style(
+            |s| {
+                s.flex_grow(1.0_f32)
+                    .flex_basis(0.0)
+                    .min_height(0.0)
+                    .width_full()
+            },
+        ),
+    ))
+    .style(|s| s.flex_col().size_full())
+    .on_cleanup(move || project_watch.stop())
+    .debug_name("File Explorer Panel")
 }
 
 /// Initialize the file explorer's naming (renaming, creating, etc.) editor with the given path.
@@ -134,10 +148,7 @@ fn file_node_text_color(
         };
 
         if node.is_dir {
-            file_diffs
-                .keys()
-                .find(|p| p.as_path().starts_with(path))
-                .map(|_| FileDiffKind::Modified)
+            None
         } else {
             file_diffs.get(path).map(|(diff, _)| diff.kind())
         }
@@ -159,6 +170,7 @@ fn file_node_text_view(
     data: FileExplorerData,
     node: FileNodeViewData,
     source_control: SourceControlData,
+    project_info: RwSignal<super::project::ProjectInfo>,
 ) -> impl View {
     let config = data.common.config;
     let ui_line_height = data.common.ui_line_height;
@@ -175,6 +187,8 @@ fn file_node_text_view(
                     })
                     .style(move |s| {
                         s.height(ui_line_height.get())
+                            .items_center()
+                            .font_weight(floem::text::Weight(600))
                             .color(file_node_text_color(
                                 config,
                                 node.clone(),
@@ -183,27 +197,37 @@ fn file_node_text_view(
                             .padding_right(5.0)
                             .selectable(false)
                     }),
-                    label(move || path.to_string_lossy().to_string()).style(
-                        move |s| {
-                            s.height(ui_line_height.get())
-                                .color(
-                                    config
-                                        .get()
-                                        .color(SparrowColor::PANEL_FOREGROUND_DIM),
-                                )
-                                .selectable(false)
-                        },
-                    ),
-                ))
-            } else {
-                container(
                     label(move || {
-                        path.file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or_default()
+                        let home =
+                            std::env::var_os("HOME").map(std::path::PathBuf::from);
+                        home.and_then(|home| {
+                            path.strip_prefix(home)
+                                .ok()
+                                .map(|p| format!("~/{}", p.display()))
+                        })
+                        .unwrap_or_else(|| path.display().to_string())
                     })
                     .style(move |s| {
                         s.height(ui_line_height.get())
+                            .color(
+                                config
+                                    .get()
+                                    .color(SparrowColor::PANEL_FOREGROUND_DIM),
+                            )
+                            .selectable(false)
+                    }),
+                ))
+            } else {
+                let platform = node.is_dir && super::project::role(&path, data.common.workspace.path.as_deref()) == Some("platform");
+                container(
+                    label(move || {
+                        project_info
+                            .with(|info| super::project::node_label(&path, info))
+                    })
+                    .style(move |s| {
+                        s.height(ui_line_height.get())
+                            .items_center()
+                            .apply_if(platform, |s|s.font_weight(floem::text::Weight(600)))
                             .color(file_node_text_color(
                                 config,
                                 node.clone(),
@@ -256,7 +280,6 @@ fn file_node_input_view(data: FileExplorerData, err: Option<String>) -> Containe
         .build_editor(naming_editor_data.clone())
         .on_event_stop(EventListener::FocusLost, move |_| {
             data.finish_naming();
-            data.naming.set(Naming::None);
         })
         .style(move |s| {
             s.width_full()
@@ -298,17 +321,20 @@ fn file_node_input_view(data: FileExplorerData, err: Option<String>) -> Containe
                         .z_index(100)
                 }),
             ))
-            .style(|s| s.flex_grow(1.0f32)),
+                .style(|s| s.flex_grow(1.0f32)),
         )
     } else {
         container(text_input_view)
     }
-    .style(move |s| s.width_full())
+        .style(move |s| s.width_full())
 }
 
 fn file_explorer_view(
     data: FileExplorerData,
     source_control: SourceControlData,
+    project_info: RwSignal<super::project::ProjectInfo>,
+    window: Rc<WindowTabData>,
+    library_watch: super::project::LibraryWatch,
 ) -> impl View {
     let root = data.root;
     let ui_line_height = data.common.ui_line_height;
@@ -320,157 +346,200 @@ fn file_explorer_view(
     let scroll_rect = create_rw_signal(Rect::ZERO);
     let focus = data.common.focus;
 
+    let external =
+        super::project::external_libraries(window, project_info, library_watch);
+    let workspace_root = data.common.workspace.path.clone();
     scroll(
-        virtual_stack(
-            move || FileNodeVirtualList::new(root.get(), data.naming.get()),
-            move |node| (node.kind.clone(), node.is_dir, node.open, node.level),
-            move |node| {
-                let level = node.level;
-                let data = data.clone();
-                let click_data = data.clone();
-                let double_click_data = data.clone();
-                let secondary_click_data = data.clone();
-                let aux_click_data = data.clone();
-                let kind = node.kind.clone();
-                let open = node.open;
-                let is_dir = node.is_dir;
+        stack((
+            container(
+                virtual_stack(
+                    move || FileNodeVirtualList::new(root.get(), data.naming.get()),
+                    move |node| {
+                        (node.kind.clone(), node.is_dir, node.open, node.level)
+                    },
+                    move |node| {
+                        let level = node.level;
+                        let data = data.clone();
+                        let click_data = data.clone();
+                        let double_click_data = data.clone();
+                        let secondary_click_data = data.clone();
+                        let aux_click_data = data.clone();
+                        let kind = node.kind.clone();
+                        let open = node.open;
+                        let is_dir = node.is_dir;
+                        let is_root = node.is_root;
+                        let role = kind.path().and_then(|path| {
+                            super::project::role(path, workspace_root.as_deref())
+                        });
 
-                let view = stack((
-                    svg(move || {
-                        let config = config.get();
-                        let svg_str = match open {
-                            true => SparrowIcons::ITEM_OPENED,
-                            false => SparrowIcons::ITEM_CLOSED,
-                        };
-                        config.ui_svg(svg_str)
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        let size = config.ui.icon_size() as f32;
-
-                        let color = if is_dir {
-                            config.color(SparrowColor::SPARROW_ICON_ACTIVE)
-                        } else {
-                            Color::TRANSPARENT
-                        };
-                        s.size(size, size)
-                            .flex_shrink(0.0f32)
-                            .margin_left(10.0)
-                            .color(color)
-                    }),
-                    {
-                        let kind = kind.clone();
-                        let kind_for_style = kind.clone();
-                        // TODO: use the current naming input as the path for the file svg
-                        svg(move || {
-                            let config = config.get();
-                            if is_dir {
+                        let view = stack((
+                            svg(move || {
+                                let config = config.get();
                                 let svg_str = match open {
-                                    true => SparrowIcons::DIRECTORY_OPENED,
-                                    false => SparrowIcons::DIRECTORY_CLOSED,
+                                    true => SparrowIcons::ITEM_OPENED,
+                                    false => SparrowIcons::ITEM_CLOSED,
                                 };
                                 config.ui_svg(svg_str)
-                            } else if let Some(path) = kind.path() {
-                                config.file_svg(path).0
-                            } else {
-                                config.ui_svg(SparrowIcons::FILE)
+                            })
+                            .style(move |s| {
+                                let config = config.get();
+                                let size = config.ui.icon_size() as f32;
+
+                                s.size(size, size)
+                                    .flex_shrink(0.0f32)
+                                    .margin_left(10.0)
+                                    .color(if is_dir { config.color(SparrowColor::SPARROW_ICON_ACTIVE) } else { Color::TRANSPARENT })
+                            }),
+                            {
+                                let kind = kind.clone();
+                                let kind_for_style = kind.clone();
+                                // TODO: use the current naming input as the path for the file svg
+                                svg(move || {
+                                    let config = config.get();
+                                    if is_root && project_info.with(|p| p.flutter) {
+                                        config.ui_svg(SparrowIcons::FLUTTER)
+                                    } else if is_dir {
+                                        kind.path()
+                                            .map(|path| config.folder_svg(path).0)
+                                            .unwrap_or_else(|| {
+                                                config
+                                                    .ui_svg(SparrowIcons::DIRECTORY)
+                                            })
+                                    } else if let Some(path) = kind.path() {
+                                        config.file_svg(path).0
+                                    } else {
+                                        config.ui_svg(SparrowIcons::FILE)
+                                    }
+                                })
+                                .style(move |s| {
+                                    let config = config.get();
+                                    let size = config.ui.icon_size() as f32;
+
+                                    s.size(size, size)
+                                        .flex_shrink(0.0f32)
+                                        .margin_horiz(6.0)
+                                        .apply_opt(
+                                            kind_for_style.path().and_then(|path| {
+                                                if is_root && project_info.with(|p| p.flutter) {
+                                                    None
+                                                } else if role == Some("source") {
+                                                    Some(config.color(SparrowColor::EDITOR_LINK))
+                                                } else if role == Some("test") {
+                                                    Some(Color::from_rgb8(109, 161, 107))
+                                                } else if role == Some("excluded") {
+                                                    Some(Color::from_rgb8(184, 133, 88))
+                                                } else if is_dir {
+                                                    config.folder_svg(path).1
+                                                } else {
+                                                    config.file_svg(path).1
+                                                }
+                                            }),
+                                            Style::color,
+                                        )
+                                })
+                            },
+                            file_node_text_view(
+                                data,
+                                node,
+                                source_control.clone(),
+                                project_info,
+                            ),
+                        ))
+                        .style({
+                            let kind = kind.clone();
+                            move |s| {
+                                s.padding_right(15.0)
+                                    .border_radius(6.0)
+                                    .min_width_full()
+                                    .padding_left((level * 10) as f32)
+                                    .align_items(AlignItems::Center)
+                                    .apply_if(role == Some("excluded"), |s| {
+                                        s.background(Color::from_rgba8(
+                                            122, 79, 40, 35,
+                                        ))
+                                    })
+                                    .apply_if(role == Some("test"), |s| {
+                                        s.background(Color::from_rgba8(
+                                            58, 103, 48, 30,
+                                        ))
+                                    })
+                                    .hover(|s| {
+                                        s.background(config.get().color(
+                                            SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                        ))
+                                        .cursor(CursorStyle::Pointer)
+                                    })
+                                    .apply_if(
+                                        select
+                                            .get()
+                                            .map(|x| x == kind)
+                                            .unwrap_or_default(),
+                                        |x| {
+                                            x.background(config.get().color(
+                                            SparrowColor::PANEL_CURRENT_BACKGROUND,
+                                        ))
+                                        },
+                                    )
                             }
                         })
-                        .style(move |s| {
-                            let config = config.get();
-                            let size = config.ui.icon_size() as f32;
+                        .debug_name("file item");
 
-                            s.size(size, size)
-                                .flex_shrink(0.0f32)
-                                .margin_horiz(6.0)
-                                .apply_if(is_dir, |s| {
-                                    s.color(
-                                        config.color(
-                                            SparrowColor::SPARROW_ICON_ACTIVE,
-                                        ),
-                                    )
-                                })
-                                .apply_if(!is_dir, |s| {
-                                    s.apply_opt(
-                                        kind_for_style
-                                            .path()
-                                            .and_then(|p| config.file_svg(p).1),
-                                        Style::color,
-                                    )
-                                })
-                        })
-                    },
-                    file_node_text_view(data, node, source_control.clone()),
-                ))
-                .style({
-                    let kind = kind.clone();
-                    move |s| {
-                        s.padding_right(15.0)
-                            .min_width_full()
-                            .padding_left((level * 10) as f32)
-                            .align_items(AlignItems::Center)
-                            .hover(|s| {
-                                s.background(
-                                    config.get().color(
-                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                    ),
-                                )
-                                .cursor(CursorStyle::Pointer)
+                        // Only handle click events if we are not naming the file node
+                        if let FileNodeViewKind::Path(path) = &kind {
+                            let click_path = path.clone();
+                            let double_click_path = path.clone();
+                            let secondary_click_path = path.clone();
+                            let aux_click_path = path.clone();
+                            view.on_click_stop({
+                                let kind = kind.clone();
+                                move |_| {
+                                    click_data.click(&click_path, config);
+                                    select.update(|x| *x = Some(kind.clone()));
+                                    focus.set(Focus::Panel(PanelKind::FileExplorer));
+                                }
                             })
-                            .apply_if(
-                                select.get().map(|x| x == kind).unwrap_or_default(),
-                                |x| {
-                                    x.background(config.get().color(
-                                        SparrowColor::PANEL_CURRENT_BACKGROUND,
-                                    ))
+                            .on_double_click({
+                                move |_| {
+                                    double_click_data
+                                        .double_click(&double_click_path, config)
+                                }
+                            })
+                            .on_secondary_click_stop(move |_| {
+                                secondary_click_data
+                                    .secondary_click(&secondary_click_path);
+                            })
+                            .on_event_stop(
+                                EventListener::PointerDown,
+                                move |event| {
+                                    if let Event::PointerDown(pointer_event) = event
+                                    {
+                                        if pointer_event.button.is_auxiliary() {
+                                            aux_click_data
+                                                .middle_click(&aux_click_path);
+                                        }
+                                    }
                                 },
                             )
-                    }
-                })
-                .debug_name("file item");
-
-                // Only handle click events if we are not naming the file node
-                if let FileNodeViewKind::Path(path) = &kind {
-                    let click_path = path.clone();
-                    let double_click_path = path.clone();
-                    let secondary_click_path = path.clone();
-                    let aux_click_path = path.clone();
-                    view.on_click_stop({
-                        let kind = kind.clone();
-                        move |_| {
-                            click_data.click(&click_path, config);
-                            select.update(|x| *x = Some(kind.clone()));
-                            focus.set(Focus::Panel(PanelKind::FileExplorer));
+                        } else {
+                            view
                         }
-                    })
-                    .on_double_click({
-                        move |_| {
-                            double_click_data
-                                .double_click(&double_click_path, config)
-                        }
-                    })
-                    .on_secondary_click_stop(move |_| {
-                        secondary_click_data.secondary_click(&secondary_click_path);
-                    })
-                    .on_event_stop(
-                        EventListener::PointerDown,
-                        move |event| {
-                            if let Event::PointerDown(pointer_event) = event {
-                                if pointer_event.button.is_auxiliary() {
-                                    aux_click_data.middle_click(&aux_click_path);
-                                }
-                            }
-                        },
-                    )
-                } else {
-                    view
-                }
-            },
-        )
-        .item_size_fixed(move || ui_line_height.get())
-        .style(|s| s.absolute().flex_col().min_width_full()),
+                    },
+                )
+                .item_size_fixed(move || ui_line_height.get())
+                .style(|s| s.absolute().flex_col().min_width_full()),
+            )
+            .style(move |s| {
+                s.height(
+                    (root.with(|r| r.children_open_count + 1) as f64
+                        * ui_line_height.get()) as f32,
+                )
+                .min_width_full()
+            }),
+            external,
+        ))
+        .style(|s| s.flex_col().min_width_full()),
     )
-    .style(|s| s.absolute().size_full().line_height(1.8))
+    .style(|s| s.absolute().size_full().line_height(1.0))
     .on_secondary_click_stop(move |_| {
         if let Naming::None = naming.get_untracked() {
             if let Some(path) = &secondary_click_data.common.workspace.path {
@@ -538,14 +607,14 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                 || "Close",
                 config,
             )
-            .on_event_stop(EventListener::PointerEnter, move |_| {
-                hovered.set(true);
-            })
-            .on_event_stop(EventListener::PointerLeave, move |_| {
-                hovered.set(false);
-            })
-            .on_event_stop(EventListener::PointerDown, |_| {})
-            .style(|s| s.margin_left(10.0)),
+                .on_event_stop(EventListener::PointerEnter, move |_| {
+                    hovered.set(true);
+                })
+                .on_event_stop(EventListener::PointerLeave, move |_| {
+                    hovered.set(false);
+                })
+                .on_event_stop(EventListener::PointerDown, |_| {})
+                .style(|s| s.margin_left(10.0)),
             container(svg(move || info.with(|info| info.icon.clone())).style(
                 move |s| {
                     let size = config.get().ui.icon_size() as f32;
@@ -553,7 +622,7 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                         .apply_opt(info.with(|info| info.color), |s, c| s.color(c))
                 },
             ))
-            .style(|s| s.padding_horiz(6.0)),
+                .style(|s| s.padding_horiz(6.0)),
             label(move || info.with(|info| info.name.clone())).style(move |s| {
                 s.apply_if(
                     !info
@@ -564,33 +633,33 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                 )
             }),
         ))
-        .style(move |s| {
-            let config = config.get();
-            s.items_center()
-                .width_pct(100.0)
-                .cursor(CursorStyle::Pointer)
-                .apply_if(
-                    active_editor_tab.get() == Some(editor_tab_id)
-                        && editor_tab.with(|editor_tab| editor_tab.active)
+            .style(move |s| {
+                let config = config.get();
+                s.items_center()
+                    .width_pct(100.0)
+                    .cursor(CursorStyle::Pointer)
+                    .apply_if(
+                        active_editor_tab.get() == Some(editor_tab_id)
+                            && editor_tab.with(|editor_tab| editor_tab.active)
                             == child_index.get(),
-                    |s| {
-                        s.background(
-                            config.color(SparrowColor::PANEL_CURRENT_BACKGROUND),
-                        )
-                    },
-                )
-                .hover(|s| {
-                    s.background(
-                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        |s| {
+                            s.background(
+                                config.color(SparrowColor::PANEL_CURRENT_BACKGROUND),
+                            )
+                        },
                     )
-                })
-        })
-        .on_event_cont(EventListener::PointerDown, move |_| {
-            editor_tab.update(|editor_tab| {
-                editor_tab.active = child_index.get_untracked();
-            });
-            active_editor_tab.set(Some(editor_tab_id));
-        })
+                    .hover(|s| {
+                        s.background(
+                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        )
+                    })
+            })
+            .on_event_cont(EventListener::PointerDown, move |_| {
+                editor_tab.update(|editor_tab| {
+                    editor_tab.active = child_index.get_untracked();
+                });
+                active_editor_tab.set(Some(editor_tab_id));
+            })
     };
 
     scroll(
@@ -614,13 +683,13 @@ fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                             )
                         },
                     )
-                    .style(|s| s.flex_col().width_pct(100.0)),
+                        .style(|s| s.flex_col().width_pct(100.0)),
                 ))
-                .style(|s| s.flex_col())
+                    .style(|s| s.flex_col())
             },
         )
-        .style(|s| s.flex_col().width_pct(100.0)),
+            .style(|s| s.flex_col().width_pct(100.0)),
     )
-    .style(|s| s.absolute().size_full().line_height(1.8))
-    .debug_name("Open Editors")
+        .style(|s| s.absolute().size_full().line_height(1.0))
+        .debug_name("Open Editors")
 }

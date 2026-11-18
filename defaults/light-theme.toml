@@ -1,10 +1,8 @@
-#:schema ../extra/schemas/color-theme.json
-
 [color-theme]
 name = "sparrow Light"
 
 [ui]
-font-family = ""
+font-family = "Inter, Noto Sans, sans-serif"
 font-size = 13
 header-height = 35
 status-height = 25
@@ -106,6 +104,14 @@ dim-text = "#A0A1A7"
 "sparrow.tab.inactive.foreground" = "$text"
 "sparrow.tab.inactive.underline" = "#528BFF77"
 
+"sparrow.window.background" = "$secondary-background"
+"sparrow.run.icon" = "#499C54"
+"sparrow.debug.icon" = "#499C54"
+"sparrow.hot_reload.icon" = "#EDA200"
+"sparrow.hot_restart.icon" = "#3574F0"
+"sparrow.stop.icon" = "#DB5860"
+"sparrow.tab.active.border" = "$secondary-background"
+
 "sparrow.tab.separator" = "#B4B4B4"
 
 "sparrow.icon.active" = "$text"
@@ -117,9 +123,6 @@ dim-text = "#A0A1A7"
 "sparrow.remote.connecting" = "#C18401"
 "sparrow.remote.disconnected" = "#E45649"
 
-"sparrow.plugin.name" = "#444444"
-"sparrow.plugin.description" = "$text"
-"sparrow.plugin.author" = "#707070"
 
 "terminal.cursor" = "$text"
 "terminal.foreground" = "$text"

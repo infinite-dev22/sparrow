@@ -1,0 +1,9 @@
+import 'dart:async';
+
+class {{name}} {
+  final _controller = StreamController<int>.broadcast();
+  int _count = 0;
+  Stream<int> get stream => _controller.stream;
+  void increment() => _controller.add(++_count);
+  Future<void> dispose() => _controller.close();
+}

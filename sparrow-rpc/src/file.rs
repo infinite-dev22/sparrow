@@ -143,6 +143,9 @@ pub struct Duplicating {
     pub state: NamingState,
     /// Path to the item being duplicated
     pub path: PathBuf,
+    pub destination: Option<PathBuf>,
+    pub is_dir: bool,
+    pub move_on_finish: bool,
     pub editor_needs_reset: bool,
 }
 
@@ -222,7 +225,7 @@ impl Naming {
     /// The extra node that should be added after the node at `path`
     pub fn extra_node(
         &self,
-        is_dir: bool,
+        _is_dir: bool,
         level: usize,
         path: &Path,
     ) -> Option<FileNodeViewData> {
@@ -236,16 +239,20 @@ impl Naming {
                 open: false,
                 level: level + 1,
             }),
-            Naming::Duplicating(d) if d.path == path => Some(FileNodeViewData {
-                kind: FileNodeViewKind::Duplicating {
-                    source: d.path.to_path_buf(),
-                    err: d.state.err().map(ToString::to_string),
-                },
-                is_dir,
-                is_root: false,
-                open: false,
-                level: level + 1,
-            }),
+            Naming::Duplicating(d)
+                if d.destination.as_deref().unwrap_or(&d.path) == path =>
+            {
+                Some(FileNodeViewData {
+                    kind: FileNodeViewKind::Duplicating {
+                        source: d.path.to_path_buf(),
+                        err: d.state.err().map(ToString::to_string),
+                    },
+                    is_dir: d.is_dir,
+                    is_root: false,
+                    open: false,
+                    level: level + 1,
+                })
+            }
             _ => None,
         }
     }
@@ -587,5 +594,31 @@ impl FileNodeItem {
         }
 
         i
+    }
+}
+
+#[cfg(test)]
+mod paste_naming_tests {
+    use super::*;
+
+    #[test]
+    fn paste_name_is_placed_under_destination_with_source_file_type() {
+        let source = PathBuf::from("/project/lib/a.dart");
+        let destination = PathBuf::from("/project/other");
+        let naming = Naming::Duplicating(Duplicating {
+            state: NamingState::Naming,
+            path: source.clone(),
+            destination: Some(destination.clone()),
+            is_dir: false,
+            move_on_finish: false,
+            editor_needs_reset: true,
+        });
+        assert!(naming.extra_node(false, 2, &source).is_none());
+        let row = naming.extra_node(true, 2, &destination).unwrap();
+        assert!(!row.is_dir);
+        assert_eq!(row.level, 3);
+        assert!(
+            matches!(row.kind, FileNodeViewKind::Duplicating { source: path, .. } if path == source)
+        );
     }
 }

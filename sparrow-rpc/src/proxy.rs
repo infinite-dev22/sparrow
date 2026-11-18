@@ -237,6 +237,7 @@ pub enum ProxyRequest {
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "method", content = "params")]
 pub enum ProxyNotification {
+    GitRefresh {},
     Initialize {
         workspace: Option<PathBuf>,
         disabled_volts: Vec<VoltID>,
@@ -245,6 +246,11 @@ pub enum ProxyNotification {
         plugin_configurations: HashMap<String, HashMap<String, serde_json::Value>>,
         window_id: usize,
         tab_id: usize,
+    },
+    SyncBuffer {
+        path: PathBuf,
+        rev: u64,
+        content: String,
     },
     OpenFileChanged {
         path: PathBuf,
@@ -347,6 +353,7 @@ pub enum ProxyNotification {
         dap_id: DapId,
         thread_id: ThreadId,
     },
+    DapHotReload { dap_id: DapId, restart: bool },
     DapStop {
         dap_id: DapId,
     },
@@ -1198,6 +1205,10 @@ impl ProxyRpcHandler {
 
     pub fn dap_pause(&self, dap_id: DapId, thread_id: ThreadId) {
         self.notification(ProxyNotification::DapPause { dap_id, thread_id })
+    }
+
+    pub fn dap_hot_reload(&self, dap_id: DapId, restart: bool) {
+        self.notification(ProxyNotification::DapHotReload { dap_id, restart })
     }
 
     pub fn dap_stop(&self, dap_id: DapId) {

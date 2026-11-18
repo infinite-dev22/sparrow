@@ -1,7 +1,7 @@
 use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 use floem::{
-    View,
+    View, IntoView,
     peniko::Color,
     reactive::{
         ReadSignal, SignalGet, SignalUpdate, SignalWith, create_effect,
@@ -24,16 +24,40 @@ use crate::{
     workspace::SparrowWorkspace,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticGroup {
+    Error,
+    Warning,
+    Lint,
+}
+
+impl DiagnosticGroup {
+    pub fn matches(&self, severity: Option<DiagnosticSeverity>) -> bool {
+        match self {
+            DiagnosticGroup::Error => severity == Some(DiagnosticSeverity::ERROR),
+            DiagnosticGroup::Warning => severity == Some(DiagnosticSeverity::WARNING),
+            DiagnosticGroup::Lint => {
+                severity == Some(DiagnosticSeverity::INFORMATION)
+                    || severity == Some(DiagnosticSeverity::HINT)
+                    || severity.is_none()
+            }
+        }
+    }
+}
+
 pub fn problem_panel(
     window_tab_data: Rc<WindowTabData>,
     position: PanelPosition,
 ) -> impl View {
+    if position.is_bottom() {
+        return super::dart_analysis_view::panel(window_tab_data).into_any();
+    }
     let config = window_tab_data.common.config;
     let is_bottom = position.is_bottom();
     PanelBuilder::new(config, position)
         .add_style(
             "Errors",
-            problem_section(window_tab_data.clone(), DiagnosticSeverity::ERROR),
+            problem_section(window_tab_data.clone(), DiagnosticGroup::Error),
             window_tab_data.panel.section_open(PanelSection::Error),
             move |s| {
                 s.border_color(config.get().color(SparrowColor::SPARROW_BORDER))
@@ -41,18 +65,28 @@ pub fn problem_panel(
                     .apply_if(!is_bottom, |s| s.border_bottom(1.0))
             },
         )
-        .add(
+        .add_style(
             "Warnings",
-            problem_section(window_tab_data.clone(), DiagnosticSeverity::WARNING),
+            problem_section(window_tab_data.clone(), DiagnosticGroup::Warning),
             window_tab_data.panel.section_open(PanelSection::Warn),
+            move |s| {
+                s.border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+                    .apply_if(is_bottom, |s| s.border_right(1.0))
+                    .apply_if(!is_bottom, |s| s.border_bottom(1.0))
+            },
+        )
+        .add(
+            "Lints",
+            problem_section(window_tab_data.clone(), DiagnosticGroup::Lint),
+            window_tab_data.panel.section_open(PanelSection::Lint),
         )
         .build()
-        .debug_name("Problem Panel")
+        .debug_name("Problem Panel").into_any()
 }
 
 fn problem_section(
     window_tab_data: Rc<WindowTabData>,
-    severity: DiagnosticSeverity,
+    group: DiagnosticGroup,
 ) -> impl View {
     let config = window_tab_data.common.config;
     let main_split = window_tab_data.main_split.clone();
@@ -67,7 +101,7 @@ fn problem_section(
                         main_split.common.workspace.clone(),
                         path,
                         diagnostic_data,
-                        severity,
+                        group,
                         internal_command,
                         config,
                     )
@@ -84,7 +118,7 @@ fn file_view(
     workspace: Arc<SparrowWorkspace>,
     path: PathBuf,
     diagnostic_data: DiagnosticData,
-    severity: DiagnosticSeverity,
+    group: DiagnosticGroup,
     internal_command: Listener<InternalCommand>,
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> impl View {
@@ -96,7 +130,7 @@ fn file_view(
         let d = if !span.is_empty() {
             span.iter()
                 .filter_map(|(iv, diag)| {
-                    if diag.severity == Some(severity) {
+                    if group.matches(diag.severity) {
                         Some(EditorDiagnostic {
                             range: Some((iv.start, iv.end)),
                             diagnostic: diag.to_owned(),
@@ -111,7 +145,7 @@ fn file_view(
             let diagnostics: im::Vector<EditorDiagnostic> = diagnostics
                 .into_iter()
                 .filter_map(|d| {
-                    if d.severity == Some(severity) {
+                    if group.matches(d.severity) {
                         Some(EditorDiagnostic {
                             range: None,
                             diagnostic: d,
@@ -136,15 +170,16 @@ fn file_view(
     };
     let style_path = path.clone();
 
-    let icon = match severity {
-        DiagnosticSeverity::ERROR => SparrowIcons::ERROR,
-        _ => SparrowIcons::WARNING,
+    let icon = match group {
+        DiagnosticGroup::Error => SparrowIcons::ERROR,
+        DiagnosticGroup::Warning | DiagnosticGroup::Lint => SparrowIcons::WARNING,
     };
     let icon_color = move || {
         let config = config.get();
-        match severity {
-            DiagnosticSeverity::ERROR => config.color(SparrowColor::SPARROW_ERROR),
-            _ => config.color(SparrowColor::SPARROW_WARN),
+        match group {
+            DiagnosticGroup::Error => config.color(SparrowColor::SPARROW_ERROR),
+            DiagnosticGroup::Warning => config.color(SparrowColor::SPARROW_WARN),
+            DiagnosticGroup::Lint => config.color(SparrowColor::EDITOR_DIM),
         }
     };
 
@@ -273,10 +308,19 @@ fn item_view(
         ignore_unconfirmed: false,
         same_editor_tab: false,
     };
+    let line = d.diagnostic.range.start.line + 1;
+    let character = d.diagnostic.range.start.character + 1;
+    let code_str = match &d.diagnostic.code {
+        Some(lsp_types::NumberOrString::String(s)) => format!(" ({s})"),
+        Some(lsp_types::NumberOrString::Number(n)) => format!(" ({n})"),
+        None => String::new(),
+    };
+    let formatted_msg = format!("[{line}:{character}]{code_str} {}", d.diagnostic.message);
+
     stack((
         container({
             stack((
-                label(move || d.diagnostic.message.clone()).style(move |s| {
+                label(move || formatted_msg.clone()).style(move |s| {
                     s.width_pct(100.0)
                         .min_width(0.0)
                         .padding_left(

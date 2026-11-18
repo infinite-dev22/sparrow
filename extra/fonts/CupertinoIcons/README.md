@@ -1,0 +1,1 @@
+CupertinoIcons font from the Flutter cupertino_icons 2.0.0 package, copied unmodified. Copyright Flutter authors / original icon contributors; see LICENSE.txt. codepoints.json generated from Flutter SDK cupertino/icons.dart, under the Flutter BSD license bundled with the MaterialIcons assets.

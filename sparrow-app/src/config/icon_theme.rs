@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsStr,
     path::{Path, PathBuf},
 };
 
@@ -37,20 +36,61 @@ impl IconThemeConfig {
     /// extension), and there is an icon associated with that file type, returns the path of the
     /// icon.
     pub fn resolve_path_to_icon(&self, paths: &[&Path]) -> Option<PathBuf> {
-        let file_names = paths
-            .iter()
-            .map(|path| path.file_name().and_then(OsStr::to_str));
-        let file_name_icon = try_all_equal_value(file_names)
-            .and_then(|file_name| self.filename.get(file_name));
-
-        file_name_icon
+        let resolve = |path: &&Path| {
+            let name = path.file_name()?.to_str()?;
+            self.filename
+                .get(name)
+                .or_else(|| {
+                    self.filename
+                        .iter()
+                        .filter_map(|(pattern, icon)| {
+                            let prefix = pattern.strip_suffix('*')?;
+                            (pattern.ends_with(".*") && name.starts_with(prefix))
+                                .then_some((prefix.len(), icon))
+                        })
+                        .max_by_key(|(length, _)| *length)
+                        .map(|(_, icon)| icon)
+                })
+                .or_else(|| {
+                    let lower = name.to_ascii_lowercase();
+                    // Try each suffix from longest to shortest: freezed.dart
+                    // wins over dart, and gradle.kts wins over kts.
+                    lower.match_indices('.').find_map(|(index, _)| {
+                        self.extension.get(&lower[index + 1..])
+                    })
+                })
+                .cloned()
+        };
+        try_all_equal_value(paths.iter().map(resolve))
             .or_else(|| {
-                let extensions = paths
-                    .iter()
-                    .map(|path| path.extension().and_then(OsStr::to_str));
+                // Preserve diff-tab behavior: distinct named files with a shared
+                // extension can still use the common extension icon.
+                try_all_equal_value(paths.iter().map(|path| {
+                    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+                    name.match_indices('.')
+                        .find_map(|(index, _)| {
+                            self.extension.get(&name[index + 1..])
+                        })
+                        .cloned()
+                }))
+            })
+            .map(|icon| self.path.join(icon))
+    }
 
-                try_all_equal_value(extensions)
-                    .and_then(|extension| self.extension.get(extension))
+    pub fn resolve_folder_to_icon(&self, path: &Path) -> Option<PathBuf> {
+        let name = path.file_name()?.to_str()?;
+        self.foldername
+            .get(name)
+            .or_else(|| {
+                let lower = name.to_ascii_lowercase();
+                self.foldername
+                    .iter()
+                    .filter(|(suffix, _)| {
+                        suffix.starts_with('.')
+                            && lower.ends_with(&suffix.to_ascii_lowercase())
+                    })
+                    .max_by_key(|(suffix, _)| suffix.len())
+                    .map(|(_, icon)| icon)
             })
             .map(|icon| self.path.join(icon))
     }
@@ -239,5 +279,24 @@ mod tests {
                 &["/dir1/Makefile.c", "../main.c"].map(AsRef::as_ref)
             )
         );
+    }
+}
+
+#[cfg(test)]
+mod compound_tests {
+    use super::*;
+    #[test]
+    fn explicit_theme_names_precede_suffixes_and_folder_patterns() {
+        let mut theme = IconThemeConfig::default();
+        theme.filename.insert("model.g.dart".into(), "custom.svg".into());
+        theme.extension.insert("g.dart".into(), "generated.svg".into());
+        theme.extension.insert("dart".into(), "dart.svg".into());
+        assert_eq!(theme.resolve_path_to_icon(&[Path::new("model.g.dart")]), Some("custom.svg".into()));
+        assert_eq!(theme.resolve_path_to_icon(&[Path::new("other.g.dart")]), Some("generated.svg".into()));
+        theme.foldername.insert("Assets.xcassets".into(), "custom-assets.svg".into());
+        theme.foldername.insert(".xcassets".into(), "assets.svg".into());
+        assert_eq!(theme.resolve_folder_to_icon(Path::new("Assets.xcassets")), Some("custom-assets.svg".into()));
+        assert_eq!(theme.resolve_folder_to_icon(Path::new("Other.xcassets")), Some("assets.svg".into()));
+        assert_eq!(theme.resolve_folder_to_icon(Path::new("ordinary")), None);
     }
 }

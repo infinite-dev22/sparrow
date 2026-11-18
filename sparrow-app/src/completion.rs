@@ -120,6 +120,70 @@ impl CompletionData {
         self.filter_items();
     }
 
+    /// Feed a completion response that came from a source which has
+    /// already ranked and filtered the items (e.g. a language server).
+    ///
+    /// Unlike [`Self::receive`], this doesn't go through the input cache or
+    /// local fuzzy match. The server returned items for the position we asked
+    /// about; we trust its order.
+    ///
+    /// Stale responses (from an older `request_id`) are dropped without
+    /// touching the current state.
+    pub fn receive_direct(
+        &mut self,
+        request_id: usize,
+        items: Vec<CompletionItem>,
+        plugin_id: PluginId,
+    ) {
+        if self.status == CompletionStatus::Inactive || self.request_id != request_id
+        {
+            return;
+        }
+
+        // Preserve the server's sort order, but for equal `sortText`
+        // (or equal labels), put Constructors and Functions/Methods
+        // before Class items. Dart's server often sends two `Row`
+        // entries: one Class kind (type reference → inserts `Row`) and
+        // one Constructor kind (inserts `Row($0)`). Without this
+        // tiebreak, Enter selects the class and the user gets bare
+        // `Row`, not the constructor call.
+        let mut items = items;
+        items.sort_by(|a, b| {
+            let a_sort = a.sort_text.as_deref().unwrap_or(&a.label);
+            let b_sort = b.sort_text.as_deref().unwrap_or(&b.label);
+            a_sort
+                .cmp(b_sort)
+                .then_with(|| Self::kind_priority(a.kind).cmp(&Self::kind_priority(b.kind)))
+        });
+
+        self.filtered_items = items
+            .into_iter()
+            .map(|item| ScoredCompletionItem {
+                item,
+                plugin_id,
+                score: 0,
+                label_score: 0,
+                indices: Vec::new(),
+            })
+            .collect();
+        self.active.set(0);
+        self.status = CompletionStatus::Done;
+    }
+
+    /// Ranking within equal sort-keys. Lower = earlier.
+    fn kind_priority(kind: Option<lsp_types::CompletionItemKind>) -> u8 {
+        use lsp_types::CompletionItemKind as K;
+        match kind {
+            Some(K::CONSTRUCTOR) => 0,
+            Some(K::FUNCTION) | Some(K::METHOD) => 1,
+            Some(K::CLASS) | Some(K::STRUCT) => 2,
+            Some(K::ENUM) | Some(K::ENUM_MEMBER) => 3,
+            Some(K::VARIABLE) | Some(K::FIELD) | Some(K::PROPERTY) => 4,
+            Some(K::SNIPPET) | Some(K::KEYWORD) => 5,
+            _ => 6,
+        }
+    }
+
     /// Request for completion items wit the current request id.
     pub fn request(
         &mut self,

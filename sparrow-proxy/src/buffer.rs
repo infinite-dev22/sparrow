@@ -118,10 +118,13 @@ impl Buffer {
         delta: &RopeDelta,
         rev: u64,
     ) -> Option<TextDocumentContentChangeEvent> {
-        if self.rev + 1 != rev {
+        if self.rev + 1 != rev || delta.base_len != self.rope.len() {
+            tracing::warn!(path = %self.path.display(), current = self.rev,
+                incoming = rev, expected_len = self.rope.len(), delta_len = delta.base_len,
+                "Buffer update requires synchronization");
             return None;
         }
-        self.rev += 1;
+        self.rev = rev;
         let content_change = get_document_content_changes(delta, self);
         self.rope = delta.apply(&self.rope);
         Some(
@@ -131,6 +134,22 @@ impl Buffer {
                 text: self.get_document(),
             }),
         )
+    }
+
+    /// Replace an out-of-sync mirror with the editor's current snapshot.
+    /// Older snapshots must never overwrite newer edits already received.
+    pub fn synchronize(&mut self, rev: u64, content: String) -> Option<RopeDelta> {
+        if rev < self.rev {
+            return None;
+        }
+        let delta = lapce_xi_rope::Delta::simple_edit(
+            0..self.rope.len(),
+            Rope::from(content),
+            self.rope.len(),
+        );
+        self.rope = delta.apply(&self.rope);
+        self.rev = rev;
+        Some(delta)
     }
 
     pub fn get_document(&self) -> String {
@@ -210,96 +229,14 @@ pub fn read_path_to_string<P: AsRef<Path>>(path: P) -> Result<String> {
     Ok(contents.to_string())
 }
 
+/// Semantic language services are supplied only by the Dart SDK.
+/// Flutter's assets, platform scaffolding and config files stay editable,
+/// but never activate a second programming-language server.
 pub fn language_id_from_path(path: &Path) -> Option<&'static str> {
-    // recommended language_id values
-    // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocumentItem
-    Some(match path.extension() {
-        Some(ext) => {
-            match ext.to_str()? {
-                "C" | "H" => "cpp",
-                "M" => "objective-c",
-                // stop case-sensitive matching
-                ext => match ext.to_lowercase().as_str() {
-                    "bat" => "bat",
-                    // spellchecker:ignore-next-line
-                    "clj" | "cljs" | "cljc" | "edn" => "clojure",
-                    "coffee" => "coffeescript",
-                    "c" | "h" => "c",
-                    "cpp" | "hpp" | "cxx" | "hxx" | "c++" | "h++" | "cc" | "hh" => {
-                        "cpp"
-                    }
-                    "cs" | "csx" => "csharp",
-                    "css" => "css",
-                    "d" | "di" | "dlang" => "dlang",
-                    "diff" | "patch" => "diff",
-                    "dart" => "dart",
-                    "dockerfile" => "dockerfile",
-                    "elm" => "elm",
-                    "ex" | "exs" => "elixir",
-                    "erl" | "hrl" => "erlang",
-                    "fs" | "fsi" | "fsx" | "fsscript" => "fsharp",
-                    "git-commit" | "git-rebase" => "git",
-                    "go" => "go",
-                    "groovy" | "gvy" | "gy" | "gsh" => "groovy",
-                    "hbs" => "handlebars",
-                    "htm" | "html" | "xhtml" => "html",
-                    "ini" => "ini",
-                    "java" | "class" => "java",
-                    "js" => "javascript",
-                    "jsx" => "javascriptreact",
-                    "json" => "json",
-                    "jl" => "julia",
-                    "kt" => "kotlin",
-                    "kts" => "kotlinbuildscript",
-                    "less" => "less",
-                    "lua" => "lua",
-                    "makefile" | "gnumakefile" => "makefile",
-                    "md" | "markdown" => "markdown",
-                    "m" => "objective-c",
-                    "mm" => "objective-cpp",
-                    "plx" | "pl" | "pm" | "xs" | "t" | "pod" | "cgi" => "perl",
-                    "p6" | "pm6" | "pod6" | "t6" | "raku" | "rakumod"
-                    | "rakudoc" | "rakutest" => "perl6",
-                    "php" | "phtml" | "pht" | "phps" => "php",
-                    "proto" => "proto",
-                    "ps1" | "ps1xml" | "psc1" | "psm1" | "psd1" | "pssc"
-                    | "psrc" => "powershell",
-                    "py" | "pyi" | "pyc" | "pyd" | "pyw" => "python",
-                    "r" => "r",
-                    "rb" => "ruby",
-                    "rs" => "rust",
-                    "scss" | "sass" => "scss",
-                    "sc" | "scala" => "scala",
-                    "sh" | "bash" | "zsh" => "shellscript",
-                    "sql" => "sql",
-                    "swift" => "swift",
-                    "svelte" => "svelte",
-                    "thrift" => "thrift",
-                    "toml" => "toml",
-                    "ts" => "typescript",
-                    "tsx" => "typescriptreact",
-                    "tex" => "tex",
-                    "vb" => "vb",
-                    "xml" | "csproj" => "xml",
-                    "xsl" => "xsl",
-                    "yml" | "yaml" => "yaml",
-                    "zig" => "zig",
-                    "vue" => "vue",
-                    _ => return None,
-                },
-            }
-        }
-        // Handle paths without extension
-        #[allow(clippy::match_single_binding)]
-        None => match path.file_name()?.to_str()? {
-            // case-insensitive matching
-            filename => match filename.to_lowercase().as_str() {
-                "dockerfile" => "dockerfile",
-                "makefile" | "gnumakefile" => "makefile",
-                _ => return None,
-            },
-        },
-    })
+    path.extension()?
+        .to_str()?
+        .eq_ignore_ascii_case("dart")
+        .then_some("dart")
 }
 
 fn get_document_content_changes(
@@ -348,4 +285,73 @@ pub fn get_mod_time<P: AsRef<Path>>(path: P) -> Option<SystemTime> {
         .and_then(|f| f.metadata())
         .and_then(|meta| meta.modified())
         .ok()
+}
+
+#[cfg(test)]
+mod dart_scope_tests {
+    use super::*;
+    #[test]
+    fn only_dart_files_have_a_semantic_language_id() {
+        assert_eq!(
+            language_id_from_path(Path::new("lib/main.dart")),
+            Some("dart")
+        );
+        assert_eq!(
+            language_id_from_path(Path::new("tool/TEST.DART")),
+            Some("dart")
+        );
+        for p in [
+            "main.rs",
+            "app.py",
+            "index.ts",
+            "pubspec.yaml",
+            "android/MainActivity.kt",
+        ] {
+            assert_eq!(language_id_from_path(Path::new(p)), None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod synchronization_tests {
+    use super::*;
+    use lapce_xi_rope::Delta;
+
+    #[test]
+    fn incompatible_delta_preserves_mirror_and_snapshot_restores_editing_and_saving()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pubspec_overrides.yaml");
+        fs::write(&path, "old\n").unwrap();
+        let mut buffer = Buffer::new(BufferId::next(), path.clone());
+        let revision = buffer.rev;
+        let invalid = Delta::simple_edit(0..0, Rope::from("x"), 99);
+        assert!(buffer.update(&invalid, revision + 1).is_none());
+        assert_eq!(buffer.rev, revision);
+        assert_eq!(buffer.get_document(), "old\n");
+        // A skipped revision must also request a snapshot, even for a valid length.
+        let skipped = Delta::simple_edit(0..0, Rope::from("x"), 4);
+        assert!(buffer.update(&skipped, revision + 2).is_none());
+        let snapshot =
+            "dependency_overrides:\n  local_probe:\n    path: local_probe\n";
+        assert!(buffer.synchronize(revision + 3, snapshot.into()).is_some());
+        let valid = Delta::simple_edit(
+            snapshot.len()..snapshot.len(),
+            Rope::from("\n"),
+            snapshot.len(),
+        );
+        assert!(buffer.update(&valid, revision + 4).is_some());
+        buffer.save(revision + 4, false).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), format!("{snapshot}\n"));
+    }
+
+    #[test]
+    fn delayed_snapshot_cannot_replace_newer_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut buffer = Buffer::new(BufferId::next(), dir.path().join("main.dart"));
+        buffer.synchronize(8, "newer".into()).unwrap();
+        assert!(buffer.synchronize(7, "older".into()).is_none());
+        assert_eq!(buffer.rev, 8);
+        assert_eq!(buffer.get_document(), "newer");
+    }
 }

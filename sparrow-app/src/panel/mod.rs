@@ -1,7 +1,6 @@
 pub mod call_hierarchy_view;
 pub mod data;
 pub mod debug_view;
-pub mod document_symbol;
 pub mod global_search_view;
 pub mod implementation_view;
 pub mod kind;
@@ -13,3 +12,26 @@ pub mod source_control_view;
 pub mod style;
 pub mod terminal_view;
 pub mod view;
+pub mod widget_tree;
+pub mod dart_outline;
+pub mod flutter_inspector;
+pub mod flutter_run_view;
+pub mod device_manager_view;
+pub mod flutter_performance_view;
+pub mod flutter_test_view;
+
+pub mod chrome;
+pub mod dart_analysis_view;
+
+pub mod reference_tools;
+
+pub mod workflow_tools;
+
+pub mod problems_view;
+
+pub mod resource_manager;
+mod resource_rename;
+
+pub mod git_history;
+
+pub mod mobile_preview;

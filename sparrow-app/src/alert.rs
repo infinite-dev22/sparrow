@@ -148,7 +148,8 @@ pub fn alert_box(alert_data: AlertBoxData) -> impl View {
         .style(move |s| {
             let config = config.get();
             s.padding(20.0)
-                .width(250.0)
+                .width(560.0)
+                .max_width_pct(90.0)
                 .border(1.0)
                 .border_radius(6.0)
                 .border_color(config.color(SparrowColor::SPARROW_BORDER))
