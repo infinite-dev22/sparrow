@@ -1,6 +1,6 @@
 //! Reference-style modal settings with deferred, validated edits.
 use super::{SettingsData, SettingsItem, SettingsValue};
-use crate::modal_focus::{ModalChoice, ModalFocus, list_destination};
+use crate::modal_focus::{ModalFocus, list_destination};
 use crate::{
     app::{clickable_icon, tooltip_label},
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
@@ -238,33 +238,9 @@ fn setting_row(
             value.update(|v| *v = if v == "true" { "false" } else { "true" }.into())
         })
         .into_any(),
-        SettingsValue::Dropdown(dropdown) => keyboard
-            .menu(
-                label(move || format!("{}  ⌄", value.get())).style(move |s| {
-                    s.min_width(220.0)
-                        .height(26.0)
-                        .padding_horiz(8.0)
-                        .items_center()
-                        .border(1.0)
-                        .border_radius(3.0)
-                        .border_color(
-                            config.get().color(SparrowColor::SPARROW_BORDER),
-                        )
-                }),
-                move || {
-                    dropdown
-                        .items
-                        .iter()
-                        .map(|choice| {
-                            let text = choice.clone();
-                            ModalChoice::new(choice.clone(), move || {
-                                value.set(text.clone())
-                            })
-                            .selected(value.get_untracked() == *choice)
-                        })
-                        .collect()
-                },
-            )
+        SettingsValue::Dropdown(info) => keyboard
+            .control(crate::dropdown::dropdown(value, info.items.clone(), config)
+                .style(|s| s.width(220.0).max_width_full()))
             .into_any(),
         SettingsValue::String(_)
             if item.kind == "core"
@@ -489,49 +465,34 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     });
     let can_project =
         window.workspace.path.is_some() && window.workspace.kind.is_local();
-    let scope_picker = keyboard.menu(
-        label(move || {
-            if project_scope.get() {
-                "Settings for: This project  ⌄"
-            } else {
-                "Settings for: IDE  ⌄"
-            }
-        })
-        .style(move |s| {
-            s.height(28.0)
-                .padding_horiz(8.0)
-                .items_center()
-                .border(1.0)
-                .border_radius(3.0)
-                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-        }),
-        move || {
-            [false, true]
-                .into_iter()
-                .map(|project| {
-                    ModalChoice::new(
-                        if project { "This project" } else { "IDE" },
-                        move || {
-                            if project == project_scope.get_untracked() {
-                                return;
-                            }
-                            scope_drafts.update(|drafts| {
-                                drafts[project_scope.get_untracked() as usize] =
-                                    pending.get_untracked()
-                            });
-                            pending.set(scope_drafts.with_untracked(|drafts| {
-                                drafts[project as usize].clone()
-                            }));
-                            project_scope.set(project);
-                            error.set(String::new());
-                            epoch.update(|epoch| *epoch += 1);
-                        },
-                    )
-                    .selected(project_scope.get_untracked() == project)
-                    .enabled(!project || can_project)
-                })
-                .collect()
-        },
+    let scope_label = cx.create_rw_signal(String::new());
+    cx.create_effect(move |_| {
+        scope_label.set(if project_scope.get() {
+            "Settings for: This project"
+        } else {
+            "Settings for: IDE"
+        }.into());
+    });
+    let scopes = if can_project {
+        vec!["Settings for: IDE".into(), "Settings for: This project".into()]
+    } else {
+        vec!["Settings for: IDE".into()]
+    };
+    let scope_picker = keyboard.control(
+        crate::dropdown::dropdown(scope_label, scopes, config)
+            .on_accept(move |selected| {
+                let project = selected == "Settings for: This project";
+                if project == project_scope.get_untracked() {
+                    return;
+                }
+                scope_drafts.update(|drafts| {
+                    drafts[project_scope.get_untracked() as usize] = pending.get_untracked();
+                });
+                pending.set(scope_drafts.with_untracked(|drafts| drafts[project as usize].clone()));
+                project_scope.set(project);
+                error.set(String::new());
+                epoch.update(|epoch| *epoch += 1);
+            }),
     );
     let apply: Rc<dyn Fn() -> bool> = {
         let window = window.clone();
