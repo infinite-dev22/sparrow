@@ -1,4 +1,5 @@
 //! Appearance-only theme management; no language-extension marketplace.
+use crate::text_input::text_input;
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
     command::SparrowWorkbenchCommand, config::color::SparrowColor,
@@ -7,7 +8,7 @@ use crate::{
 use floem::{
     View,
     reactive::{SignalGet, SignalWith, create_memo, create_rw_signal},
-    views::{Decorators, dyn_stack, empty, label, scroll, stack, text_input},
+    views::{Decorators, dyn_stack, empty, label, scroll, stack},
 };
 use std::rc::Rc;
 pub fn plugin_panel(
@@ -29,5 +30,5 @@ pub fn plugin_panel(
                 .collect::<Vec<_>>()
         })
     });
-    stack((super::chrome::header(window,PanelKind::Plugin,"Themes",empty()),stack((label(||"Color theme…").on_click_stop(move |_|commands.send(SparrowWorkbenchCommand::ChangeColorTheme)),label(||"Icon theme…").on_click_stop(move |_|commands.send(SparrowWorkbenchCommand::ChangeIconTheme)),label(||"Reload local themes").on_click_stop(move |_|plugin.reload_themes()))).style(move |s|s.flex_col().gap(12.0).padding(16.0).color(config.get().color(SparrowColor::EDITOR_LINK))),text_input(query).placeholder("Filter installed themes").style(|s|s.margin_horiz(16.0).height(26.0)),label(||"Built-in themes are available from the theme selectors. Additional local themes appear below.").style(|s|s.padding(16.0).width_full()),scroll(dyn_stack(move ||rows.get(),|m|m.id(),move |m|stack((label(move ||m.display_name.clone()).style(|s|s.font_bold()),label(move ||m.description.clone()).style(|s|s.margin_top(6.0)))).style(|s|s.flex_col().width_full().padding(16.0))).style(|s|s.flex_col().width_full())).style(|s|s.width_full().flex_grow(1.0_f32).min_height(0.0)))).style(|s|s.absolute().size_full().flex_col())
+    stack((super::chrome::header(window,PanelKind::Plugin,"Themes",empty()),stack((label(||"Color theme…").on_click_stop(move |_|commands.send(SparrowWorkbenchCommand::ChangeColorTheme)),label(||"Icon theme…").on_click_stop(move |_|commands.send(SparrowWorkbenchCommand::ChangeIconTheme)),label(||"Reload local themes").on_click_stop(move |_|plugin.reload_themes()))).style(move |s|s.flex_col().gap(12.0).padding(16.0).color(config.get().color(SparrowColor::EDITOR_LINK))),floem::views::container(text_input(query, config).placeholder("Filter installed themes")).style(|s|s.margin_horiz(16.0).min_width(0.0)),label(||"Built-in themes are available from the theme selectors. Additional local themes appear below.").style(|s|s.padding(16.0).width_full()),scroll(dyn_stack(move ||rows.get(),|m|m.id(),move |m|stack((label(move ||m.display_name.clone()).style(|s|s.font_bold()),label(move ||m.description.clone()).style(|s|s.margin_top(6.0)))).style(|s|s.flex_col().width_full().padding(16.0))).style(|s|s.flex_col().width_full())).style(|s|s.width_full().flex_grow(1.0_f32).min_height(0.0)))).style(|s|s.absolute().size_full().flex_col())
 }

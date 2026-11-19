@@ -1,4 +1,5 @@
 //! Real Flutter assets and Android wrapper resources, with module and variant grouping.
+use crate::text_input::text_input;
 use super::kind::PanelKind;
 use crate::{
     app::clickable_icon,
@@ -16,7 +17,6 @@ use floem::{
     },
     views::{
         Decorators, dyn_stack, empty, img_from_path, label, scroll, stack, svg,
-        text_input,
     },
 };
 use std::{
@@ -1092,18 +1092,9 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 menu
             })
             .style(|s| s.max_width(160.0).text_ellipsis()),
-            text_input(query)
+            text_input(query, config)
                 .placeholder("Search resources")
-                .style(move |s| {
-                    s.height(24.0)
-                        .flex_grow(1.0_f32)
-                        .min_width(30.0)
-                        .border(1.0)
-                        .border_radius(3.0)
-                        .border_color(
-                            config.get().color(SparrowColor::SPARROW_BORDER),
-                        )
-                }),
+                .style(|s| s.flex_grow(1.0_f32).min_width(30.0)),
         ))
         .style(|s| {
             s.width_full()
@@ -1430,7 +1421,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         }),
         stack((
             label(||"Rename resource and usages").style(|s|s.font_bold()),
-            text_input(rename_name).disabled(move ||rename_busy.get()).placeholder("New resource name").style(move |s|s.width_full().padding(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+            text_input(rename_name, config).disabled(move ||rename_busy.get()).placeholder("New resource name"),
             scroll(label(move ||rename_plan.with(|p|p.as_ref().map(|p|p.details()).unwrap_or_default()))).style(|s|s.width_full().max_height(220.0)),
             label(move ||rename_error.get()),
             stack((
@@ -1463,8 +1454,8 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         )).style(move |s|s.absolute().inset_left(12.0).inset_right(12.0).inset_top(100.0).padding(16.0).gap(12.0).flex_col().border(1.0).border_radius(5.0).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_color(config.get().color(SparrowColor::SPARROW_BORDER)).z_index(60).apply_if(rename_resource.with(|r|r.is_none()),|s|s.hide())),
         stack((
             label(move ||match create_kind.get(){Some(Kind::Color)=>"New color resource",Some(Kind::String)=>"New string resource",_=>"Import resource"}).style(|s| s.font_bold()),
-            text_input(source).placeholder("Source file path / resource value").style(move |s|s.width_full().padding(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
-            text_input(destination).placeholder("Destination path / resource name").style(move |s|s.width_full().padding(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+            text_input(source, config).placeholder("Source file path / resource value"),
+            text_input(destination, config).placeholder("Destination path / resource name"),
             label(move || error.get()),
             stack((
                 label(|| "Cancel").on_click_stop(move |_| import_open.set(false)),

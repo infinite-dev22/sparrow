@@ -1,4 +1,5 @@
 //! Native tool windows backed by workspace diagnostics, local Git and adb.
+use crate::text_input::text_input;
 use crate::popup_menu::PopupMenuExt;
 use crate::popup_menu::{Menu, MenuItem};
 use super::kind::PanelKind;
@@ -13,7 +14,7 @@ use floem::{
         Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
         create_rw_signal,
     },
-    views::{Decorators, dyn_stack, label, scroll, stack, text_input},
+    views::{Decorators, dyn_stack, label, scroll, stack},
 };
 use std::{
     io::Read,
@@ -276,18 +277,9 @@ pub fn logcat(window: Rc<WindowTabData>) -> impl View {
                         s.color(config.get().color(SparrowColor::SPARROW_ERROR))
                     })
             }),
-            text_input(query)
+            text_input(query, config)
                 .placeholder("Filter logs (text)")
-                .style(move |s| {
-                    s.height(30.0)
-                        .flex_grow(1.0_f32)
-                        .min_width(0.0)
-                        .padding_horiz(8.0)
-                        .border(1.0)
-                        .border_color(
-                            config.get().color(SparrowColor::SPARROW_BORDER),
-                        )
-                }),
+                .style(|s| s.flex_grow(1.0_f32).min_width(0.0)),
         ))
         .style(|s| {
             s.width_full()

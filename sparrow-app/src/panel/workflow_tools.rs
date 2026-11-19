@@ -1,4 +1,5 @@
 //! Dart/Flutter workflow surfaces. All cards and rows represent observed data.
+use crate::text_input::text_input;
 use crate::popup_menu::PopupMenuExt;
 use crate::popup_menu::{Menu, MenuItem};
 use super::{kind::PanelKind, reference_tools::output};
@@ -14,7 +15,7 @@ use floem::{
         RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_effect,
         create_memo, create_rw_signal,
     },
-    views::{Decorators, dyn_stack, empty, label, scroll, stack, svg, text_input},
+    views::{Decorators, dyn_stack, empty, label, scroll, stack, svg},
 };
 use std::{
     cell::RefCell,
@@ -313,18 +314,8 @@ pub fn pull_requests(window: Rc<WindowTabData>) -> impl View {
                 .padding_horiz(12.0)
                 .items_center()
         }),
-        text_input(query)
-            .placeholder("Search pull requests")
-            .style(move |s| {
-                s.height(26.0)
-                    .margin_horiz(12.0)
-                    .padding_horiz(8.0)
-                    .border(1.0)
-                    .border_radius(3.0)
-                    .border_color(
-                        config.get().color(SparrowColor::SPARROW_TAB_ACTIVE_BORDER),
-                    )
-            }),
+        floem::views::container(text_input(query, config).placeholder("Search pull requests"))
+            .style(|s| s.margin_horiz(12.0).min_width(0.0)),
         stack((
             label(move || format!("{} ⌄", state.get())).ide_popout_menu(move || {
                 let mut m = Menu::new("");

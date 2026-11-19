@@ -1,4 +1,5 @@
 //! Keyboard navigation confined to the controls of an open IDE dialog.
+use crate::text_input::text_input;
 use floem::{
     IntoView, View, ViewId,
     event::{Event, EventListener, EventPropagation},
@@ -6,7 +7,6 @@ use floem::{
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::{
         Decorators, dyn_container, dyn_stack, empty, label, scroll, stack,
-        text_input,
     },
 };
 use std::{
@@ -349,10 +349,14 @@ impl ModalFocus {
         )
     }
 
-    pub fn input(&self, value: RwSignal<String>) -> impl View + use<> {
+    pub fn input(
+        &self,
+        value: RwSignal<String>,
+        config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
+    ) -> impl View + use<> {
         let submit = self.submit.clone();
         let picker_open = self.picker_open;
-        let input = text_input(value).on_enter(move || {
+        let input = text_input(value, config).on_enter(move || {
             if picker_open.get_untracked() {
                 return;
             }
@@ -361,14 +365,7 @@ impl ModalFocus {
                 action();
             }
         });
-        let id = input.id();
-        // Floem's Auto width gives its internal text node only a fixed
-        // character count, even when the outer field grows with flex layout.
-        self.control(
-            input
-                .on_click_stop(move |_| id.request_focus())
-                .style(|s| s.width_full().min_width(0.0)),
-        )
+        self.register_control(input, || true, false)
     }
     pub fn control<V: View + 'static>(&self, view: V) -> impl View + use<V> {
         self.control_if(view, || true)
@@ -377,6 +374,14 @@ impl ModalFocus {
         &self,
         view: V,
         enabled: E,
+    ) -> impl View + use<V, E> {
+        self.register_control(view, enabled, true)
+    }
+    fn register_control<V: View + 'static, E: Fn() -> bool + 'static>(
+        &self,
+        view: V,
+        enabled: E,
+        highlight: bool,
     ) -> impl View + use<V, E> {
         let id = view.id();
         self.controls.borrow_mut().insert(id, Rc::new(enabled));
@@ -404,10 +409,10 @@ impl ModalFocus {
             .on_cleanup(move || {
                 cleanup.borrow_mut().remove(&id);
             })
-            .style(|s| {
-                s.focus(|s| {
+            .style(move |s| {
+                s.apply_if(highlight, |s| s.focus(|s| {
                     s.background(floem::peniko::Color::from_rgba8(75, 119, 200, 55))
-                })
+                }))
             })
     }
     fn advance(&self, current: ViewId, backwards: bool) {

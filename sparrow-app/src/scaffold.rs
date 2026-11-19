@@ -394,15 +394,8 @@ fn scaffold_view(window: Rc<WindowTabData>) -> impl View {
     let w = window.clone();
     focus.set_submit(move || preview.preview(&w));
     let input = focus
-        .input(name)
-        .disabled(move || undoing.get() || busy.get() || export_mode.get())
-        .style(move |s| {
-            s.width_full()
-                .height(28.0)
-                .padding_horiz(6.0)
-                .border(1.0)
-                .border_color(config.get().color(SparrowColor::EDITOR_FOCUS))
-        });
+        .input(name, config)
+        .disabled(move || undoing.get() || busy.get() || export_mode.get());
     let id = input.id();
     let initial_focus = focus.clone();
     floem::reactive::create_effect(move |_| {

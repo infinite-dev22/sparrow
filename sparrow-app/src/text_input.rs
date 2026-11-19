@@ -83,7 +83,7 @@ impl TextInputBuilder {
         self
     }
 
-    /// Initialize with a specific value.  
+    /// Initialize with a specific value.
     /// If this is set it will apply the value via reloading the editor's doc as pristine.
     pub fn value(mut self, value: impl Into<Rope>) -> Self {
         self.value = Some(value.into());
@@ -109,7 +109,7 @@ impl TextInputBuilder {
         })
     }
 
-    /// Build the text input with a specific editor.  
+    /// Build the text input with a specific editor.
     /// This function does *not* perform add/cleanup the editor to/from [`Editors`]
     pub fn build_editor(self, editor: EditorData) -> TextInput {
         let keyboard_focus = self.keyboard_focus;
@@ -127,10 +127,10 @@ impl TextInputBuilder {
     }
 }
 
-/// Create a basic single line text input  
-/// `e_data` is the editor data that this input is associated with.  
+/// Create a basic single line text input
+/// `e_data` is the editor data that this input is associated with.
 /// `supplied_editor`
-/// `key_focus` is what receives the keydown events, leave as `None` to default to editor.  
+/// `key_focus` is what receives the keydown events, leave as `None` to default to editor.
 /// `is_focused` is a function that returns if the input is focused, used for certain events.
 fn text_input_full<T: KeyPressFocus + 'static>(
     e_data: EditorData,
@@ -802,11 +802,39 @@ impl View for TextInput {
     }
 }
 
-/// Native dialog inputs own focus after a click; never leave typing routed
-/// through the IDE's code-editor command dispatcher.
-pub fn modal_text_input(value: floem::reactive::RwSignal<String>) -> impl floem::View {
-    use floem::{View, views::Decorators};
+/// Compact, themed single-line field for forms, filters and dialogs.
+///
+/// All field appearance lives here. Callers only supply content and layout.
+/// Floem handles editing, selection, IME and clipboard behavior.
+///
+/// ```ignore
+/// text_input(name, config).placeholder("Project name")
+/// ```
+pub fn text_input(
+    value: RwSignal<String>,
+    config: ReadSignal<Arc<SparrowConfig>>,
+) -> floem::views::TextInput {
     let input = floem::views::text_input(value);
     let id = input.id();
-    input.on_click_stop(move |_| id.request_focus())
+    input
+        .on_click_stop(move |_| id.request_focus())
+        .style(move |s| {
+            let config = config.get();
+            let foreground = config.color(SparrowColor::EDITOR_FOREGROUND);
+            let accent = config.color(SparrowColor::EDITOR_CARET);
+            s.width_full()
+                .min_width(0.0)
+                .height(28.0)
+                .items_center()
+                .padding_horiz(6.0)
+                .padding_vert(0.0)
+                .color(foreground)
+                .background(Color::TRANSPARENT)
+                .border(1.0)
+                .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                .border_radius(4.0)
+                .cursor(CursorStyle::Text)
+                .hover(move |s| s.border_color(foreground.multiply_alpha(0.5)))
+                .focus(move |s| s.border_color(accent))
+        })
 }

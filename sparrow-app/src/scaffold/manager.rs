@@ -613,7 +613,7 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
     let undo_window = window.clone();
     let refresh_window = window.clone();
     let source_window = window.clone();
-    let input = focus.input(query).style(|s| s.width_full().height(28.0));
+    let input = focus.input(query, config);
     let input_id = input.id();
     floem::reactive::create_effect(move |_| {
         if active.get() {
@@ -632,7 +632,7 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
             focus.control(label(move || if global.get() {"Destination: User ▾"} else {"Destination: Project ▾"})
                 .on_click_stop(move |_| { global.update(|g|*g=!*g); plan.set(None); })),
             label(||"New pack ID:"),
-            focus.input(new_id).style(|s|s.width(260.0).height(28.0)),
+            focus.input(new_id, config).style(|s|s.width(260.0)),
             focus.control(label(||"Create…").on_click_stop(move |_| {
                 let m = &create_window.scaffold.manager;
                 undoing.set(false);
@@ -716,7 +716,7 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
                 stage(&export_window,(||export(&m.entry().ok_or("Select a template")?,&m.destination()?))());
             })),
         )).style(|s|s.gap(18.0)),
-        label(move ||error.get()).style(|s|s.width_full()),
+        label(move ||error.get()),
         stack((
             focus.control(label(move ||if undoing.get() {"Apply Undo"} else {"Apply Preview"})
                 .disabled(move ||plan.get().is_none())

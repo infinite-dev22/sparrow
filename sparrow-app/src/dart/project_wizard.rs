@@ -1,4 +1,4 @@
-use crate::text_input::modal_text_input as text_input;
+use crate::text_input::text_input;
 use crate::{config::color::SparrowColor, window_tab::WindowTabData};
 use floem::{
     View,
@@ -158,7 +158,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let empty = wizard.empty;
     let message = wizard.message;
     let config = window.common.config;
-    let name = text_input(wizard.name);
+    let name = text_input(wizard.name, config);
     let name_id = name.id();
     floem::reactive::create_effect(move |_| {
         if active.get() {
@@ -174,7 +174,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 label(|| "Project name"),
                 name,
                 label(|| "Parent directory (absolute path)"),
-                text_input(wizard.parent),
+                text_input(wizard.parent, config),
                 label(|| "Project type"),
                 dyn_stack(
                     || vec!["app", "package", "plugin", "module", "package_ffi"],

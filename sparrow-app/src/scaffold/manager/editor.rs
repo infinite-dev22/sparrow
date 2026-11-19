@@ -755,14 +755,14 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         label(||"Edit metadata in pack.yaml. Ctrl+Space: complete · ↑/↓: choose · Enter/Tab: insert · Esc: dismiss."),
         label(move ||dart_status.get()),
         stack((
-            label(||"Sample name:"),focus.input(sample).style(|s|s.width(180.0).height(28.0)),
+            label(||"Sample name:"),focus.input(sample, config).style(|s|s.width(180.0)),
             label(move ||match rendered.get() {Ok(files)=>format!("Pack valid · {} generated files",files.len()),Err(e)=>e})
                 .style(move |s|s.flex_grow(1.0_f32).min_width(0.0).apply_if(rendered.get().is_err(),|s|s.color(config.get().color(SparrowColor::SPARROW_ERROR)))) ,
         )).style(|s|s.gap(12.0).items_center()),
         action_bar,
         stack((files,code_panel,output)).style(|s|s.width_full().height(430.0).gap(10.0)),
         stack((
-            focus.input(new_file).style(|s|s.width(270.0).height(28.0)),
+            focus.input(new_file, config).style(|s|s.width(270.0)),
             focus.control(label(||"Add File").on_click_stop(move |_| {
                 let mut result = Err("No draft".to_string());
                 draft.update(|d| {if let Some(d)=d {result=d.add_file(&new_file.get_untracked());}});
@@ -774,7 +774,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                 match result {Ok(())=>selected.set("pack.yaml".into()),Err(e)=>remove_window.scaffold.error.set(e)}
             })),
         )).style(|s|s.gap(16.0).items_center()),
-        label(move ||error.get()).style(|s|s.width_full()),
+        label(move ||error.get()),
         stack((
             focus.control(label(||"Preview Save").on_click_stop(move |_| {
                 save_actions.clear();

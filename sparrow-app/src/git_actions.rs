@@ -229,13 +229,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let submit = state.clone();
     let w2 = window.clone();
     focus.set_submit(move || submit.run(w2.clone()));
-    let input = focus.input(args).style(move |s| {
-        s.width_full()
-            .height(30.0)
-            .padding_horiz(6.0)
-            .border(1.0)
-            .border_color(config.get().color(SparrowColor::EDITOR_FOCUS))
-    });
+    let input = focus.input(args, config);
     let id = input.id();
     floem::reactive::create_effect(move |_| {
         if active.get() {
@@ -246,7 +240,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         }
     });
     let commands = window.common.internal_command;
-    let body=stack((label(move ||format!("Git · {}",title.get())).style(|s|s.font_bold()),label(||"git").ide_popout_menu(move ||menu(commands,None)),input,label(move ||{let a=args.get();if a.contains("--hard"){"Hard reset discards tracked working-tree and staged changes."}else if a.starts_with("rebase"){"Rebase rewrites commit history. Resolve conflicts before continuing."}else{"Review the Git arguments above, then run. Output and errors appear below."}}).style(|s|s.width_full()),scroll(label(move ||output.get()).style(|s|s.width_full())).style(|s|s.width_full().height(300.0)),stack((focus.control(label(move ||if busy.get(){"Running…"}else{"Run"}).on_click_stop(move |_|run.run(w.clone())).disabled(move ||busy.get())),focus.control(label(||"Copy output").on_click_stop(move |_|crate::menus::copy_text(&output.get_untracked()))),focus.control(label(move ||if busy.get(){"Cancel command"}else{"Close"}).on_click_stop(move |_|{if busy.get_untracked(){cancel.store(true,Ordering::Relaxed);}else{active.set(false);}})))).style(|s|s.gap(20.0)))).style(move |s|s.flex_col().width(720.0).max_width_pct(95.0).gap(12.0).padding(18.0).border_radius(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER)).box_shadow_blur(16.0).box_shadow_color(config.get().color(SparrowColor::SPARROW_DROPDOWN_SHADOW)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).color(config.get().color(SparrowColor::EDITOR_FOREGROUND)));
+    let body=stack((label(move ||format!("Git · {}",title.get())).style(|s|s.font_bold()),label(||"git").ide_popout_menu(move ||menu(commands,None)),input,label(move ||{let a=args.get();if a.contains("--hard"){"Hard reset discards tracked working-tree and staged changes."}else if a.starts_with("rebase"){"Rebase rewrites commit history. Resolve conflicts before continuing."}else{"Review the Git arguments above, then run. Output and errors appear below."}}),scroll(label(move ||output.get())).style(|s|s.width_full().height(300.0)),stack((focus.control(label(move ||if busy.get(){"Running…"}else{"Run"}).on_click_stop(move |_|run.run(w.clone())).disabled(move ||busy.get())),focus.control(label(||"Copy output").on_click_stop(move |_|crate::menus::copy_text(&output.get_untracked()))),focus.control(label(move ||if busy.get(){"Cancel command"}else{"Close"}).on_click_stop(move |_|{if busy.get_untracked(){cancel.store(true,Ordering::Relaxed);}else{active.set(false);}})))).style(|s|s.gap(20.0)))).style(move |s|s.flex_col().width(720.0).max_width_pct(95.0).gap(12.0).padding(18.0).border_radius(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER)).box_shadow_blur(16.0).box_shadow_color(config.get().color(SparrowColor::SPARROW_DROPDOWN_SHADOW)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).color(config.get().color(SparrowColor::EDITOR_FOREGROUND)));
     let dialog=container(body).style(move |s|s.absolute().size_full().items_center().justify_center().z_index(100).apply_if(!active.get(),|s|s.hide())).on_event_stop(EventListener::PointerDown, |_|{}).on_event(EventListener::KeyDown,move |e|{if matches!(e,Event::KeyDown(k)if k.key.logical_key==Key::Named(NamedKey::Escape))&&!busy.get_untracked(){active.set(false);EventPropagation::Stop}else{EventPropagation::Continue}});
     focus
         .bind_root(dialog, active, config)

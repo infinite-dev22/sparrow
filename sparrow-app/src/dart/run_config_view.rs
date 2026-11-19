@@ -666,7 +666,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let form_row = move |title: &'static str,
                          field: RwSignal<String>,
                          help: &'static str| {
-        let input = form_keyboard.input(field);
+        let input = form_keyboard.input(field, config);
         match title {
             "Name:" => name_input.set(Some(input.id())),
             "Dart entrypoint:" => entry_focus.set(Some(input.id())),
@@ -685,20 +685,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         s.width(if title == "Name:" { 64.0 } else { 154.0 })
                             .flex_shrink(0.0_f32)
                     }),
-                    input.style(move |s| {
-                        s.height(24.0)
-                            .min_width(0.0)
-                            .flex_grow(1.0_f32)
-                            .padding_horiz(8.0)
-                            .border(1.0)
-                            .border_radius(3.0)
-                            .border_color(
-                                config.get().color(SparrowColor::SPARROW_BORDER),
-                            )
-                            .background(
-                                config.get().color(SparrowColor::EDITOR_BACKGROUND),
-                            )
-                    }),
+                    input.style(|s| s.min_width(0.0).flex_grow(1.0_f32)),
                 ))
                 .style(|s| s.items_center().width_full()),
                 label(move || {

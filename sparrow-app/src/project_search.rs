@@ -530,13 +530,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         );
     });
     let focus = crate::modal_focus::ModalFocus::default();
-    let input = focus.input(query).style(move |s| {
-        s.height(30.0)
-            .width_full()
-            .padding_horiz(6.0)
-            .border(1.0)
-            .border_color(config.get().color(SparrowColor::EDITOR_FOCUS))
-    });
+    let input = focus.input(query, config);
     let input_id = input.id();
     floem::reactive::create_effect(move |_| {
         if active.get() {
@@ -685,10 +679,10 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .with_origin(floem::kurbo::Point::new(0.0, selected.get() as f64 * 26.0))
     });
     let body=stack((label(move ||if replacement.get(){"Replace in Files"}else{if mode.get()==0 {"Find in Files"}else{"Search Everywhere"}}).style(|s|s.font_bold()),floem::views::stack_from_iter(tabs).style(|s|s.gap(4.0)),input,
- stack((focus.input(replace).style(|s|s.width_full().height(28.0)),focus.control(label(||"Replace All").on_click_stop(move |_|run.apply(w.clone())).disabled(move ||busy.get())))).style(move |s|s.width_full().gap(8.0).apply_if(!replacement.get(),|s|s.hide())),
+ stack((focus.input(replace, config),focus.control(label(||"Replace All").on_click_stop(move |_|run.apply(w.clone())).disabled(move ||busy.get())))).style(move |s|s.width_full().gap(8.0).apply_if(!replacement.get(),|s|s.hide())),
  stack((focus.control(label(move ||format!("{} Match case",if case.get(){"☑"}else{"☐"})).on_click_stop(move |_|case.update(|v|*v=!*v))),focus.control(label(move ||format!("{} Words",if word.get(){"☑"}else{"☐"})).on_click_stop(move |_|word.update(|v|*v=!*v))),focus.control(label(move ||format!("{} Regex",if regex.get(){"☑"}else{"☐"})).on_click_stop(move |_|regex.update(|v|*v=!*v))),focus.control(label(||"Symbols…").on_click_stop(move |_|{active.set(false);commands.send(crate::command::SparrowCommand{kind:crate::command::CommandKind::Workbench(crate::command::SparrowWorkbenchCommand::PaletteWorkspaceSymbol),data:None});})),)).style(|s|s.gap(14.0)),
- stack((label(||"Directory (empty = project)"),focus.input(directory).style(move |s|s.width_full().height(26.0).padding_horiz(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))))).style(|s|s.width_full().gap(8.0)),stack((label(||"File mask"),focus.input(mask).style(move |s|s.width_full().height(26.0).padding_horiz(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))))).style(|s|s.width_full().gap(8.0)),
- label(move ||results.with(|r|if searching.get(){"Searching…".into()}else if !r.error.is_empty(){r.error.clone()}else{format!("{} results in {} files{}",r.hits.len(),r.hits.iter().filter(|h|!h.path.as_os_str().is_empty()).map(|h|&h.path).collect::<std::collections::HashSet<_>>().len(),if r.truncated{" · limit reached; narrow your search"}else{""})})).style(|s|s.width_full()),rows,label(move ||message.get()).style(|s|s.width_full()),stack((focus.control(label(||"Replace mode").on_click_stop(move |_|{replacement.update(|v|*v=!*v);mode.set(0);})),focus.control(label(||"Close").on_click_stop(move |_|{if !busy.get_untracked(){all.active.set(false);}})))).style(|s|s.gap(20.0)))).style(move |s|s.flex_col().width(740.0).max_width_pct(95.0).max_height_pct(95.0).padding(16.0).gap(10.0).border_radius(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER)).box_shadow_blur(16.0).box_shadow_color(config.get().color(SparrowColor::SPARROW_DROPDOWN_SHADOW)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).color(config.get().color(SparrowColor::EDITOR_FOREGROUND)));
+ stack((label(||"Directory (empty = project)"),focus.input(directory, config))).style(|s|s.width_full().gap(8.0)),stack((label(||"File mask"),focus.input(mask, config))).style(|s|s.width_full().gap(8.0)),
+ label(move ||results.with(|r|if searching.get(){"Searching…".into()}else if !r.error.is_empty(){r.error.clone()}else{format!("{} results in {} files{}",r.hits.len(),r.hits.iter().filter(|h|!h.path.as_os_str().is_empty()).map(|h|&h.path).collect::<std::collections::HashSet<_>>().len(),if r.truncated{" · limit reached; narrow your search"}else{""})})),rows,label(move ||message.get()),stack((focus.control(label(||"Replace mode").on_click_stop(move |_|{replacement.update(|v|*v=!*v);mode.set(0);})),focus.control(label(||"Close").on_click_stop(move |_|{if !busy.get_untracked(){all.active.set(false);}})))).style(|s|s.gap(20.0)))).style(move |s|s.flex_col().width(740.0).max_width_pct(95.0).max_height_pct(95.0).padding(16.0).gap(10.0).border_radius(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER)).box_shadow_blur(16.0).box_shadow_color(config.get().color(SparrowColor::SPARROW_DROPDOWN_SHADOW)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).color(config.get().color(SparrowColor::EDITOR_FOREGROUND)));
 
     let dialog = container(body)
         .style(move |s| {

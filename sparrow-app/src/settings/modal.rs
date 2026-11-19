@@ -271,14 +271,9 @@ fn setting_row(
                 && ["flutter-sdk-path", "dart-sdk-path"]
                     .contains(&item.field.as_str()) =>
         {
-            let input = keyboard.input(value).style(move |s| {
+            let input = keyboard.input(value, config).style(move |s| {
                 s.width(400.0)
                     .max_width_full()
-                    .height(26.0)
-                    .padding_horiz(8.0)
-                    .border(1.0)
-                    .border_radius(3.0)
-                    .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
             });
             let input_id = input.id();
             let browser = keyboard.clone();
@@ -316,15 +311,10 @@ fn setting_row(
             .into_any()
         }
         _ => keyboard
-            .input(value)
+            .input(value, config)
             .style(move |s| {
                 s.width(320.0)
                     .max_width_full()
-                    .height(26.0)
-                    .padding_horiz(8.0)
-                    .border(1.0)
-                    .border_radius(3.0)
-                    .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
             })
             .into_any(),
     };
@@ -438,7 +428,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let index = cx.create_rw_signal(0usize);
     let epoch = cx.create_rw_signal(0usize);
     let error = cx.create_rw_signal(String::new());
-    let search = keyboard.input(query);
+    let search = keyboard.input(query, config);
     let search_id = search.id();
     let root_id = window.common.view_id;
     let close = move || {
@@ -827,8 +817,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         stack((
             stack((stack((
                 svg(move ||config.get().ui_svg(SparrowIcons::SEARCH)).style(move |s|s.size(14.0,14.0).margin_left(6.0).color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))),
-                search.style(|s|s.height_full().flex_grow(1.0_f32).min_width(0.0).padding_horiz(4.0)),
-            )).style(move |s|s.margin_horiz(8.0).margin_top(11.0).margin_bottom(9.0).height(24.0).items_center().border(1.0).border_radius(3.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+                search.style(|s|s.flex_grow(1.0_f32).min_width(0.0)),
+            )).style(move |s|s.margin_horiz(8.0).margin_top(11.0).margin_bottom(9.0).height(28.0).items_center().gap(4.0)),
                 scope_picker.style(|s|s.margin_horiz(8.0).margin_bottom(8.0)),
                 tree,
             )).style(move |s|s.width(256.0).height_full().flex_col().flex_shrink(0.0_f32).border_right(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),

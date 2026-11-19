@@ -629,15 +629,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let ew = window.clone();
     focus.set_submit(move || enter.run(ew.clone(), false));
     let input = focus
-        .input(name)
-        .disabled(move || busy.get() || deleting.get())
-        .style(move |s| {
-            s.width_full()
-                .height(28.0)
-                .padding_horiz(6.0)
-                .border(1.0)
-                .border_color(config.get().color(SparrowColor::EDITOR_FOCUS))
-        });
+        .input(name, config)
+        .disabled(move || busy.get() || deleting.get());
     let input_id = input.id();
     let initial_focus = focus.clone();
     floem::reactive::create_effect(move |_| {

@@ -1,4 +1,5 @@
 //! Branches, commit graph, changed files and details backed by local Git.
+use crate::text_input::text_input;
 use super::{kind::PanelKind, reference_tools::output};
 use crate::{
     app::clickable_icon,
@@ -14,7 +15,7 @@ use floem::{
         Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
         create_rw_signal,
     },
-    views::{Decorators, dyn_stack, label, scroll, stack, svg, text_input},
+    views::{Decorators, dyn_stack, label, scroll, stack, svg},
 };
 use std::{
     path::{Path, PathBuf},
@@ -645,17 +646,17 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         });
     stack((super::chrome::header(window,PanelKind::GitHistory,"Git",label(||"Log").style(move |s|s.height(24.0).padding_horiz(10.0).items_center().border_radius(3.0).background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND)))),
         stack((
-            stack((text_input(branch_query).placeholder("Branch or tag").style(move |s|s.height(26.0).width_full().padding_horiz(6.0).border(1.0).border_radius(3.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+            stack((text_input(branch_query, config).placeholder("Branch or tag"),
                 label(||"HEAD (Current Branch)").on_click_stop(move |_|branch.set("HEAD".into())).style(|s|s.height(26.0).items_center().padding_left(18.0)),
                 label(||"All branches").on_click_stop(move |_|branch.set(String::new())).style(|s|s.height(24.0).items_center().padding_left(18.0)),
                 scroll(stack((label(move ||if local_open.get(){"⌄  Local"}else{"›  Local"}).on_click_stop(move |_|local_open.update(|value|*value=!*value)).style(|s|s.height(24.0).items_center().padding_left(8.0)),branches(false),label(move ||if remote_open.get(){"⌄  Remote"}else{"›  Remote"}).on_click_stop(move |_|remote_open.update(|value|*value=!*value)).style(|s|s.height(24.0).items_center().padding_left(8.0)),branches(true))).style(|s|s.flex_col().width_full())).style(|s|s.flex_grow(1.0_f32).width_full().min_height(0.0))
             )).style(move |s|s.width_pct(27.0).height_full().padding(6.0).flex_col().border_right(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
-            stack((stack((text_input(query).placeholder("Text or hash").style(move |s|s.height(26.0).min_width(80.0).width_pct(32.0).padding_horiz(6.0).border(1.0).border_radius(3.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
-                text_input(user).placeholder("User").style(move |s|s.height(26.0).width(100.0).padding_horiz(6.0).border(1.0).border_radius(3.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+            stack((stack((text_input(query, config).placeholder("Text or hash").style(move |s|s.min_width(80.0).width_pct(32.0)),
+                text_input(user, config).placeholder("User").style(move |s|s.width(100.0)),
                 label(move ||if since.with(|s|s.is_empty()){"Date ⌄".to_string()}else{format!("{} ⌄",since.get())}).ide_popout_menu(move ||{
                     let mut menu=Menu::new("");for (label,value) in [("All time",""),("Last 24 hours","24 hours ago"),("Last 7 days","7 days ago"),("Last 30 days","30 days ago")]{menu=menu.entry(MenuItem::new(label).action(move ||since.set(value.into())));}menu
                 }).style(|s|s.max_width(130.0).text_ellipsis()),
-                text_input(path).placeholder("Paths").style(move |s|s.height(26.0).width(95.0).padding_horiz(6.0).border(1.0).border_radius(3.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+                text_input(path, config).placeholder("Paths").style(move |s|s.width(95.0)),
                 label(||"Load more").on_click_stop(move |_|limit.update(|n|*n+=500)).style(|s|s.padding_horiz(5.0)),
                 label(||"Git Actions ▾").ide_popout_menu(move ||crate::git_actions::menu(git_commands,None)),
                 clickable_icon(||SparrowIcons::IMAGE_LOADING,move ||refresh.update(|n|*n+=1),||false,||false,||"Refresh Git Log",config)

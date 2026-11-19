@@ -1,4 +1,5 @@
 //! Real Flutter-web previews in isolated, touch-enabled mobile browser viewports.
+use crate::text_input::text_input;
 use crate::{
     config::color::SparrowColor,
     popup_menu::{Menu, MenuItem, PopupMenuExt},
@@ -7,7 +8,7 @@ use crate::{
 use floem::{
     View,
     reactive::{Scope, SignalGet, SignalUpdate, create_rw_signal},
-    views::{Decorators, empty, label, stack, text_input},
+    views::{Decorators, empty, label, stack},
 };
 use std::{
     cell::RefCell,
@@ -266,9 +267,9 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
  label(move ||DEVICES[device.get()].name).ide_popout_menu(move ||{let mut menu=Menu::new("Device");for (i,d) in DEVICES.iter().enumerate(){menu=menu.entry(MenuItem::new(d.name).action(move ||device.set(i)));}menu}).style(move |s|s.padding(8.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
  label(move ||{let d=DEVICES[device.get()];let (w,h)=if landscape.get(){(d.height,d.width)}else{(d.width,d.height)};format!("{w} × {h} logical pixels · {}× density",d.dpr)}),
  label(move ||if landscape.get(){"↻ Landscape"}else{"↻ Portrait"}).on_click_stop(move |_|landscape.update(|v|*v=!*v)),
- text_input(url).placeholder("App URL").style(move |s|s.height(28.0).width_full().border(1.0).padding_horiz(6.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+ text_input(url, config).placeholder("App URL"),
  label(||"Start Flutter web server").on_click_stop(move |_|{let Some(root)=root.as_deref() else{return;};if let Some(flutter)=crate::dart::sdk::find_flutter_binary(Some(root)){commands.send(crate::command::InternalCommand::NewTerminal{profile:Some(sparrow_rpc::terminal::TerminalProfile{name:"Mobile Preview server".into(),command:Some(flutter.display().to_string()),arguments:Some(vec!["run".into(),"-d".into(),"web-server".into(),"--web-hostname".into(),"127.0.0.1".into(),"--web-port".into(),"7357".into()]),workdir:lsp_types::Url::from_directory_path(root).ok(),..Default::default()})});}else{super::workflow_tools::record(notices,"Mobile Preview","Configure a Flutter SDK before starting the web server.");}}),
- launch_button,label(||"Close preview").on_click_stop(move |_|{stop.borrow_mut().take();status.set("Preview closed.".into());}),label(move ||status.get()).style(|s|s.width_full()),
+ launch_button,label(||"Close preview").on_click_stop(move |_|{stop.borrow_mut().take();status.set("Preview closed.".into());}),label(move ||status.get()),
  label(||"Uses your app’s Flutter web build. Camera, native plugins and iOS/Android OS behavior require a real device. Change a preset or orientation, then reopen to apply.").style(move |s|s.width_full().color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))),
  )).style(|s|s.flex_col().gap(14.0).padding(16.0).width_full()))).style(|s|s.absolute().size_full().flex_col())
 }
