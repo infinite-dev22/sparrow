@@ -142,6 +142,7 @@ pub struct WorkProgress {
 
 #[derive(Clone)]
 pub struct CommonData {
+    pub background_tasks: crate::background_tasks::BackgroundTasks,
     pub project_color: RwSignal<Option<[u8; 3]>>,
     pub document_views: RwSignal<BTreeMap<PathBuf, String>>,
     pub bookmarks: RwSignal<BTreeMap<PathBuf, std::collections::BTreeSet<usize>>>,
@@ -418,9 +419,10 @@ impl WindowTabData {
                 .max(config.ui.list_line_height() as f64)
         });
 
+        let background_tasks = crate::background_tasks::BackgroundTasks::new(cx);
         let (dart_lsp, dart_lsp_rx) = match &workspace.kind {
             SparrowWorkspaceType::Local => match workspace.path.clone() {
-                Some(root) => DartLspService::spawn(root),
+                Some(root) => DartLspService::spawn_with_progress(root, background_tasks.reporter()),
                 None => DartLspService::spawn_unavailable(),
             },
             _ => DartLspService::spawn_unavailable(),
@@ -435,6 +437,7 @@ impl WindowTabData {
             cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
 
         let common = Rc::new(CommonData {
+            background_tasks,
             project_color: cx.create_rw_signal(None),
             document_views: cx.create_rw_signal(workspace_info.as_ref().map(|info|info.document_views.clone()).unwrap_or_default()),
             bookmarks: cx.create_rw_signal(workspace_info.as_ref().map(|info|info.bookmarks.clone()).unwrap_or_default()),
@@ -998,6 +1001,9 @@ impl WindowTabData {
                         DartNotification::Log(msg) => {
                             debug!("dart lsp: {msg}");
                         }
+                        // Dart progress is maintained in a worker-side snapshot; diagnostic
+                        // bursts may coalesce this notification without losing task state.
+                        DartNotification::Progress(_) => {}
                         DartNotification::PackageResolution{id,result} => {
                             crate::panel::workflow_tools::record_pub_get_result(notices,*id,result.clone());
                         }
@@ -3131,6 +3137,7 @@ impl WindowTabData {
         let cx = self.scope;
         match rpc {
             CoreNotification::DapSessionEvent { dap_id, event } => {
+                crate::background_tasks::debug_event(&self.common.background_tasks.reporter(), dap_id, event);
                 if self.terminal.debug.adapter_sessions.with_untracked(|sessions| sessions.contains_key(&dap_id)) {
                     if let Some(output) = event.get("output").and_then(|v| v.as_str()) {
                         self.flutter_hot_reload.run_logs.update(|logs| {
@@ -3284,6 +3291,7 @@ impl WindowTabData {
                 stack_frames,
                 variables,
             } => {
+                crate::background_tasks::debug_ready(&self.common.background_tasks.reporter(), dap_id);
                 self.show_panel(PanelKind::Debug);
                 self.terminal
                     .dap_stopped(dap_id, stopped, stack_frames, variables);
@@ -4054,6 +4062,7 @@ impl WindowTabData {
                     self.run_in_terminal(cx, mode, config, false);
                 } else {
                     let id = sparrow_rpc::terminal::TermId::next();
+                    crate::background_tasks::debug_launch(&self.common.background_tasks.reporter(), config.dap_id, &config.name);
                     self.terminal.debug.adapter_sessions.update(|sessions| {
                         sessions.insert(config.dap_id, (id, RunDebugProcess {
                             mode: RunDebugMode::Debug, config: config.clone(), stopped: false,
@@ -4203,8 +4212,8 @@ impl WindowTabData {
                 lsp_types::WorkDoneProgress::Report(report) => {
                     self.progresses.update(|p| {
                         if let Some(progress) = p.get_mut(&token) {
-                            progress.message.clone_from(&report.message);
-                            progress.percentage = report.percentage;
+                            if let Some(message) = &report.message { progress.message = Some(message.clone()); }
+                            if let Some(percentage) = report.percentage { progress.percentage = Some(percentage.min(100)); }
                         }
                     })
                 }
@@ -4473,6 +4482,7 @@ impl WindowTabData {
                 .cloned()
                 .collect::<Vec<_>>()
         });
+        let tasks = self.common.background_tasks.clone();
         let scope = self.scope;
         save_dependency_manifests(
             manifests,
@@ -4495,9 +4505,10 @@ impl WindowTabData {
                             result,
                         );
                     });
+                let task = tasks.begin("Resolving package dependencies", None);
                 let request = crate::dart::bootstrap::run_pub_get_observed(
                     &root,
-                    Some(Box::new(move |id, result| send((id, result)))),
+                    Some(Box::new(move |id, result| { send((id, result)); drop(task); })),
                 );
                 crate::panel::workflow_tools::record(
                     notifications,

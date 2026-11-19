@@ -362,6 +362,7 @@ impl TerminalPanelData {
     }
 
     pub fn close_terminal(&self, term_id: &TermId) {
+        if let Some(terminal) = self.get_terminal(term_id) { terminal.activity.set(None); }
         if let Some((_, tab, index, terminal)) = self.get_terminal_in_tab(term_id) {
             terminal.stop();
             let active = tab.active.get_untracked();
@@ -386,12 +387,14 @@ impl TerminalPanelData {
 
     pub fn launch_failed(&self, term_id: &TermId, error: &str) {
         if let Some(terminal) = self.get_terminal(term_id) {
+            terminal.activity.set(None);
             terminal.launch_error.set(Some(error.to_string()));
         }
     }
 
     pub fn terminal_stopped(&self, term_id: &TermId, exit_code: Option<i32>) {
         if let Some(terminal) = self.get_terminal(term_id) {
+            terminal.activity.set(None);
             if terminal.run_debug.with_untracked(|r| r.is_some()) {
                 let was_prelaunch = terminal
                     .run_debug
@@ -423,6 +426,7 @@ impl TerminalPanelData {
                             });
                             self.debug.active_term.set(Some(*term_id));
                             self.debug.active_dap.set(Some(run_debug.config.dap_id));
+                            crate::background_tasks::debug_launch(&self.common.background_tasks.reporter(), run_debug.config.dap_id, &run_debug.config.name);
                             self.common.proxy.dap_start(
                                 run_debug.config,
                                 self.debug.source_breakpoints(),

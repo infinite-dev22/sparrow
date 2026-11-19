@@ -68,6 +68,8 @@ use super::closing_labels::ClosingLabel;
 /// Events emitted from the server to the UI.
 #[derive(Debug, Clone)]
 pub enum Notification {
+    /// Language-server background activity.
+    Progress(lsp_types::ProgressParams),
     PackageResolution {id:u64,result:Result<(),String>},
     /// Fired exactly once, shortly after the server's `initialize`
     /// handshake completes. Consumers use it to kick off requests that
@@ -124,13 +126,13 @@ impl DartLspService {
     /// If `dart` is not on PATH the service is returned in the "unavailable"
     /// state and every method is a no-op — the caller never needs to check.
     pub fn spawn(workspace_root: PathBuf) -> (Self, NotifReceiver) {
-        Self::spawn_inner(workspace_root,true)
+        Self::spawn_inner(workspace_root,true,None)
     }
 
     /// Isolated, read-only analysis session for unsaved scaffold projections.
     /// Does not bootstrap packages or run pub get in the user's workspace.
     pub(crate) fn spawn_for_templates(workspace_root: PathBuf) -> (Self, NotifReceiver) {
-        Self::spawn_inner(workspace_root,false)
+        Self::spawn_inner(workspace_root,false,None)
     }
 
     /// End a private template session even if an asynchronous callback still
@@ -139,11 +141,15 @@ impl DartLspService {
         let _ = self.tx.send(LspCommand::Shutdown);
     }
 
-    fn spawn_inner(workspace_root: PathBuf, bootstrap: bool) -> (Self, NotifReceiver) {
+    pub(crate) fn spawn_with_progress(workspace_root: PathBuf, progress: crate::background_tasks::Reporter) -> (Self, NotifReceiver) {
+        Self::spawn_inner(workspace_root, true, Some(progress))
+    }
+    fn spawn_inner(workspace_root: PathBuf, bootstrap: bool, progress: Option<crate::background_tasks::Reporter>) -> (Self, NotifReceiver) {
         let (cmd_tx, cmd_rx) = unbounded();
         let (notif_tx, notif_rx) = std::sync::mpsc::channel();
         let last_sent = Arc::new(Mutex::new(HashMap::new()));
         let state = Arc::new(SharedState {
+            progress,
             next_id: AtomicI64::new(1),
             pending_requests: Mutex::new(HashMap::new()),
             open_files: Mutex::new(HashMap::new()),
@@ -179,8 +185,24 @@ impl DartLspService {
         // Bootstrap workspace in background (detect SDK, run pub get if needed)
         if bootstrap {
         let resolution_notifications=notif_tx.clone();
-        crate::dart::bootstrap::bootstrap_workspace_observed(&workspace_root,Some(Box::new(move |id,result|{
+        let start_notifications=notif_tx.clone();
+        let pub_progress = state.progress.clone();
+        let pub_end = pub_progress.clone();
+        crate::dart::bootstrap::bootstrap_workspace_with_progress(&workspace_root,Some(Box::new(move |id,result|{
+            if let Some(progress) = &pub_end { progress.finish("dart:startup-pub"); }
+            let _=resolution_notifications.send(Notification::Progress(lsp_types::ProgressParams {
+                token: lsp_types::ProgressToken::String("startup-pub".into()),
+                value: lsp_types::ProgressParamsValue::WorkDone(lsp_types::WorkDoneProgress::End(Default::default())),
+            }));
             let _=resolution_notifications.send(Notification::PackageResolution{id,result});
+        })), Some(Box::new(move || {
+            if let Some(progress) = &pub_progress { progress.update("dart:startup-pub", Some("Resolving package dependencies".into()), None, None); }
+            let _=start_notifications.send(Notification::Progress(lsp_types::ProgressParams {
+                token: lsp_types::ProgressToken::String("startup-pub".into()),
+                value: lsp_types::ProgressParamsValue::WorkDone(lsp_types::WorkDoneProgress::Begin(lsp_types::WorkDoneProgressBegin {
+                    title: "Resolving package dependencies".into(), ..Default::default()
+                })),
+            }));
         })));
 
         }
@@ -293,6 +315,7 @@ impl DartLspService {
             Self {
                 tx,
                 state: Arc::new(SharedState {
+                    progress: None,
                     next_id: AtomicI64::new(1),
                     pending_requests: Mutex::new(HashMap::new()),
                     open_files: Mutex::new(HashMap::new()),
@@ -374,10 +397,12 @@ impl DartLspService {
         let id = self.state.next_id.fetch_add(1, Ordering::Relaxed);
         let mut pending=self.state.pending_requests.lock();
         if !self.is_available() { drop(pending); cb(json!({"error":{"code":-32002,"message":self.unavailable_reason()}}));return id; }
-        pending.insert(id, Box::new(cb));drop(pending);
+        let method = method.into();
+        let task = self.state.progress.as_ref().map(|progress| progress.begin(analyzer_task_title(&method)));
+        pending.insert(id, Box::new(move |response| { cb(response); drop(task); }));drop(pending);
         if self.tx.send(LspCommand::Request {
             id,
-            method: method.into(),
+            method,
             params,
         }).is_err() {fail_pending_requests(&self.state,"Dart analysis connection is closed.");}
         id
@@ -968,6 +993,7 @@ enum LspCommand {
 // ─────────────────────────────────────────────────────────────────────
 
 struct SharedState {
+    progress: Option<crate::background_tasks::Reporter>,
     next_id: AtomicI64,
     pending_requests: Mutex<HashMap<i64, ResponseCallback>>,
     open_files: Mutex<HashMap<PathBuf, i64>>,
@@ -1003,7 +1029,9 @@ fn run_writer(
     }
     let _clear = ClearOnDrop(state.clone());
 
+    let startup = state.progress.as_ref().map(|p| p.begin("Starting Dart analyzer"));
     initialize(&state, &mut out, workspace_root)?;
+    drop(startup);
     let _ = notif_tx.send(Notification::Ready);
 
     loop {
@@ -1381,6 +1409,8 @@ fn run_reader(
     impl Drop for ClearOnDrop {
         fn drop(&mut self) {
             self.0.is_running.store(false, Ordering::Relaxed);
+            if let Some(progress) = &self.0.progress { progress.finish_prefix("dart:"); }
+            fail_pending_requests(&self.0, "Dart analysis connection closed.");
         }
     }
     let _clear = ClearOnDrop(state.clone());
@@ -1407,6 +1437,28 @@ fn run_reader(
             }
         };
         dispatch(state.as_ref(), &notif_tx, value);
+    }
+}
+
+fn analyzer_task_title(method: &str) -> String {
+    let action = match method {
+        "textDocument/completion" | "completionItem/resolve" => "Computing Dart completions",
+        "textDocument/codeAction" | "codeAction/resolve" => "Computing Dart quick fixes",
+        "textDocument/formatting" => "Formatting Dart code",
+        "textDocument/rename" | "textDocument/prepareRename" => "Preparing Dart rename",
+        "workspace/executeCommand" => "Applying Dart analyzer command",
+        "workspace/symbol" => "Searching Dart symbols",
+        "textDocument/diagnostic" | "workspace/diagnostic" => "Checking Dart diagnostics",
+        _ => return format!("Dart analyzer · {}", method.rsplit('/').next().unwrap_or(method)),
+    };
+    action.into()
+}
+fn record_work_progress(reporter: &crate::background_tasks::Reporter, progress: &lsp_types::ProgressParams) {
+    let id = format!("dart:{:?}", progress.token);
+    match &progress.value {
+        lsp_types::ProgressParamsValue::WorkDone(lsp_types::WorkDoneProgress::Begin(p)) => reporter.update(&id, Some(p.title.clone()), p.message.clone(), p.percentage),
+        lsp_types::ProgressParamsValue::WorkDone(lsp_types::WorkDoneProgress::Report(p)) => reporter.update(&id, None, p.message.clone(), p.percentage),
+        lsp_types::ProgressParamsValue::WorkDone(lsp_types::WorkDoneProgress::End(_)) => reporter.finish(&id),
     }
 }
 
@@ -1495,7 +1547,19 @@ fn dispatch(state: &SharedState, notif_tx: &NotifSender, msg: Value) {
                 let _ = notif_tx.send(Notification::Log(text));
             }
         }
-        // Ignored: $/progress, window/workDoneProgress/create, telemetry, etc.
+        "$/analyzerStatus" => {
+            if let (Some(reporter), Some(active)) = (&state.progress, params.get("isAnalyzing").and_then(Value::as_bool)) {
+                if active { reporter.update("dart:legacy-analysis", Some("Analyzing Dart project".into()), None, None); }
+                else { reporter.finish("dart:legacy-analysis"); }
+            }
+        }
+        "$/progress" => {
+            if let Ok(progress) = serde_json::from_value::<lsp_types::ProgressParams>(params.clone()) {
+                if let Some(reporter) = &state.progress { record_work_progress(reporter, &progress); }
+                let _ = notif_tx.send(Notification::Progress(progress));
+            }
+        }
+        // Other optional telemetry notifications are ignored.
         _ => {}
     }
 }
@@ -1586,6 +1650,7 @@ mod tests {
         let svc = DartLspService {
             tx,
             state: Arc::new(SharedState {
+                progress: None,
                 next_id: AtomicI64::new(1),
                 pending_requests: Mutex::new(HashMap::new()),
                 open_files: Mutex::new(HashMap::new()),
@@ -1610,6 +1675,7 @@ mod tests {
         let service = DartLspService {
             tx,
             state: Arc::new(SharedState {
+                progress: None,
                 next_id: AtomicI64::new(1),
                 pending_requests: Mutex::new(HashMap::new()),
                 open_files: Mutex::new(HashMap::new()),
@@ -1648,6 +1714,7 @@ mod tests {
     fn request_id_is_monotonic() {
         let (tx, _rx) = unbounded();
         let state = Arc::new(SharedState {
+            progress: None,
             next_id: AtomicI64::new(1),
             pending_requests: Mutex::new(HashMap::new()),
             open_files: Mutex::new(HashMap::new()),
@@ -1902,10 +1969,20 @@ mod live_startup_tests {
         let path=root.path().join("main.dart");
         let source="int sampleValue(int value) => value + 1;\n";
         std::fs::write(&path,source).unwrap();
-        let (service,notifications)=DartLspService::spawn(root.path().to_path_buf());
-        loop {match notifications.recv_timeout(Duration::from_secs(35)).unwrap(){Notification::Ready=>break,Notification::Error(error)=>panic!("{error}"),_=>{}}}
+        let reporter = crate::background_tasks::Reporter::for_test();
+        let (service,notifications)=DartLspService::spawn_with_progress(root.path().to_path_buf(), reporter.clone());
+        let mut analyzing = false;
+        loop {match notifications.recv_timeout(Duration::from_secs(35)).unwrap(){Notification::Progress(p) => { if matches!(p.value, lsp_types::ProgressParamsValue::WorkDone(lsp_types::WorkDoneProgress::Begin(_))) { analyzing = true; } },Notification::Ready=>break,Notification::Error(error)=>panic!("{error}"),_=>{}}}
         service.send_change(path.clone(),source.into(),1);
-        loop {match notifications.recv_timeout(Duration::from_secs(20)).unwrap(){Notification::Diagnostics{path:ready,..} | Notification::Outline{path:ready,..} if ready==path=>break,Notification::Error(error)=>panic!("{error}"),_=>{}}}
+        loop {match notifications.recv_timeout(Duration::from_secs(20)).unwrap(){Notification::Progress(p) => { if matches!(p.value, lsp_types::ProgressParamsValue::WorkDone(lsp_types::WorkDoneProgress::Begin(_))) { analyzing = true; } },Notification::Diagnostics{path:ready,..} | Notification::Outline{path:ready,..} if ready==path=>break,Notification::Error(error)=>panic!("{error}"),_=>{}}}
+        // Wait for actual server work progress as well as a document notification.
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while !analyzing && std::time::Instant::now() < deadline {
+            if let Ok(Notification::Progress(p)) = notifications.recv_timeout(Duration::from_secs(1)) {
+                analyzing = matches!(p.value, lsp_types::ProgressParamsValue::WorkDone(lsp_types::WorkDoneProgress::Begin(_)));
+            }
+        }
+        assert!(analyzing, "real analyzer must report analysis progress");
         let (tx,rx)=std::sync::mpsc::channel();
         service.prepare_rename_result(&path,0,7,move |result|{let _=tx.send(result);});
         assert!(rx.recv_timeout(Duration::from_secs(20)).unwrap().unwrap().is_some());
@@ -1931,6 +2008,44 @@ fn fail_pending_requests(state:&SharedState,message:&str){
 }
 #[cfg(test)] mod startup_regression_tests {
  use super::*;
+ #[test] fn work_progress_is_forwarded_to_the_ui() {
+  let (svc,_)=DartLspService::spawn_unavailable();let (tx,rx)=std::sync::mpsc::channel();
+  for value in [json!({"kind":"begin","title":"Analyzing","percentage":10}),json!({"kind":"report","message":"lib/main.dart","percentage":75}),json!({"kind":"end"})] {
+   dispatch(&svc.state,&tx,json!({"jsonrpc":"2.0","method":"$/progress","params":{"token":"analysis","value":value}}));
+   assert!(matches!(rx.try_recv().unwrap(),Notification::Progress(progress) if progress.token==lsp_types::ProgressToken::String("analysis".into())));
+  }
+ }
+ #[test] fn progress_snapshot_survives_notification_bursts_and_server_exit() {
+  let reporter = crate::background_tasks::Reporter::for_test();
+  let (mut service, _) = DartLspService::spawn_unavailable();
+  Arc::get_mut(&mut service.state).unwrap().progress = Some(reporter.clone());
+  let (tx, _rx) = std::sync::mpsc::channel();
+  dispatch(&service.state, &tx, json!({"method":"$/progress","params":{"token":"analysis","value":{"kind":"begin","title":"Analyzing project"}}}));
+  for _ in 0..100 { dispatch(&service.state, &tx, json!({"method":"window/logMessage","params":{"message":"diagnostics burst"}})); }
+  assert_eq!(reporter.active_titles(), vec!["Analyzing project"]);
+  dispatch(&service.state, &tx, json!({"method":"$/progress","params":{"token":"analysis","value":{"kind":"end"}}}));
+  assert!(reporter.active_titles().is_empty());
+  dispatch(&service.state, &tx, json!({"method":"$/analyzerStatus","params":{"isAnalyzing":true}}));
+  assert_eq!(reporter.active_titles(), vec!["Analyzing Dart project"]);
+  run_reader(service.state.clone(), std::io::Cursor::new(Vec::<u8>::new()), tx);
+  assert!(reporter.active_titles().is_empty());
+ }
+ #[test] fn analyzer_request_progress_finishes_on_success_and_failure() {
+  let reporter = crate::background_tasks::Reporter::for_test();
+  let (mut service, _) = DartLspService::spawn_unavailable();
+  Arc::get_mut(&mut service.state).unwrap().progress = Some(reporter.clone());
+  service.state.is_running.store(true, Ordering::Relaxed);
+  let (tx, _rx) = unbounded(); service.tx = tx;
+  let (notifications, _) = std::sync::mpsc::channel();
+  let id = service.request_async("textDocument/codeAction", json!({}), |_| {});
+  assert_eq!(reporter.active_titles(), vec!["Computing Dart quick fixes"]);
+  dispatch(&service.state, &notifications, json!({"id":id,"result":[]}));
+  assert!(reporter.active_titles().is_empty());
+  service.request_async("textDocument/completion", json!({}), |_| {});
+  assert_eq!(reporter.active_titles(), vec!["Computing Dart completions"]);
+  fail_pending_requests(&service.state, "server exited");
+  assert!(reporter.active_titles().is_empty());
+ }
  #[test] fn progress_creation_gets_a_response_with_the_original_id() {
   let (svc,_)=DartLspService::spawn_unavailable();let (tx,rx)=unbounded();*svc.state.client_tx.lock()=Some(tx);
   let (notifications,_)=std::sync::mpsc::channel();

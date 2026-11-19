@@ -143,7 +143,9 @@ impl State {
                 }
             },
         );
+        let task = window.common.background_tasks.begin("Replacing project matches", None);
         std::thread::spawn(move || {
+            let _task = task;
             send(replace_files(files, &pattern, &replacement, expand))
         });
     }
@@ -373,6 +375,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let root = window.workspace.path.clone();
     let selected = floem::reactive::create_rw_signal(0usize);
     let lsp = window.common.dart_lsp.clone();
+    let progress = window.common.background_tasks.reporter();
     let searching=floem::reactive::create_rw_signal(false);
     let requests = floem::reactive::create_rw_signal(0u64);
     floem::reactive::create_effect(move |_| {
@@ -395,6 +398,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         selected.set(0);
         let root = root.clone();
         let lsp = lsp.clone();
+        let progress = progress.clone();
         let send = floem::ext_event::create_ext_action(Scope::current(), move |r| {
             if requests.get_untracked() == request {
                 searching.set(false);
@@ -484,7 +488,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     );
                     return;
                 }
+                let task = progress.begin("Searching project");
                 std::thread::spawn(move || {
+                    let _task = task;
                     if mode == 2 {
                         let pattern = pattern(&query, case, word, regex);
                         let hits = crate::command::sparrow_internal_commands()

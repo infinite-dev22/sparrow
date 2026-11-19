@@ -775,6 +775,7 @@ impl Doc {
                     package_doc.clear_code_actions();
                 }
             });
+            let progress = doc.common.background_tasks.reporter();
             let publish = create_ext_action(scope, move |diagnostics| {
                 if doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) == Some(revision)
                     && doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) == Some(SparrowLanguage::Yaml)
@@ -784,6 +785,7 @@ impl Doc {
                 }
             });
             rayon::spawn(move || {
+                let task = progress.begin("Validating YAML and dependency compatibility");
                 let mut diagnostics = yaml::diagnostics(&text);
                 let syntax_valid = diagnostics.is_empty();
                 if syntax_valid {
@@ -798,6 +800,7 @@ impl Doc {
                 publish(immediate);
                 if syntax_valid {
                     if let Some(path) = path {
+                        task.report("Checking Pub dependency compatibility", None);
                         diagnostics.extend(pubdev::diagnostics(&path, &text, || atomic_revision.load(atomic::Ordering::Acquire) != revision));
                     }
                 }

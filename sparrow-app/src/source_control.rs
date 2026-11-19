@@ -176,7 +176,9 @@ impl SourceControlData {
                 }
             },
         );
+        let task = self.common.background_tasks.begin(if push { "Committing and pushing changes" } else { "Committing changes" }, None);
         std::thread::spawn(move || {
+            let _task = task;
             send(sparrow_proxy::dispatch::commit_selected(
                 &root, &message, diffs, amend, push,
             ))

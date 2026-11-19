@@ -1,7 +1,7 @@
 use crate::popup_menu::PopupMenuExt;
 use std::{
     rc::Rc,
-    sync::{Arc, atomic::AtomicU64},
+    sync::Arc,
 };
 
 use floem::{
@@ -12,8 +12,7 @@ use floem::{
     style::{AlignItems, CursorStyle, Display},
     views::{Decorators, dyn_stack, label, stack, svg},
 };
-use indexmap::IndexMap;
-use lsp_types::{DiagnosticSeverity, ProgressToken};
+use lsp_types::DiagnosticSeverity;
 use sparrow_core::mode::{Mode, VisualMode};
 
 use crate::{
@@ -25,7 +24,7 @@ use crate::{
     palette::kind::PaletteKind,
     panel::kind::PanelKind,
     source_control::SourceControlData,
-    window_tab::{WindowTabData, WorkProgress},
+    window_tab::WindowTabData,
 };
 
 #[allow(unused_variables)]
@@ -57,7 +56,7 @@ pub fn status(
         }
         (errors, warnings)
     });
-    let progresses = window_tab_data.progresses;
+    let background_progress = crate::background_tasks::status(window_tab_data.clone());
     let tab_data = window_tab_data.mode().clone();
     let mode = create_memo(move |_| tab_data);
 
@@ -276,7 +275,7 @@ pub fn status(
             );
             let encoding_info = status_text(config, editor, || "UTF-8");
             (
-                progress_view(config, progresses),
+                background_progress,
                 cursor_info,
                 line_ending_info,
                 encoding_info,
@@ -401,35 +400,6 @@ fn breadcrumb_paths(
     }
     paths.reverse();
     paths
-}
-
-fn progress_view(
-    config: ReadSignal<Arc<SparrowConfig>>,
-    progresses: RwSignal<IndexMap<ProgressToken, WorkProgress>>,
-) -> impl View {
-    let id = AtomicU64::new(0);
-    dyn_stack(
-        move || progresses.get(),
-        move |_| id.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        move |(_, p)| {
-            let progress = match p.message {
-                Some(message) if !message.is_empty() => {
-                    format!("{}: {}", p.title, message)
-                }
-                _ => p.title,
-            };
-            label(move || progress.clone()).style(move |s| {
-                s.height_pct(100.0)
-                    .min_width(0.0)
-                    .margin_left(10.0)
-                    .text_ellipsis()
-                    .selectable(false)
-                    .items_center()
-                    .color(config.get().color(SparrowColor::STATUS_FOREGROUND))
-            })
-        },
-    )
-    .style(move |s| s.flex_row().height_pct(100.0).min_width(0.0))
 }
 
 fn status_text<S: std::fmt::Display + 'static>(

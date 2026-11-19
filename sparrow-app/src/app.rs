@@ -3641,6 +3641,9 @@ fn window_tab(
         move || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || git_modal.get();
 
     let project_color = window_tab_data.common.project_color;
+    let background_tasks_open = window_tab_data.common.background_tasks.open;
+    let about_open = window_tab_data.about_data.visible;
+    let alert_open = window_tab_data.alert_data.active;
     let view = stack((
         stack((
             crate::project_appearance::glow_view(config, project_color),
@@ -3680,8 +3683,14 @@ fn window_tab(
         stack((rename(window_tab_data.clone()).disabled(modal_open),crate::file_refactor::view(window_tab_data.clone()),crate::scaffold::view(window_tab_data.clone()),crate::formatting::view(window_tab_data.clone()),crate::project_search::view(window_tab_data.clone()),crate::git_actions::view(window_tab_data.clone()))).style(move |s|s.absolute().size_full().apply_if(!interaction_layer_open(),|s|s.hide())),
 
         palette(window_tab_data.clone()).disabled(modal_open),
-        about::about_popup(window_tab_data.clone()),
-        alert::alert_box(window_tab_data.alert_data.clone()),
+        stack((
+            crate::background_tasks::panel(window_tab_data.clone()).disabled(modal_open),
+            about::about_popup(window_tab_data.clone()),
+            alert::alert_box(window_tab_data.alert_data.clone()),
+        )).style(move |s| s.absolute().size_full().apply_if(
+            !background_tasks_open.get() && !about_open.get() && !alert_open.get(),
+            |s| s.hide(),
+        )),
         crate::dart::project_wizard::view(window_tab_data.clone()),
         run_config_modal(window_tab_data.clone()),
         crate::settings::modal::view(window_tab_data.clone()),

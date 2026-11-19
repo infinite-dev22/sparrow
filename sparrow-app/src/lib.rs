@@ -78,3 +78,5 @@ pub mod project_search;
 pub mod git_actions;
 
 pub mod dropdown;
+
+pub mod background_tasks;

@@ -322,7 +322,8 @@ impl State {
                 }
             },
         );
-        std::thread::spawn(move || send(plan.apply()));
+        let task = window.common.background_tasks.begin("Applying file refactor", None);
+        std::thread::spawn(move || { let _task = task; send(plan.apply()); });
     }
 }
 fn prepare(

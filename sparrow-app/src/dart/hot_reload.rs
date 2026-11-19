@@ -206,6 +206,7 @@ impl FlutterHotReloadData {
             DaemonNotification::AppStarting { app_id, .. } => {
                 self.active_app_id.set(Some(app_id));
                 self.state.set(FlutterRunState::Running);
+                self.progress_message.set(Some("Launching application…".into()));
                 self.add_log("⚡ Launching Flutter application...");
             }
             DaemonNotification::AppStarted { app_id } => {
@@ -247,10 +248,13 @@ impl FlutterHotReloadData {
                 self.add_log(format!("{prefix}{log}"));
             }
             DaemonNotification::Error(err) => {
+                self.progress_message.set(None);
                 self.message.set(Some(err.clone()));
                 self.add_log(format!("❌ Error: {err}"));
             }
             DaemonNotification::Exited => {
+                self.progress_message.set(None);
+                self.is_fetching_devices.set(false);
                 self.daemon.set(None);
                 self.add_log("⏹ Flutter daemon exited.");
             }
@@ -422,6 +426,7 @@ impl FlutterHotReloadData {
         if self.reload_debug_session(false) { return; }
         if self.state.get_untracked() != FlutterRunState::Running { return; }
         if let Some(id) = self.active_term.get_untracked() {
+            if let Some(term) = self.terminal.get_terminal(&id) { term.begin_reload_progress(false); }
             self.common.proxy.terminal_write(id, "r".into());
         }
     }
@@ -429,6 +434,7 @@ impl FlutterHotReloadData {
         if self.reload_debug_session(true) { return; }
         if self.state.get_untracked() != FlutterRunState::Running { return; }
         if let Some(id) = self.active_term.get_untracked() {
+            if let Some(term) = self.terminal.get_terminal(&id) { term.begin_reload_progress(true); }
             self.common.proxy.terminal_write(id, "R".into());
         }
     }

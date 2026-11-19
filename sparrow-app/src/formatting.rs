@@ -85,7 +85,8 @@ impl State {
             },
         );
         let root = window.workspace.path.clone();
-        std::thread::spawn(move || send(format_scope(root.as_deref(), &target)));
+        let task = window.common.background_tasks.begin("Formatting Dart files", None);
+        std::thread::spawn(move || { let _task = task; send(format_scope(root.as_deref(), &target)); });
     }
 }
 fn collect(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {

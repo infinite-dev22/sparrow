@@ -113,7 +113,7 @@ pub fn flutter_run_panel(
                 config,
             ),
             clickable_icon(
-                || SparrowIcons::DEBUG_CONSOLE,
+                || SparrowIcons::TOOLBOX,
                 move || devtools_window.open_devtools(crate::dart::devtools::DevToolsPage::Home),
                 || false, || false, || "Open DevTools", config,
             ),

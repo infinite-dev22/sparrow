@@ -29,6 +29,7 @@ impl SparrowIcons {
     pub const DEBUG_STOP: &'static str = "debug_stop";
     pub const DEBUG_CONSOLE: &'static str = "debug_console";
     pub const DEBUG_DISCONNECT: &'static str = "debug_disconnect";
+    pub const TOOLBOX: &'static str = "toolbox";
     pub const START: &'static str = "start";
     pub const RUN_ERRORS: &'static str = "run_errors";
     pub const UNSAVED: &'static str = "unsaved";

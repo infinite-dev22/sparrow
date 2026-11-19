@@ -23,15 +23,16 @@ name = "sparrow Modern"
 "debug_small"        = "bug.svg"                 # Tabler: bug
 "debug_breakpoint"   = "circle-dot.svg"          # Lucide: circle-dot
 "debug_restart"      = "player-track-next.svg"   # Tabler
-"debug_continue"     = "player-play.svg"         # Tabler
-"debug_step_over"    = "step-forward.svg"        # Lucide (exact name)
+"debug_continue"     = "step-forward.svg"                # Lucide
+"debug_step_over"    = "step-over.svg"        # Lucide (exact name)
 "debug_step_into"    = "step-into.svg"           # Tabler
 "debug_step_out"     = "step-out.svg"            # Tabler
-"debug_pause"        = "player-pause.svg"        # Tabler
+"debug_pause"        = "pause.svg"        # Tabler
 "debug_stop"         = "player-stop.svg"         # Tabler
 "debug_console"      = "terminal.svg"            # Lucide: terminal
+"toolbox"            = "toolbox.svg"             # Lucide: toolbox
 "debug_disconnect"   = "unplug.svg"              # Lucide: unplug
-"start"              = "player-play.svg"         # Tabler
+"start"              = "play.svg"         # Tabler
 "run_errors"         = "circle-x.svg"            # Lucide: circle-x
 
 # ── Flutter / Dart execution & devices ─────────────────────────────────────
@@ -291,6 +292,7 @@ name = "sparrow Modern"
 [icon-theme.foldername]
 "test" = "foldertype-test.svg"
 ".sparrow" = "foldertype-config.svg"
+".github" = "foldertype-git.svg"
 "build" = "foldertype-build.svg"
 ".xcassets" = "filetype-apple-assets.svg"
 ".xcodeproj" = "filetype-xcode.svg"

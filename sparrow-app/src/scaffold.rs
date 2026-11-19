@@ -234,7 +234,9 @@ impl State {
                             }
                         },
                     );
+                    let task = window.common.background_tasks.begin("Resolving scaffold registrations", None);
                     std::thread::spawn(move || {
+                        let _task = task;
                         send(registration::augment(plan, &ctx, &name))
                     });
                 } else {

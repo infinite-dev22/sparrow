@@ -97,6 +97,7 @@ impl ProjectWizard {
                 return;
             }
         };
+        let task = window.common.background_tasks.begin("Creating Flutter project", None);
         self.busy.set(true);
         self.message.set("Creating Flutter project…".into());
         let this = self.clone();
@@ -126,6 +127,7 @@ impl ProjectWizard {
             },
         );
         std::thread::spawn(move || {
+            let _task = task;
             let result = program
                 .ok_or_else(|| "Flutter SDK not found.".to_string())
                 .and_then(|program| {

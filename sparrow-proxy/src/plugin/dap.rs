@@ -308,6 +308,7 @@ impl DapClient {
                 self.plugin_rpc.core_rpc.dap_continued(self.dap_rpc.dap_id);
             }
             DapEvent::Exited(exited) => {
+                self.plugin_rpc.core_rpc.dap_session_event(self.config.dap_id, serde_json::json!({"type":"exited"}));
                 if self.config.is_test() {
                     self.plugin_rpc.core_rpc.flutter_test_event(self.config.dap_id,
                         serde_json::json!({"type": "sparrow.exit", "success": exited.exit_code == 0}));
@@ -366,7 +367,7 @@ impl DapClient {
             supports_variable_paging: Some(false),
             supports_run_in_terminal_request: Some(true),
             supports_memory_references: Some(false),
-            supports_progress_reporting: Some(false),
+            supports_progress_reporting: Some(true),
             supports_invalidated_event: Some(false),
         };
 
@@ -453,6 +454,7 @@ impl DapClient {
 pub enum DapRpc {
     HostRequest(DapRequest),
     HostEvent(DapEvent),
+    UiEvent(Value),
     Stop,
     Restart(HashMap<PathBuf, Vec<SourceBreakpoint>>),
     Shutdown,
@@ -509,6 +511,7 @@ impl DapRpcHandler {
                         tracing::error!("{:?}", err);
                     }
                 }
+                DapRpc::UiEvent(event) => { dap_client.plugin_rpc.core_rpc.dap_session_event(self.dap_id, event); }
                 DapRpc::HostEvent(event) => {
                     if let Err(err) = dap_client.handle_host_event(&event) {
                         tracing::error!("{:?}", err);
@@ -527,6 +530,7 @@ impl DapRpcHandler {
                     return;
                 }
                 DapRpc::Disconnected => {
+                    dap_client.plugin_rpc.core_rpc.dap_session_event(self.dap_id, serde_json::json!({"type":"terminated"}));
                     dap_client.disconnected = true;
                     if dap_client.config.is_test() {
                         dap_client.plugin_rpc.core_rpc.flutter_test_event(
@@ -635,6 +639,16 @@ impl DapRpcHandler {
     }
 
     pub fn handle_server_message(&self, message_str: &str) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(message_str) {
+            if value["type"] == "event" {
+                if let Some(kind) = value["event"].as_str() {
+                    if matches!(kind, "progressStart" | "progressUpdate" | "progressEnd" | "dart.progressStart" | "dart.progressUpdate" | "dart.progressEnd" | "flutter.appStarted" | "dart.debuggerUris") {
+                        let _ = self.rpc_tx.send(DapRpc::UiEvent(serde_json::json!({"type":kind,"body":value["body"]})));
+                        return;
+                    }
+                }
+            }
+        }
         if let Ok(payload) = serde_json::from_str::<DapPayload>(message_str) {
             match payload {
                 DapPayload::Request(req) => {
@@ -943,4 +957,18 @@ mod scope_tests {
 #[cfg(test)]mod preset_argument_tests {use super::*;
  #[test]fn sdk_test_configurations_launch_test_paths_instead_of_the_sdk(){for (kind,program)in[("flutter-test","flutter"),("dart-test","dart")]{let config:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":kind,"name":"Tests","program":program,"args":["test","test","--plain-name","counter"]})).unwrap();let args=dart_launch_arguments(&config).unwrap();assert_eq!(args["program"],"test");assert_eq!(args["args"],serde_json::json!(["--plain-name","counter"]));assert_eq!(args["runInTerminal"],false);}}
  #[test]fn attach_arguments_strip_the_cli_command(){let dart:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":"dart","name":"Attach","program":"dart","args":["attach","http://127.0.0.1:8181/abc/"]})).unwrap();assert_eq!(dart_launch_arguments(&dart).unwrap()["vmServiceUri"],"http://127.0.0.1:8181/abc/");let flutter:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":"flutter","name":"Attach","program":"flutter","args":["attach","--target","lib/main.dart","-d","linux"]})).unwrap();let args=dart_launch_arguments(&flutter).unwrap();assert_eq!(args["program"],"lib/main.dart");assert_eq!(args["toolArgs"],serde_json::json!(["-d","linux"]));}
+}
+
+#[cfg(test)]
+mod progress_forwarding_tests {
+    use super::*;
+    #[test]
+    fn standard_and_dart_progress_and_readiness_reach_ui() {
+        let handler = DapRpcHandler::new(DapId::default());
+        for event in ["progressStart", "progressUpdate", "progressEnd", "dart.progressStart", "dart.progressUpdate", "dart.progressEnd", "flutter.appStarted", "dart.debuggerUris"] {
+            let body = serde_json::json!({"progressId":"compile","percentage":42});
+            handler.handle_server_message(&serde_json::json!({"type":"event","event":event,"body":body}).to_string());
+            assert!(matches!(handler.rpc_rx.try_recv().unwrap(), DapRpc::UiEvent(value) if value["type"] == event && value["body"] == body));
+        }
+    }
 }
