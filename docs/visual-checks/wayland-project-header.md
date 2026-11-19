@@ -67,3 +67,28 @@ visual defects now pass. The test workspace used copied application settings
 and its own `.sparrow/settings.toml` project color. Testing did not alter the
 user's normal workspace or display settings. Screen sharing and remote input
 were closed after verification.
+
+## Narrow header interaction retest (2026-11-19)
+
+Tested the rebuilt `target/debug/sparrow` through a newly approved desktop
+portal on native GNOME Wayland, 1920×1080 at scale 1, without a renderer
+or display override. Preferences were copied into `target/header-wayland/`;
+all created files belong to its isolated workspace.
+
+| Dock | Narrow width | Header | Actions verified |
+| --- | --- | --- | --- |
+| Left | 150 px panel minimum | Title ellipsis; all three buttons inside panel | New File, More → Refresh, Hide, stripe reopen, Move to Right |
+| Right | 150 px panel minimum | Title ellipsis; all three buttons inside panel | New File, More → Refresh, Hide, stripe reopen, Move to Bottom |
+| Bottom | approximately 152 px (window narrowed to 220 px) | Title ellipsis; all three buttons inside panel | New Directory, More → Refresh, Hide, stripe reopen, Move to Left |
+
+No header overflow or failed header action was observed at these widths.
+The extremely narrow window also clips unrelated title-bar controls; this
+check only covers the Project panel header. The current header has New,
+More and Hide buttons; its Project label has no dropdown action.
+
+Evidence under `target/wayland-test/`: `header-left-min.png`,
+`header-right-min.png`, `header-bottom-narrow.png`, the corresponding
+`header-*-new.png`, `header-*-options.png`, `header-*-hidden.png`, and
+`header-left-reopened.png`. Created files were confirmed on disk:
+`left_created.txt`, `right_created.txt`, and directory `bottom_created`.
+The test window and capture/input session were closed after verification.
