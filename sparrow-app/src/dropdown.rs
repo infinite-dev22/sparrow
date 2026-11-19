@@ -11,7 +11,7 @@
 use std::{any::Any, rc::Rc};
 
 use floem::keyboard::{Key, NamedKey};
-use floem::peniko::kurbo::{Point, Rect};
+use floem::peniko::kurbo::{Point, Rect, Size};
 use floem::reactive::{
     Scope, SignalGet, SignalUpdate, as_child_of_current_scope, create_effect,
     create_updater,
@@ -28,11 +28,21 @@ use floem::{
     views::{Decorators, empty, scroll, stack, svg, text},
 };
 
+use crate::config::icon::SparrowIcons;
 use crate::config::{SparrowConfig, color::SparrowColor};
 use floem::reactive::{ReadSignal, RwSignal};
 use floem::views::{list, scroll::ScrollClass};
 use std::sync::Arc;
-use crate::config::icon::SparrowIcons;
+
+// Floem's OverlayView moves overlays inside a five-pixel window margin at
+// paint time. Keep our frame inside that margin so paint and hit-testing
+// retain the same origin. The backdrop itself still covers the whole window.
+fn overlay_frame_size(window: Size) -> Size {
+    Size::new(
+        (window.width - 5.0).max(0.0),
+        (window.height - 5.0).max(0.0),
+    )
+}
 
 type ChildFn<T> = dyn Fn(T) -> (AnyView, Scope);
 type ListViewFn<T> = Rc<dyn Fn(&dyn Fn(T) -> AnyView) -> AnyView>;
@@ -182,6 +192,7 @@ prop_extractor!(DropdownStyle {
 pub struct Dropdown<T: 'static> {
     id: ViewId,
     current_value: T,
+    pointer_pressed: bool,
     main_view: ViewId,
     main_view_scope: Scope,
     main_fn: Box<ChildFn<T>>,
@@ -295,11 +306,22 @@ impl<T: 'static + Clone> View for Dropdown<T> {
     ) -> EventPropagation {
         match event {
             Event::PointerDown(pointer) if pointer.button.is_primary() => {
+                self.pointer_pressed = true;
+                self.id.request_active();
                 self.id.request_focus();
                 return EventPropagation::Stop;
             }
             Event::PointerUp(pointer) if pointer.button.is_primary() => {
-                self.swap_state();
+                let pressed = std::mem::take(&mut self.pointer_pressed);
+                self.id.clear_active();
+                if pressed
+                    && self
+                        .id
+                        .get_size()
+                        .is_some_and(|size| size.to_rect().contains(pointer.pos))
+                {
+                    self.swap_state();
+                }
                 return EventPropagation::Stop;
             }
             Event::KeyDown(key_event)
@@ -331,10 +353,18 @@ impl<T: Clone> Dropdown<T> {
     where
         T: std::fmt::Display,
     {
+        Self::main_display(item, || {
+            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>"#.into()
+        })
+    }
 
+    fn main_display(item: T, icon: impl Fn() -> String + 'static) -> AnyView
+    where
+        T: std::fmt::Display,
+    {
         stack((
             text(item).class(DropdownLabelClass),
-            svg(SparrowIcons::PALETTE_MENU).class(DropdownChevronClass),
+            svg(icon).class(DropdownChevronClass),
         ))
         .style(|s| s.items_center().gap(6.0).size_full().min_width(0.0))
         .into_any()
@@ -393,7 +423,13 @@ impl<T: Clone> Dropdown<T> {
         let list_view = Rc::new(move |list_item_fn: &dyn Fn(T) -> AnyView| {
             let iterator = iterator.clone();
             let iter_clone = iterator.clone();
-            let inner_list = list(iterator.into_iter().map(list_item_fn))
+            let inner_list = list(iterator.into_iter().map(|value| {
+                let selected = value.clone();
+                list_item_fn(value).on_click_stop(move |_| {
+                    dropdown_id.update_state(Message::ActiveElement(Box::new(selected.clone())));
+                    dropdown_id.update_state(Message::ListSelect(Box::new(selected.clone())));
+                })
+            }))
                 .on_accept(move |opt_idx| {
                     if let Some(idx) = opt_idx {
                         if let Some(val) = iter_clone.clone().into_iter().nth(idx) {
@@ -442,6 +478,7 @@ impl<T: Clone> Dropdown<T> {
         Self {
             id: dropdown_id,
             current_value: initial,
+            pointer_pressed: false,
             main_view,
             main_view_scope,
             main_fn,
@@ -636,6 +673,7 @@ impl<T: Clone> Dropdown<T> {
             root = parent;
         }
         let size = root.get_size().unwrap_or_default();
+        let frame_size = overlay_frame_size(size);
         self.overlay_id = Some(add_overlay(Point::ZERO, move |_| {
             let menu = list(&*list_item_fn.clone())
                 .style(move |s| {
@@ -649,15 +687,14 @@ impl<T: Clone> Dropdown<T> {
             let list_id = menu.id();
             list_id.request_focus();
             stack((
-                empty().style(|s| s.absolute().size_full()).on_event_stop(
-                    EventListener::PointerDown,
-                    move |_| {
+                empty()
+                    .style(move |s| s.absolute().size(size.width, size.height))
+                    .on_event_stop(EventListener::PointerDown, move |_| {
                         dropdown_id.update_state(Message::DismissWithFocus);
-                    },
-                ),
+                    }),
                 menu,
             ))
-            .style(move |s| s.size(size.width, size.height).z_index(400))
+            .style(move |s| s.size(frame_size.width, frame_size.height).z_index(400))
         }));
     }
 
@@ -727,41 +764,70 @@ where
 {
     let items: Vec<T> = items.into_iter().collect();
     let list_height = (items.len() as f64 * 28.0 + 2.0).clamp(2.0, 240.0);
-    Dropdown::new_rw(value, items)
-        .list_item_view(|item| {
+    Dropdown::custom(
+        move || value.get(),
+        move |item| {
+            Dropdown::main_display(item, move || {
+                config.get().ui_svg(SparrowIcons::PALETTE_MENU)
+            })
+        },
+        items,
+        |item| {
             text(item)
                 .style(|s| s.height(28.0).padding_horiz(6.0).items_center())
                 .into_any()
-        })
-        .style(move |s| {
-            let config = config.get();
-            let border = config.color(SparrowColor::SPARROW_BORDER);
-            let foreground = config.color(SparrowColor::EDITOR_FOREGROUND);
-            let background = config.color(SparrowColor::PANEL_BACKGROUND);
-            s.height(28.0)
-                .min_width(0.0)
-                .padding_horiz(6.0)
-                .border(1.0)
-                .border_radius(4.0)
-                .border_color(border)
-                .color(foreground)
-                .background(background)
-                .focus(|s| s.border_color(config.color(SparrowColor::EDITOR_CARET)))
-                .class(DropdownChevronClass, |s| {
-                    s.size(14.0, 14.0)
-                        .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
-                })
-                .class(ScrollClass, move |s| {
-                    s.width_pct(100.0)
-                        .height(list_height)
-                        .font_size(config.ui.font_size() as f32)
-                        .font_family(config.ui.font_family.clone())
-                        .max_height(240.0)
-                        .color(foreground)
-                        .background(background)
-                        .border(1.0)
-                        .border_color(border)
-                        .border_radius(4.0)
-                })
-        })
+        },
+    )
+    .on_accept(move |selected| value.set(selected))
+    .style(move |s| {
+        let config = config.get();
+        let border = config.color(SparrowColor::SPARROW_BORDER);
+        let foreground = config.color(SparrowColor::EDITOR_FOREGROUND);
+        let background = config.color(SparrowColor::PANEL_BACKGROUND);
+        s.height(28.0)
+            .min_width(0.0)
+            .padding_horiz(6.0)
+            .border(1.0)
+            .border_radius(4.0)
+            .border_color(border)
+            .color(foreground)
+            .background(background)
+            .focus(|s| s.border_color(config.color(SparrowColor::EDITOR_CARET)))
+            .class(DropdownChevronClass, |s| {
+                s.size(14.0, 14.0)
+                    .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
+            })
+            .class(ScrollClass, move |s| {
+                s.width_pct(100.0)
+                    .height(list_height)
+                    .font_size(config.ui.font_size() as f32)
+                    .font_family(config.ui.font_family.clone())
+                    .max_height(240.0)
+                    .color(foreground)
+                    .background(background)
+                    .border(1.0)
+                    .border_color(border)
+                    .border_radius(4.0)
+            })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overlay_frame_does_not_trigger_floem_paint_translation() {
+        for window in [Size::new(1920.0, 1080.0), Size::new(960.0, 540.0)] {
+            let frame = overlay_frame_size(window);
+            // These are the boundary checks in Floem OverlayView::paint.
+            assert!(frame.width <= window.width - 5.0);
+            assert!(frame.height <= window.height - 5.0);
+        }
+    }
+
+    #[test]
+    fn overlay_frame_handles_tiny_windows() {
+        assert_eq!(overlay_frame_size(Size::new(3.0, 4.0)), Size::ZERO);
+    }
 }
