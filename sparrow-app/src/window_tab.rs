@@ -142,6 +142,8 @@ pub struct WorkProgress {
 
 #[derive(Clone)]
 pub struct CommonData {
+    pub debugger_settings: RwSignal<sparrow_rpc::dap_types::DebuggerSettings>,
+    pub debug_inline_values: RwSignal<Option<crate::debug_settings::InlineValues>>,
     pub background_tasks: crate::background_tasks::BackgroundTasks,
     pub project_color: RwSignal<Option<[u8; 3]>>,
     pub document_views: RwSignal<BTreeMap<PathBuf, String>>,
@@ -437,6 +439,8 @@ impl WindowTabData {
             cx.create_rw_signal(crate::dart::SignatureHelpData::new(cx));
 
         let common = Rc::new(CommonData {
+            debugger_settings: cx.create_rw_signal(crate::debug_settings::load(workspace.path.as_deref())),
+            debug_inline_values: cx.create_rw_signal(None),
             background_tasks,
             project_color: cx.create_rw_signal(None),
             document_views: cx.create_rw_signal(workspace_info.as_ref().map(|info|info.document_views.clone()).unwrap_or_default()),
@@ -2295,15 +2299,7 @@ impl WindowTabData {
                     }
                 }
             }
-            ToggleBreakpoint => {
-                if let Some(editor) = self.main_split.active_editor.get_untracked() {
-                    let doc = editor.doc();
-                    let offset = editor.cursor().with_untracked(|cursor| cursor.offset());
-                    let line = doc.buffer.with_untracked(|buffer| buffer.line_of_offset(offset));
-                    crate::editor::view::toggle_gutter_breakpoint(line, editor.doc_signal(),
-                        self.terminal.debug.daps, self.terminal.debug.breakpoints, self.common.clone());
-                }
-            }
+            ToggleBreakpoint => self.toggle_breakpoint_at_cursor(),
             RunSelectedConfiguration | DebugSelectedConfiguration => {
                 let mode = if cmd == RunSelectedConfiguration { RunDebugMode::Run } else { RunDebugMode::Debug };
                 self.launch_selected_configuration(mode);
@@ -2636,6 +2632,12 @@ impl WindowTabData {
             }
             InternalCommand::GoToLocation { location } => {
                 self.main_split.go_to_location(location, None);
+            }
+            InternalCommand::DebugJumpToLocation { location } => {
+                self.main_split.jump_to_location(location, None);
+                if !self.common.debugger_settings.get_untracked().preview_files {
+                    if let Some(editor) = self.main_split.active_editor.get_untracked() { editor.confirmed.set(true); }
+                }
             }
             InternalCommand::JumpToLocation { location } => {
                 self.main_split.jump_to_location(location, None);
@@ -3138,6 +3140,15 @@ impl WindowTabData {
         match rpc {
             CoreNotification::DapSessionEvent { dap_id, event } => {
                 crate::background_tasks::debug_event(&self.common.background_tasks.reporter(), dap_id, event);
+                self.handle_debug_action_event(*dap_id, event);
+
+                if let Some(output) = event.get("output").and_then(|v| v.as_str()) {
+                    if self.terminal.debug.daps.with_untracked(|daps| daps.contains_key(dap_id)) {
+                        self.terminal.debug.console_output.update(|buffers| {
+                            buffers.entry(*dap_id).or_default().append(output);
+                        });
+                    }
+                }
                 if self.terminal.debug.adapter_sessions.with_untracked(|sessions| sessions.contains_key(&dap_id)) {
                     if let Some(output) = event.get("output").and_then(|v| v.as_str()) {
                         self.flutter_hot_reload.run_logs.update(|logs| {
@@ -3149,9 +3160,18 @@ impl WindowTabData {
                         self.terminal.debug.adapter_sessions.update(|sessions| {
                             if let Some((_, process)) = sessions.get_mut(&dap_id) { process.stopped = true; }
                         });
+                        // A terminated adapter is no longer suspended. Clear the
+                        // pause state so floating controls and execution hints disappear.
+                        if let Some(dap) = self.terminal.debug.daps.with_untracked(|daps|daps.get(dap_id).cloned()) {
+                            dap.clear_pause();
+                        }
+                        if self.common.debugger_settings.get_untracked().unmute_on_finish {
+                            crate::debug_settings::set_muted(self, false);
+                        }
                         if self.terminal.debug.active_dap.get_untracked() == Some(*dap_id) {
                             self.terminal.debug.active_dap.set(None);
                         }
+                        crate::debug_settings::refresh(&self.terminal);
                     }
                 }
             }
@@ -3162,7 +3182,9 @@ impl WindowTabData {
                 {
                     self.terminal.debug.active_dap.set(None);
                     self.terminal.debug.daps.update(|daps| {
-                        daps.remove(dap_id);
+                        if let Some(dap) = daps.remove(dap_id) {
+                            dap.clear_pause();
+                        }
                     });
                 }
             }
@@ -3971,6 +3993,14 @@ impl WindowTabData {
     }
 
     fn reload_flutter_after_saving(&self, restart: bool) {
+        self.reload_after_saving(restart, None);
+    }
+
+    pub fn reload_debug_session_after_saving(&self, dap_id: sparrow_rpc::dap_types::DapId, restart: bool) {
+        self.reload_after_saving(restart, Some(dap_id));
+    }
+
+    fn reload_after_saving(&self, restart: bool, dap_id: Option<sparrow_rpc::dap_types::DapId>) {
         let mut paths = HashSet::new();
         let mut dirty = Vec::new();
         self.main_split.editors.with_editors_untracked(|editors| {
@@ -3984,20 +4014,35 @@ impl WindowTabData {
             }
         });
         let flutter = self.flutter_hot_reload.clone();
+        let proxy = self.common.proxy.clone();
+        let reload: Rc<dyn Fn()> = Rc::new(move || {
+            if let Some(id) = dap_id { proxy.dap_hot_reload(id, restart); }
+            else if restart { flutter.hot_restart(); } else { flutter.hot_reload(); }
+        });
         if dirty.is_empty() {
-            if restart { flutter.hot_restart(); } else { flutter.hot_reload(); }
+            reload();
             return;
         }
         let remaining = Rc::new(std::cell::Cell::new(dirty.len()));
         for editor in dirty {
             let remaining = remaining.clone();
-            let flutter = flutter.clone();
+            let reload = reload.clone();
             editor.save(false, move || {
                 remaining.set(remaining.get() - 1);
                 if remaining.get() == 0 {
-                    if restart { flutter.hot_restart(); } else { flutter.hot_reload(); }
+                    reload();
                 }
             });
+        }
+    }
+
+    pub(crate) fn toggle_breakpoint_at_cursor(&self) {
+        if let Some(editor) = self.main_split.active_editor.get_untracked() {
+            let doc = editor.doc();
+            let offset = editor.cursor().with_untracked(|cursor| cursor.offset());
+            let line = doc.buffer.with_untracked(|buffer|buffer.line_of_offset(offset));
+            crate::editor::view::toggle_gutter_breakpoint(line, editor.doc_signal(),
+                self.terminal.debug.daps, self.terminal.debug.breakpoints, self.common.clone());
         }
     }
 
@@ -4068,6 +4113,11 @@ impl WindowTabData {
                             mode: RunDebugMode::Debug, config: config.clone(), stopped: false,
                             created: Instant::now(), is_prelaunch: false,
                         }));
+                    });
+                    self.terminal.debug.console_output.update(|logs| {
+                        let mut console = crate::debug::DebugConsole::default();
+                        console.append(&format!("Debugging {}\n", config.name));
+                        logs.insert(config.dap_id, console);
                     });
                     self.terminal.debug.active_dap.set(Some(config.dap_id));
                     self.terminal.debug.active_term.set(Some(id));

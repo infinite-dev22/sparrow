@@ -211,7 +211,7 @@ pub(super) fn log_line_row(
 }
 
 /// Helper to parse paths from flutter error logs: e.g. "package:flutter/... or lib/main.dart:12:5"
-fn parse_stack_trace_link(
+pub(super) fn parse_stack_trace_link(
     line: &str,
     workspace_root: Option<&std::path::Path>,
 ) -> Option<EditorLocation> {

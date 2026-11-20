@@ -836,6 +836,7 @@ pub enum InternalCommand {
     GoToLocation {
         location: EditorLocation,
     },
+    DebugJumpToLocation { location: EditorLocation },
     JumpToLocation {
         location: EditorLocation,
     },

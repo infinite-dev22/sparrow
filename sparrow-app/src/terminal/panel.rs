@@ -112,15 +112,25 @@ impl TerminalPanelData {
             })
         };
 
-        Self {
-            cx,
-            workspace,
-            tab_info,
-            debug,
-            breakline,
-            common,
-            main_split,
-        }
+        let panel = Self { cx, workspace, tab_info, debug, breakline, common, main_split };
+        let monitored = panel.clone();
+        floem::reactive::create_effect(move |previous: Option<(HashMap<std::path::PathBuf, Vec<dap_types::SourceBreakpoint>>, Vec<DapId>)>| {
+            monitored.debug.breakpoints.with(|_| ());
+            monitored.debug.muted.get();
+            let current = monitored.debug.source_breakpoints();
+            let mut adapters = monitored.run_debug_process(true).into_iter()
+                .filter(|(_, p)| p.mode == RunDebugMode::Debug && !p.stopped).map(|(_, p)|p.config.dap_id).collect::<Vec<_>>();
+            adapters.sort_by_key(|id|id.0);
+            if previous.as_ref() != Some(&(current.clone(), adapters.clone())) {
+                let mut paths = current.keys().cloned().collect::<std::collections::BTreeSet<_>>();
+                if let Some((old, _)) = &previous { paths.extend(old.keys().cloned()); }
+                for dap_id in &adapters {
+                    for path in &paths { monitored.common.proxy.dap_set_breakpoints(*dap_id, path.clone(), current.get(path).cloned().unwrap_or_default()); }
+                }
+            }
+            (current, adapters)
+        });
+        panel
     }
 
     pub fn active_tab(&self, tracked: bool) -> Option<TerminalTabData> {
@@ -483,9 +493,26 @@ impl TerminalPanelData {
     /// Return whether it is in debug mode.
     pub fn restart_run_debug(&self, term_id: TermId) -> Option<bool> {
         let process = self.run_debug_process(false).into_iter().find(|(id,_)| *id==term_id)?.1;
-        let config = self.workspace.path.as_deref().and_then(crate::dart::run_config::load)
+        let old_dap = process.config.dap_id;
+        let adapter_owned = self.debug.adapter_sessions.with_untracked(|sessions|sessions.contains_key(&old_dap));
+        let mut config = self.workspace.path.as_deref().and_then(crate::dart::run_config::load)
             .and_then(|configs|configs.into_iter().find(|config|config.name==process.config.name)).unwrap_or(process.config);
+        config.dap_id = DapId::next();
         self.stop_run_debug(term_id);
+        if adapter_owned {
+            if let Some(dap) = self.debug.daps.with_untracked(|daps| daps.get(&old_dap).cloned()) {
+                dap.clear_pause();
+            }
+            self.debug.adapter_sessions.update(|sessions| { sessions.remove(&old_dap); });
+            self.debug.daps.update(|daps| { daps.remove(&old_dap); });
+            self.debug.console_output.update(|logs| { logs.remove(&old_dap); });
+            if self.debug.active_term.get_untracked() == Some(term_id) {
+                self.debug.active_term.set(None);
+                self.debug.active_dap.set(None);
+            }
+            if self.common.debugger_settings.get_untracked().unmute_on_finish { self.debug.muted.set(false); }
+            crate::debug_settings::refresh(self);
+        }
         self.common.internal_command.send(crate::command::InternalCommand::RunAndDebug {mode:process.mode,config});
         Some(process.mode==RunDebugMode::Debug)
     }
@@ -495,6 +522,14 @@ impl TerminalPanelData {
     }
 
     pub fn focus_terminal_in_panel(&self, term_id: TermId, panel: PanelKind) {
+        if let Some(dap_id) = self.debug.adapter_sessions.with_untracked(|sessions| sessions.iter()
+            .find(|(_, (id, _))| *id == term_id).map(|(dap_id, _)| *dap_id)) {
+            self.debug.active_term.set(Some(term_id));
+            self.debug.active_dap.set(Some(dap_id));
+            self.common.focus.set(Focus::Panel(panel));
+            return;
+        }
+        self.debug.active_dap.set(None);
         if let Some((tab_index, terminal_tab, index, _terminal)) =
             self.get_terminal_in_tab(&term_id)
         {
@@ -620,9 +655,9 @@ impl TerminalPanelData {
             .daps
             .with_untracked(|daps| daps.get(dap_id).cloned());
         if let Some(dap) = dap {
-            dap.thread_id.set(None);
-            dap.stopped.set(false);
+            dap.clear_pause();
         }
+        crate::debug_settings::refresh(self);
     }
 
     pub fn dap_stopped(
@@ -637,8 +672,11 @@ impl TerminalPanelData {
             .daps
             .with_untracked(|daps| daps.get(dap_id).cloned());
         if let Some(dap) = dap {
+            self.debug.active_term.set(Some(dap.term_id));
+            self.debug.active_dap.set(Some(dap.dap_id));
             dap.stopped(self.cx, stopped, stack_frames, variables);
         }
+        crate::debug_settings::refresh(self);
         floem::action::focus_window();
     }
 
@@ -748,8 +786,30 @@ impl TerminalPanelData {
 
     pub fn dap_frame_scopes(&self, dap_id: DapId, frame_id: usize) {
         if let Some(dap) = self.debug.daps.get_untracked().get(&dap_id) {
+            if !dap.stopped.get_untracked() {
+                return;
+            }
+            let frame = dap.stack_traces.with_untracked(|traces| {
+                traces.values().find_map(|trace| {
+                    trace.frames.with_untracked(|frames| {
+                        frames.iter().find(|frame| frame.id == frame_id).cloned()
+                    })
+                })
+            });
+            let Some(frame) = frame else { return };
+            dap.variable_requests.invalidate();
+            dap.selected_frame.set(Some(frame));
+            let is_current = dap.variable_requests.capture();
             let variables = dap.variables;
+            // Clear the previous frame immediately while its replacement loads.
+            variables.set(DapVariable::default());
+            dap.refresh_watches();
+            let terminal = self.clone();
+            crate::debug_settings::refresh(self);
             let send = create_ext_action(self.common.scope, move |result| {
+                if !is_current() {
+                    return;
+                }
                 if let Ok(ProxyResponse::DapGetScopesResponse { scopes }) = result {
                     variables.update(|dap_var| {
                         dap_var.children = scopes
@@ -784,6 +844,7 @@ impl TerminalPanelData {
                             .map(|v| v.children_expanded_count + 1)
                             .sum::<usize>();
                     });
+                    crate::debug_settings::refresh(&terminal);
                 }
             });
 

@@ -312,6 +312,9 @@ impl ProxyHandler for Dispatcher {
                     tracing::error!("{:?}", err);
                 }
             }
+            DapAdvanced { dap_id, action } => {
+                if let Err(error) = self.catalog_rpc.dap_advanced(dap_id, action) { tracing::error!("{error}"); }
+            }
             DapHotReload { dap_id, restart } => {
                 if let Err(err) = self.catalog_rpc.dap_hot_reload(dap_id, restart) {
                     tracing::error!("{err:?}");

@@ -47,6 +47,8 @@ pub struct DapClient {
     terminated: bool,
     disconnected: bool,
     restarted: bool,
+    forced_step: Option<(bool, bool)>,
+    debug_options: (bool, bool),
 }
 
 impl DapClient {
@@ -61,7 +63,7 @@ impl DapClient {
         Ok(Self {
             plugin_rpc,
             dap_server,
-            config,
+            config: config.clone(),
             dap_rpc,
             breakpoints,
             term_id: None,
@@ -69,7 +71,70 @@ impl DapClient {
             terminated: false,
             disconnected: false,
             restarted: false,
+            forced_step: None,
+            debug_options: { let settings = debugger_settings(&config); (settings.debug_sdk, settings.debug_external) },
         })
+    }
+
+    fn update_options(&mut self, options: (bool, bool)) -> Result<()> {
+        self.dap_rpc.request_raw("updateDebugOptions", serde_json::json!({
+            "debugSdkLibraries":options.0, "debugExternalPackageLibraries":options.1 }))?;
+        self.debug_options = options;
+        Ok(())
+    }
+    fn restore_forced_step(&mut self) -> Result<()> {
+        if let Some(options) = self.forced_step {
+            let mut errors = Vec::new();
+            for (path, points) in &self.breakpoints {
+                match self.dap_rpc.set_breakpoints(path.clone(), points.clone()) {
+                    Ok(response) => self.plugin_rpc.core_rpc.dap_breakpoints_resp(self.config.dap_id, path.clone(), response.breakpoints.unwrap_or_default()),
+                    Err(error) => errors.push(error.to_string()),
+                }
+            }
+            if let Err(error) = self.update_options(options) { errors.push(error.to_string()); }
+            if !errors.is_empty() { return Err(anyhow!("Unable to restore debugger state: {}", errors.join("; "))); }
+            self.forced_step = None;
+        }
+        Ok(())
+    }
+    fn advanced_action(&mut self, action: dap_types::DebugAction) -> Result<Value> {
+        use dap_types::DebugAction;
+        match action {
+            DebugAction::Evaluate { expression, frame_id, request_id: _, watch } => {
+                self.dap_rpc.request_raw("evaluate", serde_json::json!({
+                    "expression": expression, "frameId": frame_id,
+                    "context": if watch { "watch" } else { "repl" }
+                }))
+            }
+            DebugAction::UpdateOptions { debug_sdk, debug_external } => {
+                let options = (debug_sdk, debug_external);
+                if let Some(restore) = &mut self.forced_step { *restore = options; }
+                else { self.update_options(options)?; }
+                Ok(Value::Null)
+            }
+            DebugAction::StepTargets { frame_id, generation } => {
+                if !self.capabilities.as_ref().is_some_and(|c| c.supports_step_in_targets_request == Some(true)) {
+                    return Ok(serde_json::json!({"targets":[], "supported":false, "frameId":frame_id, "generation":generation}));
+                }
+                let mut result = self.dap_rpc.request_raw("stepInTargets", serde_json::json!({"frameId":frame_id}))?;
+                result["frameId"] = serde_json::json!(frame_id);
+                result["generation"] = serde_json::json!(generation);
+                Ok(result)
+            }
+            DebugAction::StepIntoTarget { thread_id, target_id } => self.dap_rpc.request_raw("stepIn",
+                serde_json::json!({"threadId":thread_id,"targetId":target_id})),
+            DebugAction::ForceStep { thread_id, into } => {
+                if self.forced_step.is_some() { return Err(anyhow!("A forced step is already in progress")); }
+                self.forced_step = Some(self.debug_options);
+                let result = (|| {
+                    for path in self.breakpoints.keys() { self.dap_rpc.set_breakpoints(path.clone(), Vec::new())?; }
+                    if into { self.update_options((true, true))?; }
+                    self.dap_rpc.request_raw(if into { "stepIn" } else { "next" }, serde_json::json!({"threadId":thread_id}))
+                })();
+                if result.is_err() { self.restore_forced_step()?; }
+                result
+            }
+        }
     }
 
     pub fn start(
@@ -236,6 +301,10 @@ impl DapClient {
                 });
             }
             DapEvent::Stopped(stopped) => {
+                if let Err(error) = self.restore_forced_step() {
+                    self.plugin_rpc.core_rpc.dap_session_event(self.config.dap_id,
+                        serde_json::json!({"type":"sparrow.debugAction", "error":error.to_string()}));
+                }
                 // The SDK emits a transient entry pause while wiring the VM,
                 // then resumes automatically. No stop-on-entry option is exposed.
                 if stopped.reason == "entry" { return Ok(()); }
@@ -348,7 +417,12 @@ impl DapClient {
             DapEvent::Module { .. } => {}
             DapEvent::LoadedSource { .. } => {}
             DapEvent::Process(_) => {}
-            DapEvent::Capabilities(_) => {}
+            DapEvent::Capabilities(change) => {
+                let mut merged = self.capabilities.as_ref().map(serde_json::to_value).transpose()?.unwrap_or_else(||serde_json::json!({}));
+                let delta = serde_json::to_value(&change.capabilities)?;
+                if let Some(current) = merged.as_object_mut() { current.extend(delta.as_object().cloned().unwrap_or_default()); }
+                self.capabilities = Some(serde_json::from_value(merged)?);
+            }
             DapEvent::Memory(_) => {}
         }
         Ok(())
@@ -375,6 +449,8 @@ impl DapClient {
             .dap_rpc
             .request::<Initialize>(params)
             .map_err(|e| anyhow!(e.message))?;
+        self.plugin_rpc.core_rpc.dap_session_event(self.config.dap_id,
+            serde_json::json!({"type":"capabilities", "body":resp}));
         self.capabilities = Some(resp);
 
         Ok(())
@@ -455,6 +531,8 @@ pub enum DapRpc {
     HostRequest(DapRequest),
     HostEvent(DapEvent),
     UiEvent(Value),
+    Advanced(dap_types::DebugAction),
+    UpdateBreakpoints(PathBuf, Vec<SourceBreakpoint>),
     Stop,
     Restart(HashMap<PathBuf, Vec<SourceBreakpoint>>),
     Shutdown,
@@ -509,6 +587,26 @@ impl DapRpcHandler {
                     };
                     if let Err(err) = self.io_tx.send(DapPayload::Response(resp)) {
                         tracing::error!("{:?}", err);
+                    }
+                }
+                DapRpc::Advanced(action) => {
+                    let evaluation_id = match &action {
+                        dap_types::DebugAction::Evaluate { request_id, .. } => Some(*request_id),
+                        _ => None,
+                    };
+                    let target_request = matches!(action, dap_types::DebugAction::StepTargets { .. });
+                    let result = dap_client.advanced_action(action);
+                    dap_client.plugin_rpc.core_rpc.dap_session_event(self.dap_id,
+                        serde_json::json!({"type": if evaluation_id.is_some() { "sparrow.evaluation" } else if target_request { "sparrow.stepTargets" } else { "sparrow.debugAction" },
+                            "requestId": evaluation_id, "body": result.as_ref().ok(), "error": result.err().map(|e|e.to_string())}));
+                }
+                DapRpc::UpdateBreakpoints(path, breakpoints) => {
+                    dap_client.breakpoints.insert(path.clone(), breakpoints.clone());
+                    if dap_client.forced_step.is_none() {
+                        match dap_client.dap_rpc.set_breakpoints(path.clone(), breakpoints) {
+                            Ok(response) => dap_client.plugin_rpc.core_rpc.dap_breakpoints_resp(self.dap_id, path, response.breakpoints.unwrap_or_default()),
+                            Err(error) => tracing::error!("{error}"),
+                        }
                     }
                 }
                 DapRpc::UiEvent(event) => { dap_client.plugin_rpc.core_rpc.dap_session_event(self.dap_id, event); }
@@ -673,6 +771,22 @@ impl DapRpcHandler {
         let attaching=config.args.as_ref().and_then(|args|args.first()).is_some_and(|a|a=="attach");
         if attaching{self.request::<dap_types::Attach>(params).map_err(|e|anyhow!(e.message))?;}else{self.request::<Launch>(params).map_err(|e|anyhow!(e.message))?;}
         Ok(())
+    }
+
+    pub fn advanced(&self, action: dap_types::DebugAction) {
+        let _ = self.rpc_tx.send(DapRpc::Advanced(action));
+    }
+    pub fn update_breakpoints(&self, path: PathBuf, breakpoints: Vec<SourceBreakpoint>) {
+        let _ = self.rpc_tx.send(DapRpc::UpdateBreakpoints(path, breakpoints));
+    }
+    fn request_raw(&self, command: &'static str, args: Value) -> Result<Value> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        self.request_common::<RawDebugRequest>(command, args, ResponseHandler::Chan(tx));
+        let response = rx.recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|_| anyhow!("Debugger request timed out: {command}"))?
+            .map_err(|error| anyhow!(error.message))?;
+        if !response.success { return Err(anyhow!(response.message.unwrap_or_else(|| format!("{command} failed")))); }
+        Ok(response.body.unwrap_or(Value::Null))
     }
 
     pub fn hot_reload(&self, restart: bool) {
@@ -880,6 +994,12 @@ impl DapRpcHandler {
     }
 }
 
+fn debugger_settings(config: &RunDebugConfig) -> dap_types::DebuggerSettings {
+    config.cwd.as_deref().and_then(|cwd| std::path::Path::new(cwd).ancestors()
+        .find_map(|root| std::fs::read_to_string(root.join(".sparrow/debugger.toml")).ok()))
+        .and_then(|text| toml::from_str(&text).ok()).unwrap_or_default()
+}
+
 /// Translate SDK CLI configurations into the Dart DAP launch schema. The
 /// debug adapter launches an entrypoint, never the SDK executable as a script.
 fn dart_launch_arguments(config: &RunDebugConfig) -> Result<Value> {
@@ -889,13 +1009,15 @@ fn dart_launch_arguments(config: &RunDebugConfig) -> Result<Value> {
     let mut program = config.program.clone();
     let mut args = config.args.clone().unwrap_or_default();
     let mut tool_args = Vec::new();
+    let settings = debugger_settings(config);
     if config.is_test() && std::path::Path::new(&program).file_stem().is_some_and(|p|p=="flutter"||p=="dart") {
         if args.first().is_some_and(|a|a=="test"){args.remove(0);}program=if args.first().is_some_and(|a|!a.starts_with('-')){args.remove(0)}else{"test".into()};
     } else if !config.is_test() {
         let flutter = std::path::Path::new(&program)
             .file_stem()
             .is_some_and(|s| s == "flutter");
-        if !flutter&&args.first().is_some_and(|s|s=="attach") {let uri=args.get(1).ok_or_else(||anyhow!("Set a VM service URI for remote debugging"))?;return Ok(serde_json::json!({"vmServiceUri":uri,"cwd":config.cwd,"env":config.env.clone().unwrap_or_default()}));}
+        if !flutter&&args.first().is_some_and(|s|s=="attach") {let uri=args.get(1).ok_or_else(||anyhow!("Set a VM service URI for remote debugging"))?;return Ok(serde_json::json!({"vmServiceUri":uri,"cwd":config.cwd,"env":config.env.clone().unwrap_or_default(),
+            "debugSdkLibraries":settings.debug_sdk,"debugExternalPackageLibraries":settings.debug_external,"evaluateToStringInDebugViews":settings.value_renderers}));}
         if args.first().is_some_and(|s| s == "run" || s=="attach") {
             args.remove(0);
         }
@@ -924,9 +1046,9 @@ fn dart_launch_arguments(config: &RunDebugConfig) -> Result<Value> {
             program = args.remove(0);
         }
     }
-    Ok(
-        serde_json::json!({"console":if config.is_test(){"debugConsole"}else{"terminal"},"program":program,"args":args,"toolArgs":tool_args,"cwd":config.cwd,"runInTerminal":!config.is_test(),"env":config.env.clone().unwrap_or_default()}),
-    )
+    Ok(serde_json::json!({"console":"debugConsole","program":program,"args":args,"toolArgs":tool_args,"cwd":config.cwd,"runInTerminal":false,"env":config.env.clone().unwrap_or_default(),
+        "debugSdkLibraries":settings.debug_sdk, "debugExternalPackageLibraries":settings.debug_external,
+        "evaluateToStringInDebugViews":settings.value_renderers }))
 }
 #[cfg(test)]
 mod scope_tests {
@@ -970,5 +1092,96 @@ mod progress_forwarding_tests {
             handler.handle_server_message(&serde_json::json!({"type":"event","event":event,"body":body}).to_string());
             assert!(matches!(handler.rpc_rx.try_recv().unwrap(), DapRpc::UiEvent(value) if value["type"] == event && value["body"] == body));
         }
+    }
+}
+
+struct RawDebugRequest;
+impl Request for RawDebugRequest {
+    type Arguments = Value;
+    type Result = Value;
+    const COMMAND: &'static str = "";
+}
+
+#[cfg(test)]
+mod advanced_tests {
+    use super::*;
+    fn client() -> DapClient {
+        DapClient::new(DapServer { program:"unused".into(), args:Vec::new(), cwd:None },
+            serde_json::from_value(serde_json::json!({"name":"test","program":"dart"})).unwrap(),
+            HashMap::from([(PathBuf::from("main.dart"), vec![SourceBreakpoint { line:5, column:None,
+                condition:None, hit_condition:None, log_message:None }])]),
+            PluginCatalogRpcHandler::new(sparrow_rpc::core::CoreRpcHandler::new(), sparrow_rpc::proxy::ProxyRpcHandler::new())).unwrap()
+    }
+    fn peer(client: &DapClient, count: usize, reject_step: bool) -> std::thread::JoinHandle<Vec<DapRequest>> {
+        let rpc = client.dap_rpc.clone();
+        std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for _ in 0..count {
+                let DapPayload::Request(request) = rpc.io_rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap() else { panic!("expected request") };
+                let success = !(reject_step && matches!(request.command.as_str(), "next"|"stepIn"));
+                rpc.handle_server_response(DapResponse { seq:0, request_seq:request.seq, success,
+                    command:request.command.clone(), message:Some("test rejection".into()),
+                    body:Some(if request.command=="setBreakpoints" {serde_json::json!({"breakpoints":[]})}
+                        else if request.command=="stepInTargets" {serde_json::json!({"targets":[{"id":7,"label":"work()"}]})}
+                        else {serde_json::json!({})}) });
+                requests.push(request);
+            }
+            requests
+        })
+    }
+    #[test]
+    fn evaluation_uses_selected_frame_and_standard_context() {
+        for watch in [false, true] {
+            let mut client = client();
+            let peer = peer(&client, 1, false);
+            client.advanced_action(dap_types::DebugAction::Evaluate {
+                expression: "count + 1".into(), frame_id: 42, request_id: 9, watch,
+            }).unwrap();
+            let requests = peer.join().unwrap();
+            assert_eq!(requests[0].command,"evaluate");
+            let args = requests[0].arguments.as_ref().unwrap();
+            assert_eq!(args["expression"],"count + 1");
+            assert_eq!(args["frameId"],42);
+            assert_eq!(args["context"],if watch {"watch"} else {"repl"});
+        }
+    }
+    #[test]
+    fn force_step_restores_breakpoints_and_filters_on_stop() {
+        for into in [false,true] {
+            let mut client = client();
+            let peer = peer(&client, if into {5}else{4}, false);
+            client.advanced_action(dap_types::DebugAction::ForceStep { thread_id:ThreadId::default(), into }).unwrap();
+            assert!(client.forced_step.is_some());
+            client.restore_forced_step().unwrap();
+            assert!(client.forced_step.is_none());
+            let requests = peer.join().unwrap();
+            assert_eq!(requests[0].arguments.as_ref().unwrap()["breakpoints"],serde_json::json!([]));
+            let restored = &requests[requests.len()-2];
+            assert_eq!(restored.arguments.as_ref().unwrap()["breakpoints"][0]["line"],5);
+            assert_eq!(requests.last().unwrap().arguments.as_ref().unwrap()["debugSdkLibraries"],false);
+        }
+    }
+    #[test]
+    fn failed_step_also_restores_and_reports_error() {
+        let mut client = client();
+        let peer = peer(&client,4,true);
+        assert!(client.advanced_action(dap_types::DebugAction::ForceStep { thread_id:ThreadId::default(), into:false }).is_err());
+        assert!(client.forced_step.is_none());
+        assert_eq!(peer.join().unwrap()[2].arguments.as_ref().unwrap()["breakpoints"][0]["line"],5);
+    }
+    #[test]
+    fn smart_targets_obey_capabilities_and_keep_frame_identity() {
+        let mut client = client();
+        let action = dap_types::DebugAction::StepTargets { frame_id:42, generation:3 };
+        assert_eq!(client.advanced_action(action.clone()).unwrap()["supported"],false);
+        client.capabilities = Some(serde_json::from_value(serde_json::json!({"supportsTerminateRequest":true})).unwrap());
+        client.handle_host_event(&DapEvent::Capabilities(serde_json::from_value(serde_json::json!({"capabilities":{"supportsStepInTargetsRequest":true}})).unwrap())).unwrap();
+        assert_eq!(client.capabilities.as_ref().unwrap().supports_terminate_request,Some(true));
+        let peer = peer(&client,1,false);
+        let response = client.advanced_action(action).unwrap();
+        assert_eq!(response["targets"][0]["id"],7);
+        assert_eq!(response["frameId"],42);
+        assert_eq!(response["generation"],3);
+        assert_eq!(peer.join().unwrap()[0].command,"stepInTargets");
     }
 }

@@ -1988,6 +1988,16 @@ impl DocumentPhantom for Doc {
         // this later has the diagnostics added onto it, but that's still likely to be below six
         // overall.
         let mut text: SmallVec<[PhantomText; 6]> = hints.collect();
+        if let Some(values) = self.common.debug_inline_values.get_untracked() {
+            if values.line == line && self.content.with_untracked(|c|c.path() == Some(&values.path)) {
+                let col = self.buffer.with_untracked(|b| b.line_content(line).trim_end_matches(['\r','\n']).len());
+                text.push(PhantomText { kind: PhantomTextKind::InlayHint, col,
+                    text:format!("  {}", values.text), affinity:Some(CursorAffinity::Forward),
+                    fg:Some(config.color(SparrowColor::INLAY_HINT_FOREGROUND)),
+                    font_size:Some(config.editor.inlay_hint_font_size()), bg:None, under_line:None });
+            }
+        }
+
 
         // If error lens is enabled, and the diagnostics field is filled, then get the diagnostics
         // that end on this line which have a severity worse than HINT and convert them into

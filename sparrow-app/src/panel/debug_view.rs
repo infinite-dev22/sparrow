@@ -1,34 +1,24 @@
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
 use floem::{
     View,
     event::EventListener,
     peniko::Color,
-    reactive::{
-        ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal,
-    },
+    reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal},
     style::CursorStyle,
-    text::Style as FontStyle,
     views::{
-        Decorators, container, dyn_stack, label, scroll, stack, svg, text,
-        virtual_stack,
+        Decorators, container, dyn_stack, scroll, stack, svg, text, virtual_stack,
     },
-};
-use sparrow_rpc::{
-    dap_types::{DapId, ThreadId},
-    terminal::TermId,
 };
 
-use super::{data::PanelSection, position::PanelPosition, view::PanelBuilder};
+use super::position::PanelPosition;
 use crate::{
     app::clickable_icon,
     command::InternalCommand,
-    config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
-    debug::{DapVariable, RunDebugMode, StackTraceData},
+    config::{color::SparrowColor, icon::SparrowIcons},
+    debug::DapVariable,
     editor::location::{EditorLocation, EditorPosition},
-    listener::Listener,
     settings::checkbox,
-    terminal::panel::TerminalPanelData,
     window_tab::WindowTabData,
 };
 
@@ -36,304 +26,17 @@ pub fn debug_panel(
     window_tab_data: Rc<WindowTabData>,
     position: PanelPosition,
 ) -> impl View {
-    let config = window_tab_data.common.config;
-    let terminal = window_tab_data.terminal.clone();
-    let internal_command = window_tab_data.common.internal_command;
-
-    PanelBuilder::new(config, position)
-        .add_height(
-            "Processes",
-            150.0,
-            debug_processes(terminal.clone(), config),
-            window_tab_data.panel.section_open(PanelSection::Process),
-        )
-        .add(
-            "Variables",
-            variables_view(window_tab_data.clone()),
-            window_tab_data.panel.section_open(PanelSection::Variable),
-        )
-        .add(
-            "Stack Frames",
-            debug_stack_traces(terminal.clone(), internal_command, config),
-            window_tab_data.panel.section_open(PanelSection::StackFrame),
-        )
-        .add_height(
-            "Breakpoints",
-            150.0,
-            breakpoints_view(window_tab_data.clone()),
-            window_tab_data.panel.section_open(PanelSection::Breakpoint),
-        )
-        .build()
-        .debug_name("Debug Panel")
+    super::debug_session::panel(window_tab_data, position)
 }
 
-fn debug_process_icons(
-    terminal: TerminalPanelData,
-    term_id: TermId,
-    dap_id: DapId,
-    mode: RunDebugMode,
-    stopped: bool,
-    config: ReadSignal<Arc<SparrowConfig>>,
+pub(super) fn inspector(
+    window_tab_data: Rc<WindowTabData>,
+    position: PanelPosition,
 ) -> impl View {
-    let paused = move || {
-        let stopped = terminal
-            .debug
-            .daps
-            .with_untracked(|daps| daps.get(&dap_id).map(|dap| dap.stopped));
-        stopped.map(|stopped| stopped.get()).unwrap_or(false)
-    };
-    match mode {
-        RunDebugMode::Run => container(stack((
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::DEBUG_RESTART,
-                    move || {
-                        terminal.restart_run_debug(term_id);
-                    },
-                    || false,
-                    || false,
-                    || "Restart",
-                    config,
-                )
-                .style(|s| s.margin_horiz(4.0))
-            },
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::DEBUG_STOP,
-                    move || {
-                        terminal.stop_run_debug(term_id);
-                    },
-                    || false,
-                    move || stopped,
-                    || "Stop",
-                    config,
-                )
-                .style(|s| s.margin_right(4.0))
-            },
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::CLOSE,
-                    move || {
-                        terminal.close_terminal(&term_id);
-                    },
-                    || false,
-                    || false,
-                    || "Close",
-                    config,
-                )
-                .style(|s| s.margin_right(4.0))
-            },
-        ))),
-        RunDebugMode::Debug => container(stack((
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::DEBUG_CONTINUE,
-                    move || {
-                        terminal.dap_continue(term_id);
-                    },
-                    || false,
-                    move || !paused() || stopped,
-                    || "Continue",
-                    config,
-                )
-                .style(|s| s.margin_horiz(6.0))
-            },
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::DEBUG_PAUSE,
-                    move || {
-                        terminal.dap_pause(term_id);
-                    },
-                    || false,
-                    move || paused() || stopped,
-                    || "Pause",
-                    config,
-                )
-                .style(|s| s.margin_right(4.0))
-            },
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::DEBUG_STEP_OVER,
-                    move || {
-                        terminal.dap_step_over(term_id);
-                    },
-                    || false,
-                    move || !paused() || stopped,
-                    || "Step Over",
-                    config,
-                )
-                .style(|s| s.margin_right(4.0))
-            },
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::DEBUG_STEP_INTO,
-                    move || {
-                        terminal.dap_step_into(term_id);
-                    },
-                    || false,
-                    move || !paused() || stopped,
-                    || "Step Into",
-                    config,
-                )
-                .style(|s| s.margin_right(4.0))
-            },
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::DEBUG_STEP_OUT,
-                    move || {
-                        terminal.dap_step_out(term_id);
-                    },
-                    || false,
-                    move || !paused() || stopped,
-                    || "Step Out",
-                    config,
-                )
-                .style(|s| s.margin_right(4.0))
-            },
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::DEBUG_RESTART,
-                    move || {
-                        terminal.restart_run_debug(term_id);
-                    },
-                    || false,
-                    || false,
-                    || "Restart",
-                    config,
-                )
-                .style(|s| s.margin_right(4.0))
-            },
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::DEBUG_STOP,
-                    move || {
-                        terminal.stop_run_debug(term_id);
-                    },
-                    || false,
-                    move || stopped,
-                    || "Stop",
-                    config,
-                )
-                .style(|s| s.margin_right(4.0))
-            },
-            {
-                let terminal = terminal.clone();
-                clickable_icon(
-                    || SparrowIcons::CLOSE,
-                    move || {
-                        terminal.close_terminal(&term_id);
-                    },
-                    || false,
-                    || false,
-                    || "Close",
-                    config,
-                )
-                .style(|s| s.margin_right(4.0))
-            },
-        ))),
-    }
+    super::debug_inspector::inspector(window_tab_data, position)
 }
 
-fn debug_processes(
-    terminal: TerminalPanelData,
-    config: ReadSignal<Arc<SparrowConfig>>,
-) -> impl View {
-    scroll({
-        let terminal = terminal.clone();
-        let local_terminal = terminal.clone();
-        dyn_stack(
-            move || local_terminal.run_debug_process(true),
-            |(term_id, p)| (*term_id, p.stopped),
-            move |(term_id, p)| {
-                let terminal = terminal.clone();
-                let is_active =
-                    move || terminal.debug.active_term.get() == Some(term_id);
-                let local_terminal = terminal.clone();
-                let is_hovered = create_rw_signal(false);
-                stack((
-                    {
-                        let svg_str = match (&p.mode, p.stopped) {
-                            (RunDebugMode::Run, false) => SparrowIcons::START,
-                            (RunDebugMode::Run, true) => SparrowIcons::RUN_ERRORS,
-                            (RunDebugMode::Debug, false) => SparrowIcons::DEBUG,
-                            (RunDebugMode::Debug, true) => {
-                                SparrowIcons::DEBUG_DISCONNECT
-                            }
-                        };
-                        svg(move || config.get().ui_svg(svg_str)).style(move |s| {
-                            let config = config.get();
-                            let size = config.ui.icon_size() as f32;
-                            s.size(size, size)
-                                .margin_vert(5.0)
-                                .margin_horiz(10.0)
-                                .color(
-                                    config.color(SparrowColor::SPARROW_ICON_ACTIVE),
-                                )
-                        })
-                    },
-                    label(move || p.config.name.clone()).style(|s| {
-                        s.flex_grow(1.0f32)
-                            .flex_basis(0.0)
-                            .min_width(0.0)
-                            .text_ellipsis()
-                    }),
-                    debug_process_icons(
-                        terminal.clone(),
-                        term_id,
-                        p.config.dap_id,
-                        p.mode,
-                        p.stopped,
-                        config,
-                    )
-                    .style(move |s| {
-                        s.apply_if(!is_hovered.get() && !is_active(), |s| s.hide())
-                    }),
-                ))
-                .on_click_stop(move |_| {
-                    local_terminal.debug.active_term.set(Some(term_id));
-                    local_terminal.focus_terminal(term_id);
-                })
-                .on_event_stop(EventListener::PointerEnter, move |_| {
-                    is_hovered.set(true);
-                })
-                .on_event_stop(EventListener::PointerLeave, move |_| {
-                    is_hovered.set(false);
-                })
-                .style(move |s| {
-                    let config = config.get();
-                    s.padding_vert(6.0)
-                        .width_pct(100.0)
-                        .items_center()
-                        .apply_if(is_active(), |s| {
-                            s.background(
-                                config.color(SparrowColor::PANEL_CURRENT_BACKGROUND),
-                            )
-                        })
-                        .hover(|s| {
-                            s.cursor(CursorStyle::Pointer).background(
-                                (config
-                                    .color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                                .multiply_alpha(0.3),
-                            )
-                        })
-                })
-            },
-        )
-        .style(|s| s.width_pct(100.0).flex_col())
-    })
-}
-
-fn variables_view(window_tab_data: Rc<WindowTabData>) -> impl View {
+pub(super) fn variables_view(window_tab_data: Rc<WindowTabData>) -> impl View {
     let terminal = window_tab_data.terminal.clone();
     let local_terminal = window_tab_data.terminal.clone();
     let ui_line_height = window_tab_data.common.ui_line_height;
@@ -358,7 +61,11 @@ fn variables_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                         if process_stopped {
                             return DapVariable::default();
                         }
-                        dap.variables.get()
+                        let mut values = dap.variables.get();
+                        if terminal.common.debugger_settings.get().sort_variables {
+                            crate::debug_settings::sort_variables(&mut values);
+                        }
+                        values
                     })
                     .unwrap_or_default()
                 },
@@ -378,6 +85,7 @@ fn variables_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                     let name = node.item.name();
                     let ty = node.item.ty();
                     let type_exists = ty.map(|ty| !ty.is_empty()).unwrap_or(false);
+                    let has_value = node.item.value().is_some();
                     stack((
                         svg(move || {
                             let config = config.get();
@@ -409,7 +117,7 @@ fn variables_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                                 })
                         }),
                         text(format!(" = {}", node.item.value().unwrap_or("")))
-                            .style(move |s| s.apply_if(reference > 0, |s| s.hide())),
+                            .style(move |s| s.apply_if(!has_value, |s| s.hide())),
                     ))
                     .on_click_stop(move |_| {
                         if reference > 0 {
@@ -465,181 +173,7 @@ fn variables_view(window_tab_data: Rc<WindowTabData>) -> impl View {
     })
 }
 
-fn debug_stack_frames(
-    dap_id: DapId,
-    thread_id: ThreadId,
-    stack_trace: StackTraceData,
-    stopped: RwSignal<bool>,
-    internal_command: Listener<InternalCommand>,
-    config: ReadSignal<Arc<SparrowConfig>>,
-) -> impl View {
-    let expanded = stack_trace.expanded;
-    stack((
-        container(label(move || thread_id.to_string()))
-            .on_click_stop(move |_| {
-                expanded.update(|expanded| {
-                    *expanded = !*expanded;
-                });
-            })
-            .style(move |s| {
-                s.padding_horiz(10.0).min_width_pct(100.0).hover(move |s| {
-                    s.cursor(CursorStyle::Pointer).background(
-                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-            }),
-        dyn_stack(
-            move || {
-                let expanded = stack_trace.expanded.get() && stopped.get();
-                if expanded {
-                    stack_trace.frames.get()
-                } else {
-                    im::Vector::new()
-                }
-            },
-            |frame| frame.id,
-            move |frame| {
-                let full_path = frame.source.as_ref().and_then(|s| s.path.clone());
-                let line = frame.line.saturating_sub(1);
-                let col = frame.column.saturating_sub(1);
-
-                let source_path = frame
-                    .source
-                    .as_ref()
-                    .and_then(|s| s.path.as_ref())
-                    .and_then(|p| p.file_name())
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                let has_source = !source_path.is_empty();
-                let source_path = format!("{source_path}:{}", frame.line);
-
-                container(stack((
-                    label(move || frame.name.clone()).style(move |s| {
-                        s.hover(|s| {
-                            s.background(
-                                config
-                                    .get()
-                                    .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                            )
-                        })
-                    }),
-                    label(move || source_path.clone()).style(move |s| {
-                        s.margin_left(10.0)
-                            .color(config.get().color(SparrowColor::EDITOR_DIM))
-                            .font_style(FontStyle::Italic)
-                            .apply_if(!has_source, |s| s.hide())
-                    }),
-                )))
-                .on_click_stop(move |_| {
-                    if let Some(path) = full_path.clone() {
-                        internal_command.send(InternalCommand::JumpToLocation {
-                            location: EditorLocation {
-                                path,
-                                position: Some(EditorPosition::Position(
-                                    lsp_types::Position {
-                                        line: line as u32,
-                                        character: col as u32,
-                                    },
-                                )),
-                                scroll_offset: None,
-                                ignore_unconfirmed: false,
-                                same_editor_tab: false,
-                            },
-                        });
-                    }
-                    internal_command.send(InternalCommand::DapFrameScopes {
-                        dap_id,
-                        frame_id: frame.id,
-                    });
-                })
-                .style(move |s| {
-                    let config = config.get();
-                    s.padding_left(20.0)
-                        .padding_right(10.0)
-                        .min_width_pct(100.0)
-                        .apply_if(!has_source, |s| {
-                            s.color(config.color(SparrowColor::EDITOR_DIM))
-                        })
-                        .hover(|s| {
-                            s.background(
-                                config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                            )
-                            .apply_if(has_source, |s| s.cursor(CursorStyle::Pointer))
-                        })
-                })
-            },
-        )
-        .style(|s| s.flex_col().min_width_pct(100.0)),
-    ))
-    .style(|s| s.flex_col().min_width_pct(100.0))
-}
-
-fn debug_stack_traces(
-    terminal: TerminalPanelData,
-    internal_command: Listener<InternalCommand>,
-    config: ReadSignal<Arc<SparrowConfig>>,
-) -> impl View {
-    container(
-        scroll({
-            let local_terminal = terminal.clone();
-            dyn_stack(
-                move || {
-                    let dap = local_terminal.get_active_dap(true);
-                    if let Some(dap) = dap {
-                        let process_stopped = local_terminal
-                            .get_terminal(&dap.term_id)
-                            .and_then(|t| {
-                                t.run_debug.with(|r| r.as_ref().map(|r| r.stopped))
-                            })
-                            .unwrap_or(
-                                local_terminal.debug.active_dap.get()
-                                    != Some(dap.dap_id),
-                            );
-                        if process_stopped {
-                            return Vec::new();
-                        }
-                        let main_thread = dap.thread_id.get();
-                        let stack_traces = dap.stack_traces.get();
-                        let mut traces = stack_traces
-                            .into_iter()
-                            .map(|(thread_id, stack_trace)| {
-                                (dap.dap_id, dap.stopped, thread_id, stack_trace)
-                            })
-                            .collect::<Vec<_>>();
-                        traces.sort_by_key(|(_, _, id, _)| main_thread != Some(*id));
-                        traces
-                    } else {
-                        Vec::new()
-                    }
-                },
-                |(dap_id, stopped, thread_id, _)| {
-                    (*dap_id, *thread_id, stopped.get_untracked())
-                },
-                move |(dap_id, stopped, thread_id, stack_trace)| {
-                    debug_stack_frames(
-                        dap_id,
-                        thread_id,
-                        stack_trace,
-                        stopped,
-                        internal_command,
-                        config,
-                    )
-                },
-            )
-            .style(|s| s.flex_col().min_width_pct(100.0))
-        })
-        .style(|s| s.absolute().size_pct(100.0, 100.0)),
-    )
-    .style(|s| {
-        s.width_pct(100.0)
-            .line_height(1.6)
-            .flex_grow(1.0f32)
-            .flex_basis(0.0)
-    })
-}
-
-fn breakpoints_view(window_tab_data: Rc<WindowTabData>) -> impl View {
+pub(super) fn breakpoints_view(window_tab_data: Rc<WindowTabData>) -> impl View {
     let breakpoints = window_tab_data.terminal.debug.breakpoints;
     let config = window_tab_data.common.config;
     let workspace = window_tab_data.common.workspace.clone();
@@ -749,15 +283,17 @@ fn breakpoints_view(window_tab_data: Rc<WindowTabData>) -> impl View {
                         )
                     })
                     .on_click_stop(move |_| {
-                        internal_command.send(InternalCommand::JumpToLocation {
-                            location: EditorLocation {
-                                path: full_path_for_jump.clone(),
-                                position: Some(EditorPosition::Line(line)),
-                                scroll_offset: None,
-                                ignore_unconfirmed: false,
-                                same_editor_tab: false,
+                        internal_command.send(
+                            InternalCommand::DebugJumpToLocation {
+                                location: EditorLocation {
+                                    path: full_path_for_jump.clone(),
+                                    position: Some(EditorPosition::Line(line)),
+                                    scroll_offset: None,
+                                    ignore_unconfirmed: false,
+                                    same_editor_tab: false,
+                                },
                             },
-                        });
+                        );
                     })
                 },
             )

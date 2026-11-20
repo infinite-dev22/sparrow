@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     collections::{BTreeMap, HashMap},
     path::PathBuf,
     rc::Rc,
@@ -62,8 +63,47 @@ pub struct RunDebugConfigs {
     pub configs: Vec<RunDebugConfig>,
 }
 
+/// Bounded output buffer. Adapter events may contain partial lines.
+#[derive(Clone, Default)]
+pub struct DebugConsole {
+    pub lines: im::Vector<String>,
+    partial: String,
+}
+
+impl DebugConsole {
+    pub fn append(&mut self, output: &str) {
+        for segment in output.split_inclusive('\n') {
+            self.partial.push_str(segment);
+            if self.partial.ends_with('\n') {
+                self.lines.push_back(std::mem::take(&mut self.partial)
+                    .trim_end_matches(['\r', '\n']).to_owned());
+            }
+        }
+        // Bound both completed lines and output without line breaks.
+        if self.partial.len() > 64 * 1024 {
+            self.lines.push_back(std::mem::take(&mut self.partial));
+        }
+        while self.lines.len() > 5000 { self.lines.pop_front(); }
+    }
+
+    pub fn rows(&self) -> im::Vector<String> {
+        let mut rows = self.lines.clone();
+        if !self.partial.is_empty() { rows.push_back(self.partial.clone()); }
+        rows
+    }
+
+    pub fn text(&self) -> String {
+        let mut lines = self.lines.iter().cloned().collect::<Vec<_>>();
+        if !self.partial.is_empty() { lines.push(self.partial.clone()); }
+        lines.join("\n")
+    }
+}
+
 #[derive(Clone)]
 pub struct RunDebugData {
+    /// Console output is isolated by adapter session, including completed sessions.
+    pub console_output: RwSignal<im::HashMap<DapId, DebugConsole>>,
+    pub muted: RwSignal<bool>,
     pub active_term: RwSignal<Option<TermId>>,
     /// Stable UI session IDs for adapters that launch without a PTY.
     pub adapter_sessions: RwSignal<HashMap<DapId, (TermId, RunDebugProcess)>>,
@@ -84,6 +124,8 @@ impl RunDebugData {
 
         Self {
             active_term,
+            muted: cx.create_rw_signal(false),
+            console_output: cx.create_rw_signal(im::HashMap::new()),
             adapter_sessions: cx.create_rw_signal(HashMap::new()),
             active_dap: cx.create_rw_signal(None),
             daps,
@@ -101,7 +143,7 @@ impl RunDebugData {
                     breakpoints
                         .iter()
                         .filter_map(|(_, b)| {
-                            if b.active {
+                            if b.active && !self.muted.get_untracked() {
                                 Some(SourceBreakpoint {
                                     line: b.line + 1,
                                     column: None,
@@ -191,14 +233,34 @@ pub struct DapVariable {
     pub children_expanded_count: usize,
 }
 
+/// Invalidates outstanding variable reads when the selected frame or session changes.
+#[derive(Clone, Default)]
+pub(crate) struct VariableRequests(Rc<Cell<u64>>);
+
+impl VariableRequests {
+    pub(crate) fn invalidate(&self) {
+        self.0.set(self.0.get().wrapping_add(1));
+    }
+
+    pub(crate) fn capture(&self) -> impl Fn() -> bool + use<> {
+        let epoch = self.0.clone();
+        let expected = epoch.get();
+        move || epoch.get() == expected
+    }
+}
+
 #[derive(Clone)]
 pub struct DapData {
     pub term_id: TermId,
     pub dap_id: DapId,
     pub stopped: RwSignal<bool>,
     pub thread_id: RwSignal<Option<ThreadId>>,
+    pub selected_frame: RwSignal<Option<StackFrame>>,
+    pub pause_generation: RwSignal<u64>,
     pub stack_traces: RwSignal<BTreeMap<ThreadId, StackTraceData>>,
+    pub evaluation: crate::debug_evaluate::Evaluations,
     pub variables_id: RwSignal<usize>,
+    pub(crate) variable_requests: VariableRequests,
     pub variables: RwSignal<DapVariable>,
     pub breakline: Memo<Option<(usize, PathBuf)>>,
     pub common: Rc<CommonData>,
@@ -213,9 +275,14 @@ impl DapData {
     ) -> Self {
         let stopped = cx.create_rw_signal(false);
         let thread_id = cx.create_rw_signal(None);
+        let selected_frame: RwSignal<Option<StackFrame>> = cx.create_rw_signal(None);
         let stack_traces: RwSignal<BTreeMap<ThreadId, StackTraceData>> =
             cx.create_rw_signal(BTreeMap::new());
         let breakline = cx.create_memo(move |_| {
+            if let Some(frame) = selected_frame.get() {
+                return frame.source.and_then(|source| source.path)
+                    .map(|path| (frame.line.saturating_sub(1), path));
+            }
             let thread_id = thread_id.get();
             if let Some(thread_id) = thread_id {
                 let trace = stack_traces
@@ -243,8 +310,12 @@ impl DapData {
             dap_id,
             stopped,
             thread_id,
+            selected_frame,
+            pause_generation: cx.create_rw_signal(0),
             stack_traces,
+            evaluation: crate::debug_evaluate::Evaluations::new(cx),
             variables_id: cx.create_rw_signal(0),
+            variable_requests: VariableRequests::default(),
             variables: cx.create_rw_signal(DapVariable {
                 item: ScopeOrVar::Scope(dap_types::Scope::default()),
                 parent: Vec::new(),
@@ -265,6 +336,9 @@ impl DapData {
         stack_traces: &HashMap<ThreadId, Vec<StackFrame>>,
         variables: &[(dap_types::Scope, Vec<Variable>)],
     ) {
+        self.variable_requests.invalidate();
+        self.selected_frame.set(None);
+        self.pause_generation.update(|value| *value = value.wrapping_add(1));
         self.stopped.set(true);
         self.thread_id.update(|thread_id| {
             *thread_id = Some(stopped.thread_id.unwrap_or_default());
@@ -281,7 +355,7 @@ impl DapData {
                         frame.source.as_ref().and_then(|source| source.path.clone())
                     {
                         self.common.internal_command.send(
-                            InternalCommand::JumpToLocation {
+                            InternalCommand::DebugJumpToLocation {
                                 location: EditorLocation {
                                     path,
                                     position: Some(EditorPosition::Line(
@@ -342,6 +416,16 @@ impl DapData {
                 .map(|v| v.children_expanded_count + 1)
                 .sum::<usize>();
         });
+        self.refresh_watches();
+    }
+
+    /// Retire suspended state and all pending reads without changing other sessions.
+    pub(crate) fn clear_pause(&self) {
+        self.variable_requests.invalidate();
+        self.evaluation.clear_results();
+        self.stopped.set(false);
+        self.thread_id.set(None);
+        self.selected_frame.set(None);
     }
 
     pub fn toggle_expand(&self, parent: Vec<usize>, reference: usize) {
@@ -370,8 +454,12 @@ impl DapData {
         let root = self.variables;
         let parent = parent.to_vec();
         let variables_id = self.variables_id;
+        let is_current = self.variable_requests.capture();
 
         let send = create_ext_action(self.common.scope, move |result| {
+            if !is_current() {
+                return;
+            }
             if let Ok(ProxyResponse::DapVariableResponse { variables }) = result {
                 variables_id.update(|id| {
                     *id += 1;
@@ -528,7 +616,36 @@ impl DapVariable {
 mod tests {
     use sparrow_rpc::dap_types::{Scope, Variable};
 
-    use super::{DapVariable, ScopeOrVar};
+    use super::{DapVariable, ScopeOrVar, VariableRequests};
+
+    #[test]
+    fn variable_reads_reject_out_of_order_frames_and_retired_pauses() {
+        let requests = VariableRequests::default();
+        let first_frame = requests.capture();
+        let first_child = requests.capture();
+        requests.invalidate(); // Selecting a second stack frame.
+        let second_frame = requests.capture();
+        assert!(!first_frame());
+        assert!(!first_child());
+        assert!(second_frame());
+        requests.invalidate(); // Resume, stop, close, or rerun.
+        assert!(!second_frame());
+        let next_pause = requests.capture();
+        assert!(next_pause());
+        assert!(!first_frame());
+    }
+
+    #[test]
+    fn variable_reads_are_independent_between_sessions() {
+        let first = VariableRequests::default();
+        let second = VariableRequests::default();
+        let first_reply = first.capture();
+        let second_reply = second.capture();
+        first.invalidate();
+        assert!(!first_reply());
+        assert!(second_reply());
+    }
+
 
     #[test]
     fn test_update_count() {
@@ -798,4 +915,32 @@ pub fn debug_floating_toolbar(
             })
             .pointer_events_none() // Let clicks pass through the empty space around the pill
     })
+}
+
+#[cfg(test)]
+mod console_tests {
+    use super::DebugConsole;
+
+    #[test]
+    fn joins_partial_output_and_preserves_blank_lines() {
+        let mut console = DebugConsole::default();
+        console.append("Build");
+        console.append("ing...\r\n\nLaun");
+        console.append("ched\n");
+        assert_eq!(console.text(), "Building...\n\nLaunched");
+    }
+
+    #[test]
+    fn output_is_bounded_and_sessions_are_independent() {
+        let mut first = DebugConsole::default();
+        let mut second = DebugConsole::default();
+        for i in 0..5010 { first.append(&format!("{i}\n")); }
+        second.append("other session\n");
+        assert_eq!(first.lines.len(), 5000);
+        assert_eq!(first.lines.front().map(String::as_str), Some("10"));
+        assert_eq!(second.text(), "other session");
+        first = DebugConsole::default();
+        assert!(first.text().is_empty());
+        assert_eq!(second.text(), "other session");
+    }
 }

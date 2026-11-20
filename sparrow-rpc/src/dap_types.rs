@@ -1100,3 +1100,31 @@ mod ordered_task_tests {
 }
 
 #[cfg(test)]mod preset_adapter_tests {use super::*;#[test]fn test_adapters_use_the_sdk_test_mode(){for (kind,program,command)in[("flutter-test","flutter","debug-adapter"),("dart-test","dart","debug_adapter")]{let config:RunDebugConfig=serde_json::from_value(serde_json::json!({"type":kind,"name":"Tests","program":program,"args":["test"]})).unwrap();assert!(config.is_dart_flutter());assert_eq!(config.dart_debug_adapter().unwrap().args.unwrap(),vec![command.to_string(),"--test".to_string()]);}}}
+
+/// Per-project debugger preferences shared by the UI and SDK adapter launcher.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct DebuggerSettings {
+    pub preview_files: bool,
+    pub inline_values: bool,
+    pub sort_variables: bool,
+    pub unmute_on_finish: bool,
+    pub value_renderers: bool,
+    pub debug_sdk: bool,
+    pub debug_external: bool,
+}
+impl Default for DebuggerSettings {
+    fn default() -> Self { Self { preview_files: true, inline_values: true,
+        sort_variables: false, unmute_on_finish: true, value_renderers: true,
+        debug_sdk: false, debug_external: false } }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum DebugAction {
+    Evaluate { expression: String, frame_id: usize, request_id: u64, watch: bool },
+    ForceStep { thread_id: ThreadId, into: bool },
+    StepTargets { frame_id: usize, generation: u64 },
+    StepIntoTarget { thread_id: ThreadId, target_id: usize },
+    UpdateOptions { debug_sdk: bool, debug_external: bool },
+}

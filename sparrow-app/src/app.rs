@@ -700,9 +700,11 @@ impl AppData {
                     }
                 }
             })
+            .on_event_stop(EventListener::WindowLostFocus, move |_| { crate::ui_test_guard::focus(false); })
             .on_event_stop(EventListener::WindowResized, move |event| {
                 if let Event::WindowResized(size) = event {
                     window_size.set(*size);
+                    crate::ui_test_guard::size(size.width, size.height);
                 }
             })
             .on_event_stop(EventListener::WindowMoved, move |event| {
@@ -711,6 +713,7 @@ impl AppData {
                 }
             })
             .on_event_stop(EventListener::WindowGotFocus, move |_| {
+                crate::ui_test_guard::focus(true);
                 app_command.send(AppCommand::WindowGotFocus(window_id));
             })
             .on_event_stop(EventListener::WindowClosed, move |_| {

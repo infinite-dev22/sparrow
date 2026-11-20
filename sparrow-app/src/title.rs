@@ -446,15 +446,29 @@ fn right(
     let run_state = hot_reload.state;
     let is_running =
         move || run_state.get() == crate::dart::FlutterRunState::Running;
+    let debug_sessions = window_tab_data.terminal.clone();
+    let debug_target = create_memo(move |_| {
+        let selected = debug_sessions.debug.active_term.get();
+        let sessions = debug_sessions.run_debug_process(true);
+        sessions.iter().filter(|(_, p)| p.mode == RunDebugMode::Debug && !p.stopped)
+            .find(|(id, _)| Some(*id) == selected)
+            .or_else(|| sessions.iter().rev().find(|(_, p)| p.mode == RunDebugMode::Debug && !p.stopped))
+            .map(|(id, _)| (*id, debug_sessions.get_dap(*id, true).is_some_and(|dap| dap.stopped.get())))
+    });
+    let debugging = create_memo(move |_| debug_target.get().is_some());
     let run_button = {
         let wt_data = window_tab_data.clone();
         tooltip_label(
             config,
-            container(svg(move || config.get().ui_svg(SparrowIcons::START)).style(
+            container(svg(move || config.get().ui_svg(if debugging.get() {
+                if debug_target.get().is_some_and(|(_, paused)| paused) {
+                    SparrowIcons::DEBUG_CONTINUE
+                } else { SparrowIcons::DEBUG_PAUSE }
+            } else { SparrowIcons::START })).style(
                 move |s| {
                     let c = config.get();
                     let size = c.ui.icon_size() as f32;
-                    s.size(size, size).color(if is_running() {
+                    s.size(size, size).color(if is_running() && !debugging.get() {
                         Color::WHITE
                     } else {
                         c.color(SparrowColor::SPARROW_RUN_ICON)
@@ -462,13 +476,16 @@ fn right(
                 },
             ))
             .on_click_stop(move |_| {
-                wt_data.launch_selected_configuration(RunDebugMode::Run)
+                if let Some((id, paused)) = debug_target.get_untracked() {
+                    if paused { wt_data.terminal.dap_continue(id); }
+                    else { wt_data.terminal.dap_pause(id); }
+                } else { wt_data.launch_selected_configuration(RunDebugMode::Run) }
             })
             .style(move |s| {
                 s.padding(4.0)
                     .margin_horiz(2.0)
                     .border_radius(4.0)
-                    .apply_if(is_running(), |s| {
+                    .apply_if(is_running() && !debugging.get(), |s| {
                         s.background(Color::from_rgb8(0x2D, 0x85, 0x50))
                     })
                     .hover(|s| {
@@ -479,7 +496,11 @@ fn right(
                         )
                     })
             }),
-            || "Run (Shift+F10)",
+            move || match debug_target.get() {
+                Some((_, true)) => "Resume Debugger",
+                Some((_, false)) => "Pause Debugger",
+                None => "Run (Shift+F10)",
+            },
         )
     };
 
@@ -489,23 +510,32 @@ fn right(
         container(svg(move || config.get().ui_svg(SparrowIcons::DEBUG)).style(
             move |s| {
                 s.size(16.0, 16.0)
-                    .color(config.get().color(SparrowColor::SPARROW_DEBUG_ICON))
+                    .color(if debugging.get() { Color::WHITE } else {
+                        config.get().color(SparrowColor::SPARROW_DEBUG_ICON)
+                    })
             },
         ))
         .on_click_stop(move |_| {
-            debug_window.launch_selected_configuration(RunDebugMode::Debug)
+            if let Some((id, _)) = debug_target.get_untracked() {
+                debug_window.terminal.focus_terminal_in_panel(id, crate::panel::kind::PanelKind::Debug);
+                debug_window.panel.show_panel(&crate::panel::kind::PanelKind::Debug);
+            } else {
+                debug_window.launch_selected_configuration(RunDebugMode::Debug)
+            }
         })
         .style(move |s| {
             s.padding(4.0)
                 .border_radius(4.0)
+                .apply_if(debugging.get(), |s| s.background(Color::from_rgb8(45, 133, 80)))
                 .cursor(CursorStyle::Pointer)
                 .hover(|s| {
                     s.background(
-                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                        if debugging.get() { Color::from_rgb8(45, 133, 80) }
+                        else { config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND) },
                     )
                 })
         }),
-        || "Debug (Shift+F9)",
+        move || if debugging.get() { "Show Debug Session" } else { "Debug (Shift+F9)" },
     );
 
     let terminal = window_tab_data.terminal.clone();

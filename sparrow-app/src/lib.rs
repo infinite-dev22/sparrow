@@ -8,6 +8,8 @@ pub mod completion;
 pub mod config;
 pub mod db;
 pub mod debug;
+mod debug_settings;
+mod debug_evaluate;
 pub mod doc;
 pub mod editor;
 pub mod editor_tab;
@@ -80,3 +82,5 @@ pub mod git_actions;
 pub mod dropdown;
 
 pub mod background_tasks;
+
+mod ui_test_guard;
