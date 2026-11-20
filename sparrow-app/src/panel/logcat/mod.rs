@@ -1,6 +1,7 @@
 //! Android device logs: independent streams, bounded storage and structured filters.
 mod archive;
 mod format;
+mod gradle;
 mod lifecycle;
 mod model;
 mod query;
@@ -19,7 +20,10 @@ use query::Query;
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -34,6 +38,7 @@ struct Saved {
     wraps: Vec<bool>,
     compacts: Vec<bool>,
     files: Vec<std::path::PathBuf>,
+    variant: String,
     // Older TOML serializers require arrays of tables after scalar fields.
     formats: Vec<format::Formatting>,
 }
@@ -48,6 +53,7 @@ impl Default for Saved {
             wraps: Vec::new(),
             compacts: Vec::new(),
             formats: Vec::new(),
+            variant: String::new(),
             files: Vec::new(),
         }
     }
@@ -76,6 +82,8 @@ struct Pane {
     file_path: RwSignal<Option<std::path::PathBuf>>,
     loading: RwSignal<bool>,
     tracker: Rc<RefCell<lifecycle::Tracker>>,
+    visible_count: RwSignal<usize>,
+    visible_packages: RwSignal<Vec<String>>,
 }
 impl Pane {
     fn data(id: u64, query: String) -> Self {
@@ -102,9 +110,16 @@ impl Pane {
             file_path: create_rw_signal(None),
             loading: create_rw_signal(false),
             tracker: Rc::new(RefCell::new(lifecycle::Tracker::default())),
+            visible_count: create_rw_signal(0),
+            visible_packages: create_rw_signal(Vec::new()),
         }
     }
-    fn new(id: u64, query: String, window: Rc<WindowTabData>) -> Self {
+    fn new(
+        id: u64,
+        query: String,
+        window: Rc<WindowTabData>,
+        packages: RwSignal<Vec<String>>,
+    ) -> Self {
         let pane = Self::data(id, query);
         clock(pane.clone());
         let p = pane.clone();
@@ -116,7 +131,14 @@ impl Pane {
         let p = pane.clone();
         let panel = window.panel.clone();
         let scope = Scope::current();
-        let workspace_root = window.workspace.path.clone();
+        let reset = pane.tracker.clone();
+        create_effect(move |previous: Option<Vec<String>>| {
+            let current = packages.get();
+            if previous.as_ref() != Some(&current) {
+                *reset.borrow_mut() = Default::default();
+            }
+            current
+        });
         create_effect(move |_| {
             tick.get();
             p.restart.get();
@@ -134,7 +156,6 @@ impl Pane {
             let busy = busy.clone();
             let p = p.clone();
             let expected = serial.clone();
-            let window_root = workspace_root.clone();
             let send = floem::ext_event::create_ext_action(
                 scope,
                 move |catalog: source::Catalog| {
@@ -162,7 +183,7 @@ impl Pane {
                             let markers = p.tracker.borrow_mut().observe(
                                 &expected,
                                 &catalog.processes,
-                                &source::packages(window_root.as_deref()),
+                                &packages.get_untracked(),
                             );
                             if !markers.is_empty() {
                                 p.data.update(|buffer| {
@@ -372,6 +393,11 @@ struct State {
     next: Rc<Cell<u64>>,
     saved: RwSignal<Saved>,
     packages: RwSignal<Vec<String>>,
+    model: RwSignal<gradle::Model>,
+    variant: RwSignal<String>,
+    syncing: RwSignal<bool>,
+    gradle_error: RwSignal<String>,
+    sync_cancel: Arc<AtomicBool>,
     split: RwSignal<bool>,
     import_path: RwSignal<String>,
     show_import: RwSignal<bool>,
@@ -392,11 +418,12 @@ impl State {
         } else {
             saved.queries.iter().take(8).cloned().collect()
         };
+        let packages = create_rw_signal(Vec::<String>::new());
         let panes = queries
             .into_iter()
             .enumerate()
             .map(|(i, q)| {
-                let pane = Pane::new(i as u64, q, window.clone());
+                let pane = Pane::new(i as u64, q, window.clone(), packages);
                 if let Some(serial) = saved.devices.get(i) {
                     pane.serial.set(serial.clone());
                 }
@@ -430,11 +457,14 @@ impl State {
                 pane
             })
             .collect::<Vec<_>>();
-        Self {
+        let state = Self {
             scope: Scope::current(),
-            packages: create_rw_signal(source::packages(
-                window.workspace.path.as_deref(),
-            )),
+            packages,
+            model: create_rw_signal(gradle::Model::default()),
+            variant: create_rw_signal(saved.variant.clone()),
+            syncing: create_rw_signal(false),
+            gradle_error: create_rw_signal(String::new()),
+            sync_cancel: Arc::new(AtomicBool::new(false)),
             next: Rc::new(Cell::new(panes.len() as u64)),
             panes: create_rw_signal(panes),
             active: create_rw_signal(0),
@@ -443,7 +473,88 @@ impl State {
             split: create_rw_signal(false),
             import_path: create_rw_signal(String::new()),
             show_import: create_rw_signal(false),
+        };
+        let selected = state.clone();
+        create_effect(move |_| {
+            let model = selected.model.get();
+            let variant = selected.variant.get();
+            let args = selected.run_args();
+            selected.packages.set(
+                if selected.syncing.get() || !selected.gradle_error.get().is_empty()
+                {
+                    Vec::new()
+                } else {
+                    model.packages(&variant, &args)
+                },
+            );
+        });
+        if state
+            .window
+            .workspace
+            .path
+            .as_deref()
+            .and_then(gradle::build_root)
+            .is_some()
+        {
+            state.sync_gradle(false);
         }
+        state
+    }
+    fn run_args(&self) -> Vec<String> {
+        let index = self.window.active_run_config_idx.get();
+        self.window.run_configs.with(|configs| {
+            configs
+                .get(index)
+                .and_then(|c| c.args.clone())
+                .unwrap_or_default()
+        })
+    }
+    fn sync_gradle(&self, force: bool) {
+        if self.syncing.get_untracked() {
+            return;
+        }
+        let Some(workspace) = self.window.workspace.path.clone() else {
+            return;
+        };
+        self.sync_cancel.store(false, Ordering::Release);
+        self.syncing.set(true);
+        self.gradle_error.set(String::new());
+        let task = self.window.common.background_tasks.begin(
+            "Syncing Android application variants",
+            Some(self.sync_cancel.clone()),
+        );
+        let state = self.clone();
+        let send = floem::ext_event::create_ext_action(
+            self.scope,
+            move |result: Result<gradle::Model, String>| {
+                if state.syncing.try_get_untracked().is_none() {
+                    return;
+                }
+                match result {
+                    Ok(model) => {
+                        state.model.set(model);
+                        state.gradle_error.set(String::new());
+                    }
+                    Err(error) => {
+                        state.model.set(Default::default());
+                        state.gradle_error.set(error);
+                    }
+                }
+                state.syncing.set(false);
+            },
+        );
+        let cancel = self.sync_cancel.clone();
+        std::thread::spawn(move || {
+            let _task = task;
+            let result = if !force {
+                gradle::cached(&workspace)
+                    .map(Ok)
+                    .unwrap_or_else(|| gradle::sync(&workspace, &cancel))
+            } else {
+                gradle::sync(&workspace, &cancel)
+            };
+            send(result);
+        });
     }
     fn remember(&self, query: &str, favorite: bool) {
         if query.trim().is_empty() {
@@ -467,6 +578,7 @@ impl State {
     fn save(&self) {
         if let Some(root) = self.window.workspace.path.as_ref() {
             let mut saved = self.saved.get_untracked();
+            saved.variant = self.variant.get_untracked();
             saved.queries = self.panes.with_untracked(|p| {
                 p.iter().map(|p| p.query.get_untracked()).collect()
             });
@@ -499,7 +611,12 @@ impl State {
         let id = self.next.get();
         self.next.set(id + 1);
         let pane = floem::reactive::with_scope(self.scope, || {
-            Pane::new(id, "package:mine".into(), self.window.clone())
+            Pane::new(
+                id,
+                "package:mine".into(),
+                self.window.clone(),
+                self.packages,
+            )
         });
         self.panes.update(|p| p.push(pane));
         self.active.set(id);
@@ -519,7 +636,7 @@ impl State {
         let id = self.next.get();
         self.next.set(id + 1);
         let pane = floem::reactive::with_scope(self.scope, || {
-            Pane::new(id, String::new(), self.window.clone())
+            Pane::new(id, String::new(), self.window.clone(), self.packages)
         });
         pane.load_file(path, self.window.clone(), None);
         self.panes.update(|panes| panes.push(pane));
@@ -576,6 +693,7 @@ mod persistence_tests {
     #[test]
     fn mixed_live_and_offline_tabs_round_trip_toml() {
         let saved = Saved {
+            variant: ":app/prodFullRelease".into(),
             files: vec![Default::default(), "/tmp/capture.json".into()],
             queries: vec!["package:mine".into(), "level:ERROR".into()],
             formats: vec![
@@ -586,6 +704,7 @@ mod persistence_tests {
         };
         let text = toml::to_string_pretty(&saved).unwrap();
         let restored: Saved = toml::from_str(&text).unwrap();
+        assert_eq!(restored.variant, saved.variant);
         assert_eq!(restored.files, saved.files);
         assert_eq!(restored.formats, saved.formats);
         assert_eq!(restored.queries, saved.queries);

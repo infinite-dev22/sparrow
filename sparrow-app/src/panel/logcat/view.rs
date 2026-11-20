@@ -17,8 +17,8 @@ use floem::{
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
     style::CursorStyle,
     views::{
-        Decorators, dyn_container, dyn_stack, empty, label, scroll, stack, svg,
-        virtual_stack,
+        Decorators, TooltipExt, dyn_container, dyn_stack, empty, label, scroll,
+        stack, svg, virtual_stack,
     },
 };
 use std::sync::Arc;
@@ -29,11 +29,13 @@ pub(super) fn panel(state: State) -> impl View {
     crate::ui_test_guard::observe_logcat(move || {
         serde_json::json!({
             "active":observed.active.get(),"split":observed.split.get(),
+            "run_configuration":observed.window.run_configs.with(|c|c.get(observed.window.active_run_config_idx.get()).map(|c|c.name.clone())),
+            "packages":observed.packages.get(),"variant":observed.variant.get(),"variants":observed.model.with(|m|m.variants.clone()),"gradle_syncing":observed.syncing.get(),"gradle_error":observed.gradle_error.get(),
             "panes":observed.panes.with(|panes|panes.iter().map(|p|serde_json::json!({
                 "id":p.id,"query":p.query.get(),"serial":p.serial.get(),"paused":p.paused.get(),
                 "follow":p.follow.get(),"wrap":p.wrap.get(),"compact":p.compact.get(),
                 "records":p.data.with(|b|b.entries.len()),"snapshot_records":p.frozen.with(|r|r.len()),"last_id":p.data.with(|b|b.entries.back().map(|e|e.id)),"snapshot_last_id":p.frozen.with(|r|r.last().map(|e|e.id)),
-                "error":p.error.get(),"query_valid":p.parsed.with(|q|q.is_ok()),
+                "error":p.error.get(),"query_valid":p.parsed.with(|q|q.is_ok()),"visible_count":p.visible_count.get(),"visible_packages":p.visible_packages.get(),
                 "file":p.file_path.get(),"loading":p.loading.get(),"format":p.format.get(),"markers":p.data.with(|b|b.entries.iter().filter(|e|e.marker).map(|e|e.message.clone()).collect::<Vec<_>>()),
                 "devices":p.catalog.with(|c|c.devices.iter().map(|d|serde_json::json!({"serial":d.serial,"ready":d.ready})).collect::<Vec<_>>())
             })).collect::<Vec<_>>())
@@ -235,8 +237,12 @@ pub(super) fn panel(state: State) -> impl View {
             .min_height(0.0)
             .width_full()
     });
-    stack((header, import_bar, body))
+    let variants = variant_bar(state.clone());
+    stack((header, import_bar, variants, body))
         .on_cleanup(move || {
+            cleanup
+                .sync_cancel
+                .store(true, std::sync::atomic::Ordering::Release);
             cleanup.save();
             for pane in cleanup.panes.get_untracked() {
                 pane.close();
@@ -312,6 +318,100 @@ fn history(state: State, pane: Pane, suggestions: bool) -> Menu {
         remove.saved.update(|s| s.history.clear());
         remove.save();
     }))
+}
+#[derive(Clone)]
+struct VariantChoice(String);
+impl std::fmt::Display for VariantChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            f.write_str("Follow run configuration")
+        } else {
+            f.write_str(&self.0)
+        }
+    }
+}
+fn variant_bar(state: State) -> impl View {
+    let config = state.window.common.config;
+    let model = state.model;
+    let choices_state = state.clone();
+    let choices = dyn_container(
+        move || model.get().variants,
+        move |variants| {
+            let current = create_rw_signal(VariantChoice(
+                choices_state.variant.get_untracked(),
+            ));
+            let mut items = vec![VariantChoice(String::new())];
+            items.extend(variants.into_iter().map(|v| VariantChoice(v.key())));
+            let state = choices_state.clone();
+            crate::dropdown::dropdown(current, items, config)
+                .on_accept(move |choice| {
+                    current.set(choice.clone());
+                    state.variant.set(choice.0);
+                    state.save();
+                })
+                .style(|s| s.width(280.0).max_width_full().flex_shrink(1.0_f32))
+        },
+    );
+    let summary = state.clone();
+    let details = state.clone();
+    let refresh = state.clone();
+    let busy = state.syncing;
+    let exists = state
+        .window
+        .workspace
+        .path
+        .as_deref()
+        .and_then(super::gradle::build_root)
+        .is_some();
+    stack((
+        label(|| "Variant:").style(|s| s.flex_shrink(0.0_f32)),
+        choices,
+        label(move || {
+            if summary.syncing.get() {
+                return "Syncing Gradle variants…".into();
+            }
+            let error = summary.gradle_error.get();
+            if !error.is_empty() {
+                return error.lines().next().unwrap_or("Gradle sync failed").into();
+            }
+            let packages = summary.packages.get();
+            if packages.is_empty() {
+                "No matching variant; select a variant or sync Gradle".into()
+            } else {
+                packages.join(", ")
+            }
+        })
+        .style(|s| s.text_ellipsis().min_width(0.0).flex_grow(1.0_f32))
+        .tooltip(move || {
+            let error = details.gradle_error.get();
+            scroll(label(move || {
+                if error.is_empty() {
+                    details.packages.get().join(", ")
+                } else {
+                    error.clone()
+                }
+            }))
+            .style(|s| s.max_width(650.0).max_height(300.0))
+        }),
+        clickable_icon(
+            || SparrowIcons::LOGCAT_REFRESH,
+            move || refresh.sync_gradle(true),
+            || false,
+            move || busy.get(),
+            || "Sync Gradle variants",
+            config,
+        ),
+    ))
+    .style(move |s| {
+        s.width_full()
+            .min_width(0.0)
+            .height(36.0)
+            .items_center()
+            .gap(8.0)
+            .padding_horiz(10.0)
+            .flex_shrink(0.0_f32)
+            .apply_if(!exists, |s| s.hide())
+    })
 }
 fn formatting_menu(pane: Pane, state: State) -> Menu {
     let mut menu = Menu::new("Logcat formatting");
@@ -578,15 +678,12 @@ fn pane_view(state: State, pane: Pane) -> impl View {
     });
     let sync = state.clone();
     let mine_q = pane.query;
+    let package_syncing = state.syncing;
     let package_warning = stack((
-        label(|| "⚠ Could not detect project package names. Is the project synced?")
+        label(|| "⚠ Select a build variant or sync Gradle to resolve package:mine.")
             .style(|s| s.flex_grow(1.0_f32).min_width(0.0).text_ellipsis()),
         label(|| "Sync now")
-            .on_click_stop(move |_| {
-                sync.packages.set(super::source::packages(
-                    sync.window.workspace.path.as_deref(),
-                ))
-            })
+            .on_click_stop(move |_| sync.sync_gradle(true))
             .style(move |s| {
                 s.color(config.get().color(SparrowColor::EDITOR_LINK))
                     .cursor(CursorStyle::Pointer)
@@ -599,7 +696,8 @@ fn pane_view(state: State, pane: Pane) -> impl View {
             .padding_horiz(12.0)
             .background(Color::from_rgb8(69, 51, 29))
             .apply_if(
-                !packages.with(|p| p.is_empty())
+                package_syncing.get()
+                    || !packages.with(|p| p.is_empty())
                     || !mine_q.with(|q| q.contains("package:mine")),
                 |s| s.hide(),
             )
@@ -641,6 +739,22 @@ fn pane_view(state: State, pane: Pane) -> impl View {
             })
             .collect::<Vec<_>>()
     });
+    if std::env::var_os("SPARROW_WAYLAND_GUARD").is_some() {
+        let count = pane.visible_count;
+        let packages = pane.visible_packages;
+        floem::reactive::create_effect(move |_| {
+            shown.with(|rows| {
+                count.set(rows.len());
+                packages.set(
+                    rows.iter()
+                        .map(|e| e.package.clone())
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .into_iter()
+                        .collect(),
+                );
+            });
+        });
+    }
     let pause = pane.clone();
     let clear_p = pane.clone();
     let restart_pane = pane.clone();

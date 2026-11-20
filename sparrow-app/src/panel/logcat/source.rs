@@ -207,55 +207,6 @@ pub fn discover(serial: &str) -> Catalog {
         error: String::new(),
     }
 }
-pub fn packages(root: Option<&Path>) -> Vec<String> {
-    let Some(root) = root else { return Vec::new() };
-    let mut packages = std::collections::BTreeSet::new();
-    let re=regex::Regex::new(r#"(?:applicationId\s*(?:=\s*)?|package\s*=\s*)["']([a-zA-Z][a-zA-Z0-9_.]+)["']"#).unwrap();
-    for path in [
-        "android/app/build.gradle",
-        "android/app/build.gradle.kts",
-        "app/build.gradle",
-        "app/build.gradle.kts",
-        "android/app/src/main/AndroidManifest.xml",
-        "app/src/main/AndroidManifest.xml",
-    ] {
-        if let Ok(text) = std::fs::read_to_string(root.join(path)) {
-            for c in re.captures_iter(&text) {
-                packages.insert(c[1].into());
-            }
-        }
-    }
-    for path in [
-        "build/app/outputs/apk/debug/output-metadata.json",
-        "android/app/build/outputs/apk/debug/output-metadata.json",
-        "app/build/outputs/apk/debug/output-metadata.json",
-    ] {
-        if let Ok(text) = std::fs::read_to_string(root.join(path)) {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                if let Some(id) = value["applicationId"].as_str() {
-                    packages.insert(id.into());
-                }
-            }
-        }
-    }
-    packages.into_iter().collect()
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn detects_flutter_kotlin_application_id() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(root.path().join("android/app")).unwrap();
-        std::fs::write(
-            root.path().join("android/app/build.gradle.kts"),
-            "defaultConfig { applicationId = \"io.sparrow.test\" }",
-        )
-        .unwrap();
-        assert_eq!(packages(Some(root.path())), vec!["io.sparrow.test"]);
-    }
-}
-
 #[cfg(all(test, target_os = "linux"))]
 mod stream_tests {
     use super::*;
