@@ -69,6 +69,21 @@ use crate::{
     workspace::SparrowWorkspace,
 };
 
+// Editor painting uses document coordinates; the scroll view applies the
+// viewport translation. Gutter overlays apply that translation themselves.
+fn breakpoint_backgrounds<'a>(
+    lines: &'a ScreenLines,
+    points: &'a BTreeMap<usize, SparrowBreakpoint>,
+    viewport: Rect,
+    line_height: f64,
+) -> impl Iterator<Item = Rect> + 'a {
+    lines.iter_lines_y().filter_map(move |(line, y)| {
+        points.get(&line).filter(|point| point.active).map(|_| {
+            Rect::new(viewport.x0, y, viewport.x1, y + line_height)
+        })
+    })
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct StickyHeaderInfo {
     pub sticky_lines: Vec<usize>,
@@ -1297,9 +1312,16 @@ impl View for EditorView {
         // within the active screen lines without issue.
         let screen_lines = ed.screen_lines.get_untracked();
         self.paint_current_line(cx, is_local, &screen_lines);
-        if let Some(path)=doc.content.with_untracked(|c|c.path().cloned()) {
-            let points=e_data.common.breakpoints.with_untracked(|all|all.get(&path).cloned().unwrap_or_default());
-            for (line,y) in screen_lines.iter_lines_y(){if points.get(&line).is_some_and(|b|b.active){cx.fill(&Rect::new(viewport.x0,y-viewport.y0,viewport.x1,y-viewport.y0+config.editor.line_height()as f64),config.color(SparrowColor::DEBUG_BREAKPOINT).with_alpha(0.18),0.0);}}
+        if let Some(path) = doc.content.with_untracked(|content| content.path().cloned()) {
+            e_data.common.breakpoints.with_untracked(|all| {
+                if let Some(points) = all.get(&path) {
+                    for rect in breakpoint_backgrounds(
+                        &screen_lines, points, viewport, config.editor.line_height() as f64,
+                    ) {
+                        cx.fill(&rect, config.color(SparrowColor::DEBUG_BREAKPOINT).with_alpha(0.18), 0.0);
+                    }
+                }
+            });
         }
         FloemEditorView::paint_selection(cx, ed, &screen_lines);
         let screen_lines = ed.screen_lines.get_untracked();
@@ -3105,4 +3127,39 @@ fn inspection_widget(
             .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
             .apply_if(diagnostics.with(|d| d.is_empty()), |s| s.hide())
     })
+}
+
+#[cfg(test)]
+mod breakpoint_background_tests {
+    use super::*;
+    use floem::reactive::Scope;
+    use floem::views::editor::{view::LineInfo, visual_line::VLineInfo};
+    use std::collections::HashMap;
+
+    #[test]
+    fn breakpoint_background_stays_on_its_document_line_when_scrolled() {
+        let scope = Scope::new();
+        let rvline = RVLine::new(20, 0);
+        let points = BTreeMap::from([(20, SparrowBreakpoint {
+            id: None, verified: false, message: None, line: 20, offset: 0,
+            dap_line: None, active: true,
+        })]);
+        for scroll_y in [0.0, 100.0, 200.5, 415.0] {
+            let viewport = Rect::new(30.0, scroll_y, 830.0, scroll_y + 600.0);
+            let mut lines = ScreenLines::new(scope, viewport);
+            lines.lines = Rc::new(vec![rvline]);
+            lines.info = Rc::new(HashMap::from([(rvline, LineInfo {
+                y: 420.0 - scroll_y, vline_y: 420.0 - scroll_y,
+                vline_info: VLineInfo::new(0..1, rvline, 1, ()),
+            })]));
+            let rects = breakpoint_backgrounds(&lines, &points, viewport, 21.0).collect::<Vec<_>>();
+            assert_eq!(rects, vec![Rect::new(30.0, 420.0, 830.0, 441.0)]);
+            // After the scroll view's translation the fill and text share a top edge.
+            assert_eq!(rects[0].y0 - scroll_y, lines.info(rvline).unwrap().y - scroll_y);
+            let mut inactive = points.clone();
+            inactive.get_mut(&20).unwrap().active = false;
+            assert_eq!(breakpoint_backgrounds(&lines, &inactive, viewport, 21.0).count(), 0);
+        }
+        scope.dispose();
+    }
 }
