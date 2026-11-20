@@ -12,6 +12,7 @@ struct Guard {
     width: f64,
     height: f64,
     debug: serde_json::Value,
+    logcat: serde_json::Value,
 }
 thread_local! { static GUARD: RefCell<Option<Guard>> = const { RefCell::new(None) }; }
 
@@ -27,6 +28,7 @@ pub fn start() {
             width: 0.0,
             height: 0.0,
             debug: serde_json::Value::Null,
+            logcat: serde_json::Value::Null,
         })
     });
     pulse();
@@ -56,7 +58,7 @@ fn write() {
         let Some(state) = state.as_ref() else { return };
         let temporary = state.path.with_extension("tmp");
         let json = serde_json::json!({"pid":std::process::id(), "focused":state.focused,
-            "width":state.width, "height":state.height, "debug":state.debug,
+            "width":state.width, "height":state.height, "debug":state.debug, "logcat":state.logcat,
             "time":SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs_f64()});
         if std::fs::write(&temporary, json.to_string()).is_ok() { let _ = std::fs::rename(temporary, &state.path); }
     });
@@ -105,6 +107,16 @@ pub fn observe(window: std::rc::Rc<crate::window_tab::WindowTabData>) {
                 state.debug = snapshot;
             }
         });
+        write();
+    });
+}
+
+/// Read-only observations for portal-driven Logcat checks; disabled in normal launches.
+pub fn observe_logcat(snapshot: impl Fn() -> serde_json::Value + 'static) {
+    if std::env::var_os("SPARROW_WAYLAND_GUARD").is_none() { return; }
+    floem::reactive::create_effect(move |_| {
+        let value=snapshot();
+        GUARD.with(|state|if let Some(state)=state.borrow_mut().as_mut(){state.logcat=value;});
         write();
     });
 }

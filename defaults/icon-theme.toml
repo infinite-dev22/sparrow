@@ -4,6 +4,13 @@
 name = "sparrow Modern"
 
 [icon-theme.ui]
+"logcat.filter" = "filter.svg"
+"logcat.clear" = "trash-2.svg"
+"logcat.refresh" = "refresh-cw.svg"
+"logcat.copy" = "copy.svg"
+"logcat.export" = "download.svg"
+"logcat.device" = "smartphone.svg"
+"logcat.wrap" = "logcat-wrap.svg"
 # ── Branding ─────────────────────────────────────────────────────────────
 "logo"           = "sparrow_logo.svg"
 "menu"           = "menu.svg"                    # Lucide: menu

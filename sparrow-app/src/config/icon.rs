@@ -94,6 +94,14 @@ impl SparrowIcons {
     pub const LAYOUT_PANEL: &'static str = "layout.panel.on";
     pub const LAYOUT_PANEL_OFF: &'static str = "layout.panel.off";
 
+    pub const LOGCAT_FILTER: &'static str = "logcat.filter";
+    pub const LOGCAT_CLEAR: &'static str = "logcat.clear";
+    pub const LOGCAT_REFRESH: &'static str = "logcat.refresh";
+    pub const LOGCAT_COPY: &'static str = "logcat.copy";
+    pub const LOGCAT_EXPORT: &'static str = "logcat.export";
+    pub const LOGCAT_DEVICE: &'static str = "logcat.device";
+    pub const LOGCAT_WRAP: &'static str = "logcat.wrap";
+
     pub const SEARCH: &'static str = "search.icon";
     pub const SEARCH_CLEAR: &'static str = "search.clear";
     pub const SEARCH_FORWARD: &'static str = "search.forward";
