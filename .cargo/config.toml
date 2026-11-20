@@ -10,3 +10,6 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 inherits  = "dev"
 opt-level = 0
 debug     = false
+
+[build]
+rustflags = ["-C", "target-cpu=native"]
