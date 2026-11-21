@@ -759,7 +759,7 @@ impl SparrowConfig {
     }
 
     pub fn terminal_font_family(&self) -> &str {
-        if self.terminal.font_family.is_empty() {
+        if self.terminal.font_family.trim().is_empty() {
             self.editor.font_family.as_str()
         } else {
             self.terminal.font_family.as_str()
@@ -787,7 +787,7 @@ impl SparrowConfig {
             // Prevent overlapping lines
             (line_height.round() as usize).max(font_size)
         } else {
-            self.editor.line_height()
+            self.editor.line_height().max(font_size)
         }
     }
 

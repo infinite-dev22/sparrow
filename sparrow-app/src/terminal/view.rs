@@ -4,7 +4,10 @@ use alacritty_terminal::{
     grid::Dimensions,
     index::Side,
     selection::{Selection, SelectionType},
-    term::{RenderableContent, cell::Flags, test::TermSize},
+    term::{
+        MIN_COLUMNS, MIN_SCREEN_LINES, RenderableContent, cell::Flags,
+        test::TermSize,
+    },
 };
 use floem::{
     Renderer, View, ViewId,
@@ -18,7 +21,7 @@ use floem::{
     pointer::PointerInputEvent,
     prelude::SignalTrack,
     reactive::{ReadSignal, RwSignal, SignalGet, SignalWith, create_effect},
-    text::{Attrs, AttrsList, FamilyOwned, TextLayout, Weight},
+    text::{Attrs, AttrsList, Style, TextLayout, Weight},
     views::{
         Decorators,
         editor::{core::register::Clipboard, text::SystemClipboard},
@@ -29,9 +32,8 @@ use parking_lot::RwLock;
 use regex::Regex;
 use sparrow_core::mode::Mode;
 use sparrow_rpc::{proxy::ProxyRpcHandler, terminal::TermId};
-use unicode_width::UnicodeWidthChar;
 
-use super::{data::TerminalData, raw::RawTerminal};
+use super::{data::TerminalData, font::TerminalFont, raw::RawTerminal};
 use crate::{
     command::InternalCommand,
     config::{SparrowConfig, color::SparrowColor},
@@ -53,8 +55,8 @@ struct TerminalLineContent<'a> {
     y: f64,
     bg: Vec<(usize, usize, Color)>,
     underline: Vec<(usize, usize, Color, f64)>,
-    chars: Vec<(char, Attrs<'a>, f64, f64)>,
-    cursor: Option<(char, f64)>,
+    chars: Vec<(char, &'a [char], Attrs<'a>, f64)>,
+    cursor: Option<(f64, usize)>,
 }
 
 pub struct TerminalView {
@@ -63,6 +65,7 @@ pub struct TerminalView {
     raw: Arc<RwLock<RawTerminal>>,
     mode: ReadSignal<Mode>,
     size: Size,
+    font: TerminalFont,
     is_focused: bool,
     config: ReadSignal<Arc<SparrowConfig>>,
     proxy: ProxyRpcHandler,
@@ -115,7 +118,9 @@ pub fn terminal_view(
     });
 
     // for rust, dart, toml, etc.
-    let reg = regex::Regex::new(r"[\w\\/.-]+\.(?:dart|rs|toml|js|ts|json):\d+(?::\d+)?").unwrap();
+    let reg =
+        regex::Regex::new(r"[\w\\/.-]+\.(?:dart|rs|toml|js|ts|json):\d+(?::\d+)?")
+            .unwrap();
 
     TerminalView {
         id,
@@ -125,6 +130,7 @@ pub fn terminal_view(
         config,
         proxy,
         size: Size::ZERO,
+        font: TerminalFont::new(&config.get_untracked()),
         is_focused: false,
         launch_error,
         internal_command,
@@ -145,31 +151,24 @@ pub fn terminal_view(
 }
 
 impl TerminalView {
-    fn char_size(&self) -> Size {
-        let config = self.config.get_untracked();
-        let font_family = config.terminal_font_family();
-        let font_size = config.terminal_font_size();
-        let family: Vec<FamilyOwned> =
-            FamilyOwned::parse_list(font_family).collect();
-        let attrs = Attrs::new().family(&family).font_size(font_size as f32);
-        let attrs_list = AttrsList::new(attrs);
-        let mut text_layout = TextLayout::new();
-        text_layout.set_text("W", attrs_list, None);
-        text_layout.size()
-    }
-
-    fn terminal_size(&self) -> (usize, usize) {
-        let config = self.config.get_untracked();
-        let line_height = config.terminal_line_height() as f64;
-        let char_width = self.char_size().width;
-        let width = (self.size.width / char_width).floor() as usize;
-        let height = (self.size.height / line_height).floor() as usize;
-        (width.max(1), height.max(1))
+    fn resize_grid(&self) {
+        if self.size.is_zero_area() {
+            return;
+        }
+        let width =
+            ((self.size.width / self.font.cell_width) as usize).max(MIN_COLUMNS);
+        let height = ((self.size.height / self.font.line_height) as usize)
+            .max(MIN_SCREEN_LINES);
+        let mut raw = self.raw.write();
+        if (raw.term.columns(), raw.term.screen_lines()) != (width, height) {
+            raw.term.resize(TermSize::new(width, height));
+            self.proxy.terminal_resize(self.term_id, width, height);
+        }
     }
 
     fn click(&self, pos: Point) -> Option<()> {
-        let raw = self.raw.read();
         let position = self.get_terminal_point(pos);
+        let raw = self.raw.read();
         let start_point = raw.term.semantic_search_left(position);
         let end_point = raw.term.semantic_search_right(position);
         let mut selection =
@@ -310,10 +309,11 @@ impl TerminalView {
 
     fn get_terminal_point(&self, pos: Point) -> alacritty_terminal::index::Point {
         let raw = self.raw.read();
-        let col = (pos.x / self.char_size().width) as usize;
-        let line_no = pos.y as i32
-            / (self.config.get().terminal_line_height() as i32)
-            - raw.term.grid().display_offset() as i32;
+        let col =
+            ((pos.x / self.font.cell_width) as usize).min(raw.term.columns() - 1);
+        let row = ((pos.y / self.font.line_height) as usize)
+            .min(raw.term.screen_lines() - 1);
+        let line_no = row as i32 - raw.term.grid().display_offset() as i32;
         alacritty_terminal::index::Point::new(
             alacritty_terminal::index::Line(line_no),
             alacritty_terminal::index::Column(col),
@@ -324,19 +324,12 @@ impl TerminalView {
         &self,
         cx: &mut PaintCx,
         content: RenderableContent,
-        line_height: f64,
-        char_size: Size,
         config: &SparrowConfig,
     ) {
         let term_bg = config.color(SparrowColor::TERMINAL_BACKGROUND);
-
-        let font_size = config.terminal_font_size();
-        let font_family = config.terminal_font_family();
-        let family: Vec<FamilyOwned> =
-            FamilyOwned::parse_list(font_family).collect();
-        let attrs = Attrs::new().family(&family).font_size(font_size as f32);
-
-        let char_width = char_size.width;
+        let attrs = self.font.attrs();
+        let line_height = self.font.line_height;
+        let char_width = self.font.cell_width;
 
         let cursor_point = &content.cursor.point;
 
@@ -355,15 +348,8 @@ impl TerminalView {
             let x = point.column.0 as f64 * char_width;
             let y =
                 (point.line.0 as f64 + content.display_offset as f64) * line_height;
-            let char_y = y + (line_height - char_size.height) / 2.0;
             if y != line_content.y {
-                self.paint_line_content(
-                    cx,
-                    &line_content,
-                    line_height,
-                    char_width,
-                    config,
-                );
+                self.paint_line_content(cx, &line_content, config);
                 line_content.y = y;
                 line_content.bg.clear();
                 line_content.underline.clear();
@@ -399,35 +385,41 @@ impl TerminalView {
             }
 
             if cursor_point == &point {
-                line_content.cursor = Some((cell.c, x));
+                let columns = if cell.flags.contains(Flags::WIDE_CHAR) {
+                    2
+                } else {
+                    1
+                };
+                line_content.cursor = Some((x, columns));
             }
-
-            let bold = cell.flags.contains(Flags::BOLD)
-                || cell.flags.contains(Flags::DIM_BOLD);
 
             if &point == cursor_point && self.is_focused {
                 fg = term_bg;
             }
 
-            if cell.c != ' ' && cell.c != '\t' {
+            let marks = cell.zerowidth().unwrap_or_default();
+            if (cell.c != ' ' && cell.c != '\t') || !marks.is_empty() {
                 let mut attrs = attrs.clone().color(fg);
-                if bold {
+                if cell.flags.contains(Flags::BOLD) {
                     attrs = attrs.weight(Weight::BOLD);
                 }
-                line_content.chars.push((cell.c, attrs, x, char_y));
+                if cell.flags.contains(Flags::ITALIC) {
+                    attrs = attrs.style(Style::Italic);
+                }
+                line_content.chars.push((cell.c, marks, attrs, x));
             }
         }
-        self.paint_line_content(cx, &line_content, line_height, char_width, config);
+        self.paint_line_content(cx, &line_content, config);
     }
 
     fn paint_line_content(
         &self,
         cx: &mut PaintCx,
         line_content: &TerminalLineContent,
-        line_height: f64,
-        char_width: f64,
         config: &SparrowConfig,
     ) {
+        let char_width = self.font.cell_width;
+        let line_height = self.font.line_height;
         for (start, end, bg) in &line_content.bg {
             let rect = Size::new(
                 char_width * (end.saturating_sub(*start) as f64),
@@ -446,11 +438,10 @@ impl TerminalView {
             cx.fill(&rect, fg, 0.0);
         }
 
-        if let Some((c, x)) = line_content.cursor {
-            let rect =
-                Size::new(char_width * c.width().unwrap_or(1) as f64, line_height)
-                    .to_rect()
-                    .with_origin(Point::new(x, line_content.y));
+        if let Some((x, columns)) = line_content.cursor {
+            let rect = Size::new(char_width * columns as f64, line_height)
+                .to_rect()
+                .with_origin(Point::new(x, line_content.y));
             let mode = self.mode.get_untracked();
             let cursor_color = if mode == Mode::Terminal {
                 config.color(SparrowColor::TERMINAL_CURSOR)
@@ -464,14 +455,21 @@ impl TerminalView {
             }
         }
 
-        for (char, attr, x, y) in &line_content.chars {
-            let mut text_layout = TextLayout::new();
-            text_layout.set_text(
-                &char.to_string(),
-                AttrsList::new(attr.clone()),
+        let mut text = String::new();
+        for (ch, marks, attrs, x) in &line_content.chars {
+            text.clear();
+            text.push(*ch);
+            text.extend(*marks);
+            let layout = TextLayout::new_with_text(
+                &text,
+                AttrsList::new(attrs.clone()),
                 None,
             );
-            cx.draw_text(&text_layout, Point::new(*x, *y));
+            if let Some(run) = layout.layout_runs().next() {
+                // Keep fallback glyphs on the row's baseline as well.
+                let y = line_content.y + self.font.baseline - f64::from(run.line_y);
+                cx.draw_text(&layout, Point::new(*x, y));
+            }
         }
     }
 }
@@ -573,12 +571,17 @@ impl View for TerminalView {
     ) {
         if let Ok(state) = state.downcast() {
             match *state {
-                TerminalViewState::Config => {}
+                TerminalViewState::Config => {
+                    if self.font.update(&self.config.get_untracked()) {
+                        self.resize_grid();
+                    }
+                }
                 TerminalViewState::Focus(is_focused) => {
                     self.is_focused = is_focused;
                 }
                 TerminalViewState::Raw(raw) => {
                     self.raw = raw;
+                    self.resize_grid();
                 }
             }
             cx.app_state_mut().request_paint(self.id);
@@ -599,46 +602,36 @@ impl View for TerminalView {
         let layout = self.id.get_layout().unwrap_or_default();
         let size = layout.size;
         let size = Size::new(size.width as f64, size.height as f64);
-        if size.is_zero_area() {
-            return None;
-        }
         if size != self.size {
             self.size = size;
-            let (width, height) = self.terminal_size();
-            let term_size = TermSize::new(width, height);
-            self.raw.write().term.resize(term_size);
-            self.proxy.terminal_resize(self.term_id, width, height);
+            self.resize_grid();
         }
 
         None
     }
 
     fn paint(&mut self, cx: &mut floem::context::PaintCx) {
+        if self.font.set_scale(cx.scale()) {
+            self.resize_grid();
+        }
+
         let config = self.config.get_untracked();
         let mode = self.mode.get_untracked();
-        let line_height = config.terminal_line_height() as f64;
-        let font_family = config.terminal_font_family();
-        let font_size = config.terminal_font_size();
-        let char_size = self.char_size();
-        let char_width = char_size.width;
-
-        let family: Vec<FamilyOwned> =
-            FamilyOwned::parse_list(font_family).collect();
-        let attrs = Attrs::new().family(&family).font_size(font_size as f32);
+        let line_height = self.font.line_height;
+        let char_width = self.font.cell_width;
 
         if let Some(error) = self.launch_error.get() {
             let mut text_layout = TextLayout::new();
             text_layout.set_text(
                 &format!("Terminal failed to launch. Error: {error}"),
                 AttrsList::new(
-                    attrs.color(config.color(SparrowColor::EDITOR_FOREGROUND)),
+                    self.font
+                        .attrs()
+                        .color(config.color(SparrowColor::EDITOR_FOREGROUND)),
                 ),
                 None,
             );
-            cx.draw_text(
-                &text_layout,
-                Point::new(6.0, 0.0 + (line_height - char_size.height) / 2.0),
-            );
+            cx.draw_text(&text_layout, Point::new(6.0, 0.0));
             return;
         }
 
@@ -694,7 +687,7 @@ impl View for TerminalView {
             );
         }
 
-        self.paint_content(cx, content, line_height, char_size, &config);
+        self.paint_content(cx, content, &config);
         // if data.find.visual {
         //     if let Some(search_string) = data.find.search_string.as_ref() {
         //         if let Ok(dfas) = RegexSearch::new(&regex::escape(search_string)) {

@@ -939,6 +939,14 @@ pub fn launch() {
                 "../../extra/fonts/JetBrainsMono/JetBrainsMono-Italic.ttf"
             )
             .as_slice(),
+            include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-Medium.ttf")
+                .as_slice(),
+            include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-MediumItalic.ttf")
+                .as_slice(),
+            include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-Bold.ttf")
+                .as_slice(),
+            include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-BoldItalic.ttf")
+                .as_slice(),
         ] {
             FONT_SYSTEM
                 .lock()
