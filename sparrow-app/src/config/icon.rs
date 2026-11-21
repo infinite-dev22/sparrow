@@ -15,6 +15,7 @@ impl SparrowIcons {
     pub const REMOVE: &'static str = "minus";
     pub const CLOSE: &'static str = "close";
     pub const REMOTE: &'static str = "remote";
+    pub const INFO: &'static str = "info";
     pub const PROBLEM: &'static str = "error";
     pub const DEBUG: &'static str = "debug";
     pub const DEBUG_ALT: &'static str = "debug_alt";

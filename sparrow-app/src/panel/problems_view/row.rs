@@ -22,6 +22,26 @@ pub(super) fn row(
     let summary = issue.summary().to_owned();
     let description = issue.diagnostic.message.clone();
     let chosen = issue.clone();
+    let selected = move || selection.with(|item| item.as_ref() == Some(&chosen));
+    let focus = window.common.focus;
+    let selected_background = move |config: &crate::config::SparrowConfig| {
+        if focus.get() == Focus::Panel(PanelKind::Problems) {
+            config.color(SparrowColor::PANEL_SELECTION_BACKGROUND)
+        } else {
+            config.color(SparrowColor::PANEL_CURRENT_BACKGROUND)
+        }
+    };
+    let row_background = {
+        let selected = selected.clone();
+        move |config: &crate::config::SparrowConfig| {
+            if selected() {
+                selected_background(config)
+            } else {
+                config.color(SparrowColor::PANEL_BACKGROUND)
+            }
+        }
+    };
+    let icon_background = row_background.clone();
     let click_issue = issue.clone();
     let double_issue = issue.clone();
     let click_window = window.clone();
@@ -32,22 +52,17 @@ pub(super) fn row(
         }
     };
     let view = stack((
-        svg(move || {
-            config.get().ui_svg(match rank {
-                0 => SparrowIcons::ERROR,
-                1 => SparrowIcons::WARNING,
-                _ => SparrowIcons::LIGHTBULB,
-            })
-        })
-        .style(move |s| {
-            s.size(14.0, 14.0)
-                .color(config.get().color(match rank {
-                    0 => SparrowColor::SPARROW_ERROR,
-                    1 => SparrowColor::SPARROW_WARN,
-                    _ => SparrowColor::PANEL_FOREGROUND_DIM,
-                }))
-                .flex_shrink(0.0_f32)
-        }),
+        svg(move || config.get().ui_svg(colors::severity_icon(rank))).style(
+            move |s| {
+                let config = config.get();
+                s.size(14.0, 14.0)
+                    .color(colors::readable(
+                        colors::severity_color(&config, rank),
+                        icon_background(&config),
+                    ))
+                    .flex_shrink(0.0_f32)
+            },
+        ),
         label(move || summary.clone()).style(|s| s.min_width(0.0).text_ellipsis()),
         label(move || {
             if tab.get() == Tab::Inspection {
@@ -57,29 +72,42 @@ pub(super) fn row(
             }
         })
         .style(move |s| {
-            s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
-                .flex_shrink(0.0_f32)
+            let config = config.get();
+            s.color(colors::readable(
+                config.color(SparrowColor::PANEL_FOREGROUND_DIM),
+                row_background(&config),
+            ))
+            .font_size(12.0)
+            .flex_shrink(0.0_f32)
         }),
     ))
     .style(move |s| {
+        let config = config.get();
+        let is_selected = selected();
+        let background = selected_background(&config);
+        let foreground = config.color(SparrowColor::PANEL_FOREGROUND);
         s.height(23.0)
             .width_full()
             .min_width(0.0)
-            .padding_left(27.0)
+            .padding_left(25.0)
             .padding_right(7.0)
+            .border_left(2.0)
+            .border_color(floem::peniko::Color::TRANSPARENT)
             .items_center()
             .gap(5.0)
             .border_radius(4.0)
             .cursor(CursorStyle::Pointer)
-            .hover(|s| {
-                s.background(
-                    config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                )
+            .apply_if(!is_selected, |s| {
+                s.hover(|s| {
+                    s.background(
+                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                    )
+                })
             })
-            .apply_if(selection.with(|item| item.as_ref() == Some(&chosen)), |s| {
-                s.background(
-                    config.get().color(SparrowColor::PANEL_SELECTION_BACKGROUND),
-                )
+            .apply_if(is_selected, |s| {
+                s.background(background)
+                    .border_color(config.color(SparrowColor::EDITOR_LINK))
+                    .color(colors::readable(foreground, background))
             })
     })
     .on_click_stop(move |_| {

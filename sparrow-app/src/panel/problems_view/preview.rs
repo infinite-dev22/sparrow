@@ -13,10 +13,11 @@ use crate::{
     window_tab::WindowTabData,
 };
 
-use super::Issue;
+use super::{Issue, colors, rank};
 
 pub(super) fn editor_preview(window: Rc<WindowTabData>, issue: Issue) -> impl View {
     let config = window.common.config;
+    let severity = rank(&issue.diagnostic);
     let (doc, _) = window.main_split.get_doc(issue.path.clone(), None);
     let pending = !doc.loaded();
     let editor = EditorData::new_doc(
@@ -30,7 +31,10 @@ pub(super) fn editor_preview(window: Rc<WindowTabData>, issue: Issue) -> impl Vi
     editor.go_to_location(issue.location(true), pending, None);
     let editor = create_rw_signal(editor);
     read_only_editor_content(window, editor).style(move |s| {
+        let config = config.get();
         s.size_full()
-            .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
+            .border_top(2.0)
+            .border_color(colors::severity_color(&config, severity))
+            .background(config.color(SparrowColor::EDITOR_BACKGROUND))
     })
 }

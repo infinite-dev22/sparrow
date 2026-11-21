@@ -30,6 +30,7 @@ use crate::{
     window_tab::{Focus, WindowTabData},
 };
 
+mod colors;
 mod details;
 mod inspection;
 mod options;
@@ -469,9 +470,13 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             config,
         ),
     ))
-    .style(|s| {
+    .style(move |s| {
+        let config = config.get();
         s.width(34.0)
             .height_full()
+            .background(colors::surface(&config))
+            .border_right(1.0)
+            .border_color(config.color(SparrowColor::SPARROW_BORDER))
             .flex_col()
             .items_center()
             .gap(2.0)
@@ -480,168 +485,183 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
     });
 
     let rows_window = window.clone();
-    let list = sparrow_scroll(
-        dyn_stack(
-            move || groups.get().into_iter().enumerate(),
-            |(index, (group, rows))| {
-                (
-                    *index,
-                    group.clone(),
-                    rows.iter()
-                        .map(|issue| {
-                            (
-                                issue.path.clone(),
-                                issue.diagnostic.range.start,
-                                issue.diagnostic.range.end,
-                                issue.rule(),
-                                issue.diagnostic.message.clone(),
-                                rank(&issue.diagnostic),
-                                issue.offset,
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            },
-            move |(_, (group, rows))| {
-                let name = match &group {
-                    Group::File(path) => rows_window
-                        .workspace
-                        .path
-                        .as_deref()
-                        .and_then(|root| path.strip_prefix(root).ok())
-                        .unwrap_or(path)
-                        .display()
-                        .to_string(),
-                    Group::Rule(rule) => rule.replace('_', " "),
-                };
-                let count = rows.len();
-                let group_in_style = group.clone();
-                let group_in_click = group.clone();
-                let row_window = rows_window.clone();
-                stack((
-                    stack((
-                        svg(move || {
-                            config.get().ui_svg(
-                                if collapsed
-                                    .with(|closed| closed.contains(&group_in_style))
-                                {
-                                    SparrowIcons::ITEM_CLOSED
-                                } else {
-                                    SparrowIcons::ITEM_OPENED
-                                },
-                            )
-                        })
-                        .style(|s| s.size(14.0, 14.0)),
-                        label(move || name.clone())
-                            .style(|s| s.min_width(0.0).text_ellipsis().font_bold()),
-                        label(move || count.to_string()).style(move |s| {
-                            s.color(
-                                config
-                                    .get()
-                                    .color(SparrowColor::PANEL_FOREGROUND_DIM),
-                            )
-                        }),
-                    ))
-                    .style(|s| {
-                        s.height(24.0)
-                            .width_full()
-                            .items_center()
-                            .gap(7.0)
-                            .padding_horiz(8.0)
-                            .cursor(CursorStyle::Pointer)
-                    })
-                    .on_click_stop(move |_| {
-                        collapsed.update(|closed| {
-                            if !closed.remove(&group_in_click) {
-                                closed.insert(group_in_click.clone());
-                            }
-                        });
-                        if let Some(id) = view_id.get_untracked() {
-                            id.request_focus();
-                        }
-                    }),
-                    dyn_stack(
-                        move || {
-                            if collapsed.with(|closed| closed.contains(&group)) {
-                                Vec::new()
-                            } else {
-                                rows.clone()
-                            }
-                        },
-                        |issue| {
-                            (
-                                issue.path.clone(),
-                                issue.diagnostic.range.start,
-                                issue.diagnostic.range.end,
-                                issue.rule(),
-                                issue.diagnostic.message.clone(),
-                            )
-                        },
-                        move |issue| {
-                            row::row(
-                                row_window.clone(),
-                                issue,
-                                selection,
-                                excluded,
-                                options,
-                                view_id,
-                            )
-                        },
+    let list =
+        sparrow_scroll(
+            dyn_stack(
+                move || groups.get().into_iter().enumerate(),
+                |(index, (group, rows))| {
+                    (
+                        *index,
+                        group.clone(),
+                        rows.iter()
+                            .map(|issue| {
+                                (
+                                    issue.path.clone(),
+                                    issue.diagnostic.range.start,
+                                    issue.diagnostic.range.end,
+                                    issue.rule(),
+                                    issue.diagnostic.message.clone(),
+                                    rank(&issue.diagnostic),
+                                    issue.offset,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
                     )
-                    .style(|s| s.flex_col().width_full()),
-                ))
-                .style(|s| s.flex_col().width_full())
-            },
+                },
+                move |(_, (group, rows))| {
+                    let name = match &group {
+                        Group::File(path) => rows_window
+                            .workspace
+                            .path
+                            .as_deref()
+                            .and_then(|root| path.strip_prefix(root).ok())
+                            .unwrap_or(path)
+                            .display()
+                            .to_string(),
+                        Group::Rule(rule) => rule.replace('_', " "),
+                    };
+                    let counts = colors::counts(&rows);
+                    let group_in_style = group.clone();
+                    let group_in_click = group.clone();
+                    let row_window = rows_window.clone();
+                    stack((
+                        stack((
+                            svg(move || {
+                                config.get().ui_svg(
+                                    if collapsed.with(|closed| {
+                                        closed.contains(&group_in_style)
+                                    }) {
+                                        SparrowIcons::ITEM_CLOSED
+                                    } else {
+                                        SparrowIcons::ITEM_OPENED
+                                    },
+                                )
+                            })
+                            .style(|s| s.size(14.0, 14.0)),
+                            label(move || name.clone()).style(|s| {
+                                s.min_width(0.0)
+                                    .text_ellipsis()
+                                    .font_weight(floem::text::Weight(600))
+                            }),
+                            colors::badges(config, move || counts, true),
+                        ))
+                        .style(move |s| {
+                            let config = config.get();
+                            s.height(24.0)
+                                .width_full()
+                                .items_center()
+                                .gap(7.0)
+                                .padding_horiz(8.0)
+                                .padding_vert(2.0)
+                                .background(colors::surface(&config))
+                                .color(config.color(SparrowColor::PANEL_FOREGROUND))
+                                .cursor(CursorStyle::Pointer)
+                                .hover(|s| {
+                                    s.background(config.color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ))
+                                })
+                        })
+                        .on_click_stop(move |_| {
+                            collapsed.update(|closed| {
+                                if !closed.remove(&group_in_click) {
+                                    closed.insert(group_in_click.clone());
+                                }
+                            });
+                            if let Some(id) = view_id.get_untracked() {
+                                id.request_focus();
+                            }
+                        }),
+                        dyn_stack(
+                            move || {
+                                if collapsed.with(|closed| closed.contains(&group)) {
+                                    Vec::new()
+                                } else {
+                                    rows.clone()
+                                }
+                            },
+                            |issue| {
+                                (
+                                    issue.path.clone(),
+                                    issue.diagnostic.range.start,
+                                    issue.diagnostic.range.end,
+                                    issue.rule(),
+                                    issue.diagnostic.message.clone(),
+                                )
+                            },
+                            move |issue| {
+                                row::row(
+                                    row_window.clone(),
+                                    issue,
+                                    selection,
+                                    excluded,
+                                    options,
+                                    view_id,
+                                )
+                            },
+                        )
+                        .style(|s| s.flex_col().width_full()),
+                    ))
+                    .style(|s| s.flex_col().width_full())
+                },
+            )
+            .style(|s| s.flex_col().width_full()),
         )
-        .style(|s| s.flex_col().width_full()),
-    )
-    .scroll_to(move || {
-        let issue = selection.get()?;
-        let mut y = 0.0_f64;
-        for (group, rows) in groups.get() {
-            y += 24.0;
-            if !collapsed.with(|closed| closed.contains(&group)) {
-                if let Some(index) = rows.iter().position(|row| row == &issue) {
-                    return Some(
-                        (0.0, (y + index as f64 * 23.0 - 65.0).max(0.0)).into(),
-                    );
-                }
-                y += rows.len() as f64 * 23.0;
-            }
-        }
-        None
-    })
-    .style(move |s| {
-        s.size_full()
-            .apply_if(groups.with(|g| g.is_empty()), |s| s.hide())
-    });
-
-    let summary = label(move || {
-        let counts = groups.with(|groups| {
-            let mut counts = [0_u32; 4];
-            for (_, rows) in groups {
-                for issue in rows {
-                    counts[rank(&issue.diagnostic)] += 1;
+        .scroll_to(move || {
+            let issue = selection.get()?;
+            let mut y = 0.0_f64;
+            for (group, rows) in groups.get() {
+                y += 24.0;
+                if !collapsed.with(|closed| closed.contains(&group)) {
+                    if let Some(index) = rows.iter().position(|row| row == &issue) {
+                        return Some(
+                            (0.0, (y + index as f64 * 23.0 - 65.0).max(0.0)).into(),
+                        );
+                    }
+                    y += rows.len() as f64 * 23.0;
                 }
             }
-            counts
+            None
+        })
+        .style(move |s| {
+            s.size_full()
+                .apply_if(groups.with(|g| g.is_empty()), |s| s.hide())
         });
-        let breakdown = ["errors", "warnings", "information", "hints"]
-            .into_iter()
-            .zip(counts)
-            .filter(|(_, count)| *count != 0)
-            .map(|(severity, count)| format!("{count} {severity}"))
-            .collect::<Vec<_>>()
-            .join(" · ");
-        format!("Dart inspection  {breakdown}")
-    })
+
+    let summary = stack((
+        label(|| "Dart inspection")
+            .style(|s| s.font_weight(floem::text::Weight(600))),
+        colors::badges(
+            config,
+            move || {
+                groups.with(|groups| {
+                    let mut totals = [0; 4];
+                    for (_, rows) in groups {
+                        for (total, count) in
+                            totals.iter_mut().zip(colors::counts(rows))
+                        {
+                            *total += count;
+                        }
+                    }
+                    totals
+                })
+            },
+            false,
+        ),
+    ))
     .style(move |s| {
-        s.height(27.0)
+        let config = config.get();
+        s.min_height(28.0)
             .min_width(0.0)
             .padding_horiz(8.0)
+            .padding_vert(4.0)
             .items_center()
-            .text_ellipsis()
-            .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+            .flex_wrap(floem::style::FlexWrap::Wrap)
+            .gap(7.0)
+            .background(colors::surface(&config))
+            .color(config.color(SparrowColor::PANEL_FOREGROUND))
+            .border_bottom(1.0)
+            .border_color(config.color(SparrowColor::SPARROW_BORDER))
             .apply_if(
                 tab.get() != Tab::Inspection
                     || groups.with(|groups| groups.is_empty()),
@@ -785,7 +805,14 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         s.border_bottom(1.0)
             .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
     });
-    stack((header, content)).style(|s| s.absolute().size_full().flex_col())
+    stack((header, content)).style(move |s| {
+        let config = config.get();
+        s.absolute()
+            .size_full()
+            .flex_col()
+            .background(config.color(SparrowColor::PANEL_BACKGROUND))
+            .color(config.color(SparrowColor::PANEL_FOREGROUND))
+    })
 }
 
 fn empty_state(
@@ -829,13 +856,21 @@ fn empty_state(
             }),
         })
         .style(move |s| {
-            s.width_full()
-                .text_align(floem::text::Align::Center)
-                .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+            let config = config.get();
+            let tone = if tab.get() == Tab::Inspection
+                && report.with(|value| matches!(value, Report::Failed(_)))
+            {
+                config.color(SparrowColor::SPARROW_ERROR)
+            } else {
+                config.color(SparrowColor::PANEL_FOREGROUND_DIM)
+            };
+            s.width_full().text_align(floem::text::Align::Center).color(
+                colors::readable(tone, config.color(SparrowColor::PANEL_BACKGROUND)),
+            )
         }),
         crate::widgets::button(
             || "Inspect Code…",
-            crate::widgets::ButtonKind::Outlined,
+            crate::widgets::ButtonKind::Primary,
             config,
         )
         .on_click_stop(move |_| inspection.start(&start))

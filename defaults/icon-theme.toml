@@ -17,6 +17,7 @@ name = "sparrow Modern"
 "link"           = "link.svg"                    # Lucide: link
 "remote"         = "radio-tower.svg"             # Lucide: radio-tower
 "error"          = "circle-alert.svg"            # Lucide: circle-alert
+"info"           = "info.svg"
 "add"            = "plus.svg"                    # Lucide: plus
 "minus"          = "remove.svg"                # Lucide: remove
 "close"          = "x.svg"                       # Lucide: x

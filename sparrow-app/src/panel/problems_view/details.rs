@@ -24,7 +24,7 @@ use crate::{
     window_tab::WindowTabData,
 };
 
-use super::{Issue, jump, rank};
+use super::{Issue, colors, jump, rank};
 
 pub(super) fn details(
     window: Rc<WindowTabData>,
@@ -33,9 +33,8 @@ pub(super) fn details(
 ) -> impl View {
     let config = window.common.config;
     let message = issue.diagnostic.message.clone();
-    let severity =
-        ["Error", "Warning", "Information", "Hint"][rank(&issue.diagnostic)];
-    let metadata = format!("{severity} · {}", issue.rule());
+    let severity = rank(&issue.diagnostic);
+    let rule = issue.rule();
     let position = issue.diagnostic.range.start;
     let location = format!(
         "{}:{}:{}",
@@ -63,11 +62,31 @@ pub(super) fn details(
     let suppress_issue = issue.clone();
     sparrow_scroll(
         stack((
-            label(move || metadata.clone()).style(move |s| {
-                s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+            stack((
+                colors::badge(
+                    config,
+                    colors::severity_name(severity).to_owned(),
+                    severity,
+                ),
+                label(move || rule.clone()).style(move |s| {
+                    let config = config.get();
+                    s.min_width(0.0).text_ellipsis().color(colors::readable(
+                        config.color(SparrowColor::PANEL_FOREGROUND_DIM),
+                        colors::surface(&config),
+                    ))
+                }),
+            ))
+            .style(move |s| {
+                let config = config.get();
+                s.width_full()
+                    .items_center()
+                    .gap(8.0)
+                    .padding(6.0)
+                    .background(colors::surface(&config))
+                    .border_radius(5.0)
             }),
             stack((
-                button(|| "Quick Fixes…", ButtonKind::Outlined, config)
+                button(|| "Quick Fixes…", ButtonKind::Primary, config)
                     .on_click_stop(move |_| {
                         show_actions(
                             fix.clone(),
@@ -95,9 +114,15 @@ pub(super) fn details(
             label(|| "Problem details").style(|s| s.font_bold()),
             label(move || message.clone())
                 .style(|s| s.width_full().selectable(true)),
-            button(move || location.clone(), ButtonKind::Outlined, config)
+            button(move || location.clone(), ButtonKind::Plain, config)
                 .on_click_stop(move |_| jump(&open, &target, false))
-                .style(|s| s.max_width_full()),
+                .style(move |s| {
+                    let config = config.get();
+                    s.max_width_full().color(colors::readable(
+                        config.color(SparrowColor::EDITOR_LINK),
+                        config.color(SparrowColor::PANEL_BACKGROUND),
+                    ))
+                }),
             dyn_stack(
                 move || description.clone().into_iter(),
                 |url| url.clone(),
