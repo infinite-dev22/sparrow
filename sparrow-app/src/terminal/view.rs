@@ -9,7 +9,7 @@ use alacritty_terminal::{
 use floem::{
     Renderer, View, ViewId,
     context::{EventCx, PaintCx},
-    event::{Event, EventPropagation},
+    event::{Event, EventListener, EventPropagation},
     kurbo::Stroke,
     peniko::{
         Color,
@@ -19,7 +19,10 @@ use floem::{
     prelude::SignalTrack,
     reactive::{ReadSignal, RwSignal, SignalGet, SignalWith, create_effect},
     text::{Attrs, AttrsList, FamilyOwned, TextLayout, Weight},
-    views::editor::{core::register::Clipboard, text::SystemClipboard},
+    views::{
+        Decorators,
+        editor::{core::register::Clipboard, text::SystemClipboard},
+    },
 };
 use lsp_types::Position;
 use parking_lot::RwLock;
@@ -28,15 +31,12 @@ use sparrow_core::mode::Mode;
 use sparrow_rpc::{proxy::ProxyRpcHandler, terminal::TermId};
 use unicode_width::UnicodeWidthChar;
 
-use super::{panel::TerminalPanelData, raw::RawTerminal};
+use super::{data::TerminalData, raw::RawTerminal};
 use crate::{
     command::InternalCommand,
     config::{SparrowConfig, color::SparrowColor},
-    debug::RunDebugProcess,
     editor::location::{EditorLocation, EditorPosition},
     listener::Listener,
-    panel::kind::PanelKind,
-    window_tab::Focus,
     workspace::SparrowWorkspace,
 };
 
@@ -65,7 +65,6 @@ pub struct TerminalView {
     size: Size,
     is_focused: bool,
     config: ReadSignal<Arc<SparrowConfig>>,
-    run_config: ReadSignal<Option<RunDebugProcess>>,
     proxy: ProxyRpcHandler,
     launch_error: RwSignal<Option<String>>,
     internal_command: Listener<InternalCommand>,
@@ -75,18 +74,16 @@ pub struct TerminalView {
     current_mouse_action: MouseAction,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn terminal_view(
-    term_id: TermId,
-    raw: ReadSignal<Arc<RwLock<RawTerminal>>>,
-    mode: ReadSignal<Mode>,
-    run_config: ReadSignal<Option<RunDebugProcess>>,
-    terminal_panel_data: TerminalPanelData,
-    launch_error: RwSignal<Option<String>>,
-    internal_command: Listener<InternalCommand>,
-    workspace: Arc<SparrowWorkspace>,
-    focus_panel: PanelKind,
+    terminal: TerminalData,
+    focused: impl Fn() -> bool + 'static,
 ) -> TerminalView {
+    let term_id = terminal.term_id;
+    let raw = terminal.raw.read_only();
+    let mode = terminal.mode.read_only();
+    let launch_error = terminal.launch_error;
+    let internal_command = terminal.common.internal_command;
+    let workspace = terminal.workspace.clone();
     let id = ViewId::new();
 
     create_effect(move |_| {
@@ -99,25 +96,16 @@ pub fn terminal_view(
         id.request_paint();
     });
 
-    let config = terminal_panel_data.common.config;
+    let config = terminal.common.config;
     create_effect(move |_| {
         config.with(|_c| {});
         id.update_state(TerminalViewState::Config);
     });
 
-    let proxy = terminal_panel_data.common.proxy.clone();
+    let proxy = terminal.common.proxy.clone();
 
     create_effect(move |last| {
-        let focus = terminal_panel_data.common.focus.get();
-
-        let mut is_focused = false;
-        if focus == Focus::Panel(focus_panel) {
-            let tab = terminal_panel_data.active_tab(true);
-            if let Some(tab) = tab {
-                let terminal = tab.active_terminal(true);
-                is_focused = terminal.map(|t| t.term_id) == Some(term_id);
-            }
-        }
+        let is_focused = focused();
 
         if last != Some(is_focused) {
             id.update_state(TerminalViewState::Focus(is_focused));
@@ -136,7 +124,6 @@ pub fn terminal_view(
         mode,
         config,
         proxy,
-        run_config,
         size: Size::ZERO,
         is_focused: false,
         launch_error,
@@ -146,6 +133,15 @@ pub fn terminal_view(
         previous_mouse_action: Default::default(),
         current_mouse_action: Default::default(),
     }
+    .on_event(EventListener::PointerWheel, move |event| {
+        if let Event::PointerWheel(pointer) = event {
+            terminal.wheel_scroll(pointer.delta.y);
+            id.request_paint();
+            EventPropagation::Stop
+        } else {
+            EventPropagation::Continue
+        }
+    })
 }
 
 impl TerminalView {
@@ -457,13 +453,7 @@ impl TerminalView {
                     .with_origin(Point::new(x, line_content.y));
             let mode = self.mode.get_untracked();
             let cursor_color = if mode == Mode::Terminal {
-                if self.run_config.with_untracked(|run_config| {
-                    run_config.as_ref().map(|r| r.stopped).unwrap_or(false)
-                }) {
-                    config.color(SparrowColor::SPARROW_ERROR)
-                } else {
-                    config.color(SparrowColor::TERMINAL_CURSOR)
-                }
+                config.color(SparrowColor::TERMINAL_CURSOR)
             } else {
                 config.color(SparrowColor::EDITOR_CARET)
             };

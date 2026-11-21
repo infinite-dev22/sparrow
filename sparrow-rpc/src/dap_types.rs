@@ -173,7 +173,8 @@ impl Default for FlutterRunOptions {
 pub enum ConfigSource {
     #[default]
     Palette,
-    RunInTerminal,
+    #[serde(alias = "RunInTerminal")]
+    ProjectTask,
     CodeLens,
 }
 impl ConfigSource {

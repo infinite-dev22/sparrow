@@ -917,10 +917,11 @@ pub enum InternalCommand {
         mode: RunDebugMode,
         config: RunDebugConfig,
     },
-    RunProcessInTerminal {
+    RunProjectTask {
         program: String,
         args: Vec<String>,
         name: String,
+        cwd: Option<PathBuf>,
     },
     RequestSymbolRename { token:u64, preview:bool },
     PreparedRename {
@@ -1000,19 +1001,8 @@ pub enum InternalCommand {
         program: String,
         arguments: Vec<String>,
     },
-    ClearTerminalBuffer {
-        view_id: ViewId,
-        tab_index: usize,
-        terminal_index: usize,
-    },
     CallHierarchyIncoming {
         item_id: ViewId,
-    },
-    StopTerminal {
-        term_id: TermId,
-    },
-    RestartTerminal {
-        term_id: TermId,
     },
     FlutterRunTestAtCursor {
         term_id: TermId,

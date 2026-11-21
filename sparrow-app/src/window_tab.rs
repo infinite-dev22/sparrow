@@ -11,7 +11,6 @@ use std::{
     time::Instant,
 };
 
-use alacritty_terminal::vte::ansi::Handler;
 use floem::{
     ViewId,
     action::{TimerToken, open_file, remove_overlay},
@@ -781,32 +780,49 @@ impl WindowTabData {
             });
         }
 
-        // Terminal data owns the Flutter run session, independent of its view.
+        // Track the active Flutter application independently of console selection.
         {
             let terminal = window_tab_data.terminal.clone();
             let flutter = window_tab_data.flutter_hot_reload.clone();
             let inspector = window_tab_data.flutter_inspector.clone();
-            cx.create_effect(move |previous: Option<Option<sparrow_rpc::dap_types::DapId>>| {
-                let processes = terminal.run_debug_process(true);
-                let session = processes.iter().rev().find(|(_, process)| {
-                    !process.stopped
-                        && (!process.is_prelaunch || process.config.prelaunch.is_none())
-                        && crate::dart::run_config::is_flutter_target(&process.config)
-                });
-                let current = session.map(|(_, process)| process.config.dap_id);
-                if previous.flatten().is_some_and(|previous| Some(previous) != current) {
-                    flutter.ws_uri.set(None);
-                    inspector.disconnect();
-                }
-                if let Some((id, _)) = session {
-                    flutter.active_term.set(Some(*id));
-                    flutter.state.set(crate::dart::FlutterRunState::Running);
-                } else if flutter.active_term.get_untracked().is_some() {
-                    flutter.state.set(crate::dart::FlutterRunState::Idle);
-                    flutter.ws_uri.set(None);
-                }
-                current
-            });
+            cx.create_effect(
+                move |previous: Option<Option<sparrow_rpc::dap_types::DapId>>| {
+                    let processes = terminal.run_debug_process(true);
+                    let session = processes.iter().rev().find(|(_, process)| {
+                        !process.stopped
+                            && (!process.is_prelaunch
+                                || process.config.prelaunch.is_none())
+                            && match process.mode {
+                                RunDebugMode::Run => {
+                                    crate::dart::run_config::is_flutter_run(
+                                        &process.config,
+                                    )
+                                }
+                                RunDebugMode::Debug => {
+                                    crate::dart::run_config::is_flutter_target(
+                                        &process.config,
+                                    )
+                                }
+                            }
+                    });
+                    let current = session.map(|(_, process)| process.config.dap_id);
+                    if previous
+                        .flatten()
+                        .is_some_and(|previous| Some(previous) != current)
+                    {
+                        flutter.ws_uri.set(None);
+                        inspector.disconnect();
+                    }
+                    if let Some((id, _)) = session {
+                        flutter.active_term.set(Some(*id));
+                        flutter.state.set(crate::dart::FlutterRunState::Running);
+                    } else if flutter.active_term.get_untracked().is_some() {
+                        flutter.state.set(crate::dart::FlutterRunState::Idle);
+                        flutter.ws_uri.set(None);
+                    }
+                    current
+                },
+            );
         }
 
         // Only a run-state transition opens the console. Device discovery and
@@ -1102,21 +1118,22 @@ impl WindowTabData {
         {
             let hr = flutter_hot_reload.clone();
             cx.create_effect(move |_| {
-                // Track tab_info so this fires when tabs are added / removed /
-                // re-indexed.
-                let _ = hr.terminal.tab_info.get();
-
                 let Some(term_id) = hr.active_term.get() else {
                     return;
                 };
 
                 // Adapter-owned Flutter processes deliberately have no PTY.
                 // The adapter session model owns their lifetime and console.
-                if hr.terminal.debug.adapter_sessions.with(|sessions| {
-                    sessions.values().any(|(id, _)| *id == term_id)
-                }) { return; }
+                if hr
+                    .terminal
+                    .debug
+                    .adapter_sessions
+                    .with(|sessions| sessions.values().any(|(id, _)| *id == term_id))
+                {
+                    return;
+                }
 
-                match hr.terminal.get_terminal(&term_id) {
+                match hr.terminal.console_terminal(term_id, true) {
                     None => {
                         // Terminal was closed entirely — back to idle.
                         hr.active_term.set(None);
@@ -1622,7 +1639,20 @@ impl WindowTabData {
             // ==== File Explorer ====
             GitCommand => {let args=data.and_then(|d|serde_json::from_value::<Vec<String>>(d).ok()).unwrap_or_else(||vec!["status".into()]);self.git_actions.open("Command".into(),args);}
             FlutterProjectTask => {
-                if let Some(root)=self.workspace.path.as_deref(){if let Some(flutter)=crate::dart::sdk::find_flutter_binary(Some(root)) {let args=data.and_then(|d|serde_json::from_value::<Vec<String>>(d).ok()).unwrap_or_else(||vec!["build".into()]);self.common.internal_command.send(InternalCommand::NewTerminal{profile:Some(sparrow_rpc::terminal::TerminalProfile{name:format!("Flutter {}",args.join(" ")),command:Some(flutter.display().to_string()),arguments:Some(args),workdir:lsp_types::Url::from_directory_path(root).ok(),..Default::default()})});self.show_panel(PanelKind::Terminal);}else{self.show_alert("Flutter SDK".into(),"Configure a Flutter SDK to run project tasks.".into(),Vec::new());}}
+                if let Some(root) = self.workspace.path.as_deref() {
+                    if let Some(flutter) = crate::dart::sdk::find_flutter_binary(Some(root)) {
+                        let args = data.and_then(|data| serde_json::from_value::<Vec<String>>(data).ok())
+                            .unwrap_or_else(|| vec!["build".into()]);
+                        self.common.internal_command.send(InternalCommand::RunProjectTask {
+                            name: format!("Flutter {}", args.join(" ")),
+                            program: flutter.display().to_string(),
+                            args,
+                            cwd: Some(root.to_path_buf()),
+                        });
+                    } else {
+                        self.show_alert("Flutter SDK".into(), "Configure a Flutter SDK to run project tasks.".into(), Vec::new());
+                    }
+                }
             }
             SearchEverywhere | FindInFiles | ReplaceInFiles => {self.project_search.open(cmd==ReplaceInFiles,cmd==SearchEverywhere,data.and_then(|d|serde_json::from_value(d).ok()));}
             ReformatCodeOptions => {
@@ -1763,25 +1793,16 @@ impl WindowTabData {
 
             // ==== Running / Debugging ====
             RunAndDebugRestart => {
-                let active_term = self.terminal.debug.active_term.get_untracked();
-                if let Some(is_debug) = active_term
-                    .and_then(|term_id| self.terminal.restart_run_debug(term_id))
+                if let Some(is_debug) = self.active_execution_session()
+                    .and_then(|id| self.terminal.restart_run_debug(id))
                 {
-                    let panel = self.terminal.debug.active_term.get_untracked()
-                        .and_then(|id| self.terminal.get_terminal(&id))
-                        .and_then(|terminal| terminal.run_debug.get_untracked())
-                        .map(|process| crate::dart::run_config::console_panel(process.mode, &process.config))
-                        .unwrap_or(PanelKind::Terminal);
-                    self.panel.show_panel(&panel);
-                    if is_debug {
-                        self.panel.show_panel(&PanelKind::Debug);
-                    }
+                    self.panel.show_panel(&if is_debug { PanelKind::Debug } else { PanelKind::FlutterRun });
                 } else {
                     self.palette.run(PaletteKind::RunAndDebug);
                 }
             }
             RunAndDebugStop => {
-                let active = self.terminal.debug.active_term.get_untracked();
+                let active = self.active_execution_session();
                 let processes = self.terminal.run_debug_process(false);
                 let selected = self.run_configs.with_untracked(|configs| configs.get(self.active_run_config_idx.get_untracked()).map(|config| config.name.clone()));
                 let term_id = active.filter(|id| processes.iter().any(|(term, process)| term == id && !process.stopped))
@@ -2169,26 +2190,14 @@ impl WindowTabData {
                             Some(args)
                         };
 
-                        let config = RunDebugConfig {
-                            ty: None,
+                        self.terminal.new_tab(Some(sparrow_rpc::terminal::TerminalProfile {
                             name,
-                            program,
-                            args,
-                            cwd: None,
-                            env: None,
-                            prelaunch: None,
-                before_launch: Vec::new(),
-                store_in_project: false,
-                            flutter_options: Default::default(),
-                            debug_adapter: None,
-                            debug_command: None,
-                            dap_id: Default::default(),
-                            tracing_output: false,
-                            config_source: ConfigSource::RunInTerminal,
-                        };
-                        self.common
-                            .internal_command
-                            .send(InternalCommand::RunAndDebug { mode: RunDebugMode::Run, config });
+                            command: Some(program),
+                            arguments: args,
+                            workdir: self.workspace.path.as_deref().and_then(|root| lsp_types::Url::from_directory_path(root).ok()),
+                            ..Default::default()
+                        }));
+                        self.show_panel(PanelKind::Terminal);
                     }
                 }
             }
@@ -2536,52 +2545,50 @@ impl WindowTabData {
                     .proxy
                     .rename_path(current_path.clone(), new_path, send);
             }
-            InternalCommand::RunProcessInTerminal {
+            InternalCommand::RunProjectTask {
                 program,
                 args,
                 name,
+                cwd,
             } => {
-                use crate::debug::RunDebugMode;
-                use sparrow_rpc::dap_types::{ConfigSource, RunDebugConfig};
-                use std::time::Instant;
-
-                let cwd = self
-                    .common
-                    .workspace
-                    .path
-                    .as_ref()
-                    .and_then(|p| p.to_str().map(|s| s.to_string()));
-                let process = crate::debug::RunDebugProcess {
-                    mode: RunDebugMode::Run,
-                    config: RunDebugConfig {
-                        ty: None,
-                        name,
-                        program,
-                        args: Some(args),
-                        cwd,
-                        env: None,
-                        prelaunch: None,
-                before_launch: Vec::new(),
-                store_in_project: false,
-                        flutter_options: Default::default(),
-                        debug_adapter: None,
-                        debug_command: None,
-                        dap_id: Default::default(),
-                        tracing_output: false,
-                        config_source: ConfigSource::Palette,
-                    },
-                    stopped: false,
-                    created: Instant::now(),
-                    is_prelaunch: false,
-                };
-                let tab = self.terminal.new_tab_run_debug(Some(process), None);
-                if let Some(term) = tab.active_terminal(false) {
-                    self.terminal.debug.active_term.set(Some(term.term_id));
+                let root = cwd.as_deref().or(self.workspace.path.as_deref());
+                let program = match program.as_str() {
+                    "dart" => crate::dart::sdk::find_dart_binary(root),
+                    "flutter" => crate::dart::sdk::find_flutter_binary(root),
+                    _ => None,
                 }
-                self.show_panel(crate::panel::kind::PanelKind::Terminal);
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or(program);
+                let config = RunDebugConfig {
+                    name,
+                    program,
+                    args: Some(args),
+                    cwd: root.map(|path| path.to_string_lossy().into_owned()),
+                    config_source: ConfigSource::ProjectTask,
+                    dap_id: sparrow_rpc::dap_types::DapId::next(),
+                    ty: None,
+                    env: None,
+                    prelaunch: None,
+                    before_launch: Vec::new(),
+                    store_in_project: false,
+                    flutter_options: Default::default(),
+                    debug_adapter: None,
+                    debug_command: None,
+                    tracing_output: false,
+                };
+                self.start_process_console(
+                    self.scope,
+                    &RunDebugMode::Run,
+                    &config,
+                    false,
+                );
             }
-            InternalCommand::GitAction{title,args} => {self.git_actions.open(title,args);}
-            InternalCommand::NewScaffold {base,template} => {self.scaffold.open(base,template);}
+            InternalCommand::GitAction { title, args } => {
+                self.git_actions.open(title, args);
+            }
+            InternalCommand::NewScaffold { base, template } => {
+                self.scaffold.open(base, template);
+            }
             InternalCommand::FinishNewNode { is_dir, path } => {
                 let file_explorer = self.file_explorer.clone();
                 let internal_command = self.common.internal_command;
@@ -3081,51 +3088,6 @@ impl WindowTabData {
                     }
                 };
             }
-            InternalCommand::ClearTerminalBuffer {
-                view_id,
-                tab_index,
-                terminal_index,
-            } => {
-                let Some(tab) = self.terminal.tab_info.with_untracked(|x| {
-                    x.tabs.iter().find_map(|(index, data)| {
-                        if index.get_untracked() == tab_index {
-                            Some(data.clone())
-                        } else {
-                            None
-                        }
-                    })
-                }) else {
-                    error!("could not find terminal tab data: index={tab_index}");
-                    return;
-                };
-                let Some(raw) = tab.terminals.with_untracked(|x| {
-                    x.iter().find_map(|(index, data)| {
-                        if index.get_untracked() == terminal_index {
-                            Some(data.raw.get_untracked())
-                        } else {
-                            None
-                        }
-                    })
-                }) else {
-                    error!("could not find terminal data: index={terminal_index}");
-                    return;
-                };
-                raw.write().term.reset_state();
-                view_id.request_paint();
-            }
-            InternalCommand::StopTerminal { term_id } => {
-                self.terminal.stop_run_debug(term_id);
-            }
-            InternalCommand::RestartTerminal { term_id } => {
-                if let Some(is_debug) = self.terminal.restart_run_debug(term_id) {
-                    self.panel.show_panel(&PanelKind::Terminal);
-                    if is_debug {
-                        self.panel.show_panel(&PanelKind::Debug);
-                    }
-                } else {
-                    self.palette.run(PaletteKind::RunAndDebug);
-                }
-            }
             InternalCommand::CallHierarchyIncoming { item_id } => {
                 self.call_hierarchy_incoming(item_id);
             }
@@ -3173,30 +3135,24 @@ impl WindowTabData {
                         });
                     }
                 }
-                if self.terminal.debug.adapter_sessions.with_untracked(|sessions| sessions.contains_key(&dap_id)) {
-                    if let Some(output) = event.get("output").and_then(|v| v.as_str()) {
-                        self.flutter_hot_reload.run_logs.update(|logs| {
-                            for line in output.lines() { logs.push_back(line.to_owned()); }
-                            while logs.len() > 5000 { logs.pop_front(); }
-                        });
+                if event.get("type").and_then(|v| v.as_str()) == Some("terminated")
+                    && self.terminal.debug.adapter_sessions.with_untracked(|sessions| sessions.contains_key(dap_id))
+                {
+                    self.terminal.debug.adapter_sessions.update(|sessions| {
+                        if let Some((_, process)) = sessions.get_mut(&dap_id) { process.stopped = true; }
+                    });
+                    // A terminated adapter is no longer suspended. Clear the
+                    // pause state so floating controls and execution hints disappear.
+                    if let Some(dap) = self.terminal.debug.daps.with_untracked(|daps|daps.get(dap_id).cloned()) {
+                        dap.clear_pause();
                     }
-                    if event.get("type").and_then(|v| v.as_str()) == Some("terminated") {
-                        self.terminal.debug.adapter_sessions.update(|sessions| {
-                            if let Some((_, process)) = sessions.get_mut(&dap_id) { process.stopped = true; }
-                        });
-                        // A terminated adapter is no longer suspended. Clear the
-                        // pause state so floating controls and execution hints disappear.
-                        if let Some(dap) = self.terminal.debug.daps.with_untracked(|daps|daps.get(dap_id).cloned()) {
-                            dap.clear_pause();
-                        }
-                        if self.common.debugger_settings.get_untracked().unmute_on_finish {
-                            crate::debug_settings::set_muted(self, false);
-                        }
-                        if self.terminal.debug.active_dap.get_untracked() == Some(*dap_id) {
-                            self.terminal.debug.active_dap.set(None);
-                        }
-                        crate::debug_settings::refresh(&self.terminal);
+                    if self.common.debugger_settings.get_untracked().unmute_on_finish {
+                        crate::debug_settings::set_muted(self, false);
                     }
+                    if self.terminal.debug.active_dap.get_untracked() == Some(*dap_id) {
+                        self.terminal.debug.active_dap.set(None);
+                    }
+                    crate::debug_settings::refresh(&self.terminal);
                 }
             }
             CoreNotification::FlutterTestEvent { dap_id, event } => {
@@ -3316,14 +3272,41 @@ impl WindowTabData {
                     if self.panel.is_panel_visible(&PanelKind::Terminal) {
                         self.panel.hide_panel(&PanelKind::Terminal);
                     }
-                    self.common.focus.set(Focus::Workbench);
+                    if self.common.focus.get_untracked()
+                        == Focus::Panel(PanelKind::Terminal)
+                    {
+                        self.common.focus.set(Focus::Workbench);
+                    }
                 }
             }
             CoreNotification::TerminalLaunchFailed { term_id, error } => {
                 self.terminal.launch_failed(term_id, error);
             }
             CoreNotification::RunInTerminal { config } => {
-                self.run_in_terminal(cx, &RunDebugMode::Debug, config, true);
+                if self
+                    .terminal
+                    .debug
+                    .adapter_sessions
+                    .with_untracked(|sessions| {
+                        sessions
+                            .get(&config.dap_id)
+                            .is_some_and(|(_, process)| !process.stopped)
+                    })
+                {
+                    self.start_process_console(
+                        cx,
+                        &RunDebugMode::Debug,
+                        config,
+                        true,
+                    );
+                } else {
+                    // Release an adapter waiting for a PTY after its session was closed.
+                    self.common.proxy.dap_process_id(
+                        config.dap_id,
+                        None,
+                        TermId::next(),
+                    );
+                }
             }
             CoreNotification::TerminalProcessId {
                 term_id,
@@ -3536,15 +3519,17 @@ impl WindowTabData {
             }
             Focus::Rename => Some(keypress.key_down(event, &self.rename)),
             Focus::AboutPopup => Some(keypress.key_down(event, &self.about_data)),
-            Focus::Panel(PanelKind::Terminal) => self.terminal.key_down(event, &keypress),
-            Focus::Panel(PanelKind::FlutterRun) => {
-                // Terminal may have selected a shell since Run was last visible.
-                // Never send Run console keys to that unrelated terminal.
-                if let Some(id) = self.flutter_hot_reload.active_term.get_untracked()
-                    .filter(|id| self.terminal.get_terminal(id).is_some()) {
-                    self.terminal.focus_terminal_in_panel(id, PanelKind::FlutterRun);
-                    self.terminal.key_down(event, &keypress)
-                } else { None }
+            Focus::Panel(PanelKind::Terminal)
+                if self.panel.is_panel_visible(&PanelKind::Terminal) =>
+            {
+                self.terminal.key_down(event, &keypress)
+            }
+            Focus::Panel(PanelKind::FlutterRun)
+                if self.panel.is_panel_visible(&PanelKind::FlutterRun) =>
+            {
+                self.terminal.active_run.get_untracked().and_then(|id| {
+                    self.terminal.console_key_down(id, event, &keypress)
+                })
             }
             Focus::Panel(PanelKind::FileExplorer) => {
                 if let EventRef::Keyboard(key) = event.into() {
@@ -4023,11 +4008,6 @@ impl WindowTabData {
             }
         }
         self.common.view_id.get_untracked().request_focus();
-        if kind == PanelKind::FlutterRun {
-            if let Some(id) = self.flutter_hot_reload.active_term.get_untracked() {
-                self.terminal.focus_terminal_in_panel(id, PanelKind::FlutterRun);
-            }
-        }
         if kind == PanelKind::Search
             && self.common.focus.get_untracked() == Focus::Workbench
         {
@@ -4043,14 +4023,27 @@ impl WindowTabData {
     }
 
     fn reload_flutter_after_saving(&self, restart: bool) {
-        self.reload_after_saving(restart, None);
+        let flutter = self.flutter_hot_reload.clone();
+        self.reload_after_saving(move || {
+            if restart {
+                flutter.hot_restart();
+            } else {
+                flutter.hot_reload();
+            }
+        });
+    }
+
+    pub fn reload_run_session_after_saving(&self, id: TermId, restart: bool) {
+        let flutter = self.flutter_hot_reload.clone();
+        self.reload_after_saving(move || flutter.reload_run_session(id, restart));
     }
 
     pub fn reload_debug_session_after_saving(&self, dap_id: sparrow_rpc::dap_types::DapId, restart: bool) {
-        self.reload_after_saving(restart, Some(dap_id));
+        let proxy = self.common.proxy.clone();
+        self.reload_after_saving(move || proxy.dap_hot_reload(dap_id, restart));
     }
 
-    fn reload_after_saving(&self, restart: bool, dap_id: Option<sparrow_rpc::dap_types::DapId>) {
+    fn reload_after_saving(&self, reload: impl Fn() + 'static) {
         let mut paths = HashSet::new();
         let mut dirty = Vec::new();
         self.main_split.editors.with_editors_untracked(|editors| {
@@ -4063,12 +4056,7 @@ impl WindowTabData {
                 }
             }
         });
-        let flutter = self.flutter_hot_reload.clone();
-        let proxy = self.common.proxy.clone();
-        let reload: Rc<dyn Fn()> = Rc::new(move || {
-            if let Some(id) = dap_id { proxy.dap_hot_reload(id, restart); }
-            else if restart { flutter.hot_restart(); } else { flutter.hot_reload(); }
-        });
+        let reload = Rc::new(reload);
         if dirty.is_empty() {
             reload();
             return;
@@ -4098,14 +4086,27 @@ impl WindowTabData {
 
     pub fn launch_selected_configuration(&self, mode: RunDebugMode) {
         let selected = self.active_run_config_idx.get_untracked();
-        if let Some(config) = self.run_configs.with_untracked(|configs| configs.get(selected).cloned()) {
-            if let Some((term_id, _)) = self.terminal.run_debug_process(false).into_iter().find(|(_, process)| !process.stopped && process.mode == mode && process.config.name == config.name) {
-                let panel = crate::dart::run_config::console_panel(mode, &config);
+        if let Some(config) = self
+            .run_configs
+            .with_untracked(|configs| configs.get(selected).cloned())
+        {
+            if let Some((term_id, _)) =
+                self.terminal.run_debug_process(false).into_iter().find(
+                    |(_, process)| {
+                        !process.stopped
+                            && process.mode == mode
+                            && process.config.name == config.name
+                    },
+                )
+            {
+                let panel = crate::dart::run_config::console_panel(mode);
                 self.show_panel(panel);
-                self.terminal.focus_terminal_in_panel(term_id, panel);
+                self.terminal.select_console(term_id, mode);
                 return;
             }
-            self.common.internal_command.send(InternalCommand::RunAndDebug { mode, config });
+            self.common
+                .internal_command
+                .send(InternalCommand::RunAndDebug { mode, config });
         } else {
             self.run_config_modal_visible.set(true);
         }
@@ -4118,10 +4119,10 @@ impl WindowTabData {
         config: &RunDebugConfig,
     ) {
         if !config.is_dart_flutter()
-            && !(config.config_source == ConfigSource::RunInTerminal
+            && !(config.config_source == ConfigSource::ProjectTask
                 && *mode == RunDebugMode::Run)
         {
-            self.show_alert("Unsupported run configuration".into(),"Sparrow runs and debugs Dart and Flutter SDK targets only. Use the Terminal for auxiliary build commands.".into(),Vec::new());
+            self.show_alert("Unsupported run configuration".into(),"Sparrow supports Dart and Flutter SDKs in run and debug configurations.".into(),Vec::new());
             return;
         }
         let device = self.flutter_hot_reload.selected_device.get_untracked();
@@ -4150,11 +4151,11 @@ impl WindowTabData {
         debug!("Starting Dart/Flutter target: {}", config.name);
         match mode {
             RunDebugMode::Run => {
-                self.run_in_terminal(cx, mode, config, false);
+                self.start_process_console(cx, mode, config, false);
             }
             RunDebugMode::Debug => {
                 if config.prelaunch.is_some() {
-                    self.run_in_terminal(cx, mode, config, false);
+                    self.start_process_console(cx, mode, config, false);
                 } else {
                     let id = sparrow_rpc::terminal::TermId::next();
                     crate::background_tasks::debug_launch(&self.common.background_tasks.reporter(), config.dap_id, &config.name);
@@ -4189,60 +4190,72 @@ impl WindowTabData {
         }
     }
 
-    fn run_in_terminal(
+    fn start_process_console(
         &self,
         cx: Scope,
         mode: &RunDebugMode,
         config: &RunDebugConfig,
         from_dap: bool,
     ) {
-        // if not from dap, then run prelaunch first
-        let is_prelaunch = !from_dap;
-        let term_id = if let Some(terminal) =
-            self.terminal.get_stopped_run_debug_terminal(mode, config)
-        {
-            terminal.new_process(Some(RunDebugProcess {
-                mode: *mode,
-                config: config.clone(),
-                stopped: false,
-                created: Instant::now(),
-                is_prelaunch,
-            }));
-
-            terminal.term_id
-        } else {
-            let new_terminal_tab = self.terminal.new_tab_run_debug(
-                Some(RunDebugProcess {
-                    mode: *mode,
-                    config: config.clone(),
-                    stopped: false,
-                    created: Instant::now(),
-                    is_prelaunch,
-                }),
-                None,
-            );
-            new_terminal_tab.active_terminal(false).unwrap().term_id
+        let process = RunDebugProcess {
+            mode: *mode,
+            config: config.clone(),
+            stopped: false,
+            created: Instant::now(),
+            is_prelaunch: !from_dap,
         };
-        if *mode == RunDebugMode::Run && crate::dart::run_config::is_flutter_run(config) {
+        let previous = self.terminal.get_stopped_run_debug_terminal(mode, config);
+        let term_id = match previous {
+            Some(terminal) if from_dap => {
+                terminal.new_process(Some(process));
+                terminal.term_id
+            }
+            previous => {
+                if let Some(terminal) = previous {
+                    self.terminal.close_run_debug_session(terminal.term_id);
+                }
+                self.terminal.start_console(process)
+            }
+        };
+
+        if *mode == RunDebugMode::Run
+            && crate::dart::run_config::is_flutter_run(config)
+        {
             self.flutter_hot_reload.active_term.set(Some(term_id));
         }
-        let console_panel = crate::dart::run_config::console_panel(*mode, config);
+        if *mode == RunDebugMode::Debug {
+            self.terminal.debug.daps.update(|daps| {
+                daps.entry(config.dap_id).or_insert_with(|| {
+                    DapData::new(cx, config.dap_id, term_id, self.common.clone())
+                });
+            });
+        }
+
+        if from_dap {
+            // The Debug panel already owns the adapter session and its selection.
+            return;
+        }
+        self.terminal.select_console(term_id, *mode);
+        let panel = crate::dart::run_config::console_panel(*mode);
         if config.flutter_options.focus_tool_window {
-            self.terminal.focus_terminal_in_panel(term_id, console_panel);
+            self.show_panel(panel);
+        } else if config.flutter_options.activate_tool_window {
+            self.panel.show_panel(&panel);
         }
+    }
 
-        self.terminal.debug.active_term.set(Some(term_id));
-        self.terminal.debug.daps.update(|daps| {
-            daps.insert(
-                config.dap_id,
-                DapData::new(cx, config.dap_id, term_id, self.common.clone()),
-            );
-        });
-
-        if config.flutter_options.activate_tool_window || config.flutter_options.focus_tool_window {
-            self.panel.show_panel(&console_panel);
+    fn active_execution_session(&self) -> Option<TermId> {
+        let run = self.terminal.active_run.get_untracked();
+        let debug = self.terminal.debug.active_term.get_untracked();
+        match self.common.focus.get_untracked() {
+            Focus::Panel(PanelKind::FlutterRun) => run.or(debug),
+            Focus::Panel(PanelKind::Debug) => debug.or(run),
+            _ => self.terminal.run_debug_process(false).into_iter().rev()
+                .find(|(id, process)| !process.stopped && (Some(*id) == run || Some(*id) == debug))
+                .map(|(id, _)| id)
+                .or(run)
+                .or(debug),
         }
-
     }
 
     pub fn open_paths(&self, paths: &[PathObject]) {

@@ -50,7 +50,24 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
  label(move ||{let d=DEVICES[device.get()];let (w,h)=if landscape.get(){(d.height,d.width)}else{(d.width,d.height)};format!("{w} × {h} logical pixels · {}× density",d.dpr)}),
  toggle_row("Landscape", None, landscape, |_| {}, config),
  text_input(url, config).placeholder("App URL"),
- button(|| "Start Flutter web server", ButtonKind::Outlined, config).style(|s| s.padding(8.0)).on_click_stop(move |_|{let Some(root)=root.as_deref() else{return;};if let Some(flutter)=crate::dart::sdk::find_flutter_binary(Some(root)){commands.send(crate::command::InternalCommand::NewTerminal{profile:Some(sparrow_rpc::terminal::TerminalProfile{name:"Mobile Preview server".into(),command:Some(flutter.display().to_string()),arguments:Some(vec!["run".into(),"-d".into(),"web-server".into(),"--web-hostname".into(),"127.0.0.1".into(),"--web-port".into(),"7357".into()]),workdir:lsp_types::Url::from_directory_path(root).ok(),..Default::default()})});}else{crate::panel::workflow_tools::record(notices,"Mobile Preview","Configure a Flutter SDK before starting the web server.");}}),
+ button(|| "Start Flutter web server", ButtonKind::Outlined, config)
+    .style(|s| s.padding(8.0))
+    .on_click_stop(move |_| {
+        let Some(root) = root.as_deref() else { return };
+        let Some(flutter) = crate::dart::sdk::find_flutter_binary(Some(root)) else {
+            crate::panel::workflow_tools::record(
+                notices, "Mobile Preview", "Configure a Flutter SDK before starting the web server.",
+            );
+            return;
+        };
+        commands.send(crate::command::InternalCommand::RunProjectTask {
+            name: "Mobile Preview server".into(),
+            program: flutter.display().to_string(),
+            args: ["run", "-d", "web-server", "--web-hostname", "127.0.0.1", "--web-port", "7357"]
+                .into_iter().map(str::to_owned).collect(),
+            cwd: Some(root.to_path_buf()),
+        });
+    }),
  launch_button,button(|| "Close preview", ButtonKind::Outlined, config).style(|s| s.padding(8.0)).on_click_stop(move |_|{stop.borrow_mut().take();status.set("Preview closed.".into());}),label(move ||status.get()),
  label(||"Uses your app’s Flutter web build. Camera, native plugins and iOS/Android OS behavior require a real device. Change a preset or orientation, then reopen to apply.").style(move |s|s.width_full().color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))),
  )).style(|s|s.flex_col().gap(14.0).padding(16.0).width_full()))).style(|s|s.absolute().size_full().flex_col())

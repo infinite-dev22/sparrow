@@ -9,14 +9,12 @@ use floem::{
     },
     views::{Decorators, dyn_container, dyn_stack, label, stack},
 };
-use sparrow_rpc::terminal::TermId;
 
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
     command::SparrowWorkbenchCommand,
     config::{color::SparrowColor, icon::SparrowIcons},
     debug::RunDebugMode,
-    terminal::panel::TerminalPanelData,
     widgets::clickable_icon,
     widgets::popup_menu::{Menu, MenuItem, PopupMenuExt},
     window_tab::WindowTabData,
@@ -26,46 +24,6 @@ mod console;
 
 use console::console_view;
 use crate::widgets::sparrow_scroll;
-
-fn close_session(terminal: &TerminalPanelData, id: TermId) {
-    let process = terminal
-        .run_debug_process(false)
-        .into_iter()
-        .find(|(term, _)| *term == id);
-    let Some((_, process)) = process else { return };
-    let was_active = terminal.debug.active_term.get_untracked() == Some(id);
-    if !process.stopped {
-        terminal.stop_run_debug(id);
-    }
-    if let Some(dap) = terminal.debug.daps.with_untracked(|daps| daps.get(&process.config.dap_id).cloned()) {
-        dap.clear_pause();
-    }
-    terminal.close_terminal(&id);
-    terminal.debug.adapter_sessions.update(|sessions| {
-        sessions.remove(&process.config.dap_id);
-    });
-    terminal.debug.daps.update(|daps| {
-        daps.remove(&process.config.dap_id);
-    });
-    terminal.debug.console_output.update(|logs| {
-        logs.remove(&process.config.dap_id);
-    });
-    if was_active {
-        let next = terminal
-            .run_debug_process(false)
-            .into_iter()
-            .find(|(_, process)| process.mode == RunDebugMode::Debug);
-        terminal
-            .debug
-            .active_term
-            .set(next.as_ref().map(|(id, _)| *id));
-        terminal
-            .debug
-            .active_dap
-            .set(next.map(|(_, p)| p.config.dap_id));
-    }
-    crate::debug_settings::refresh(terminal);
-}
 
 pub(super) fn panel(
     window: Rc<WindowTabData>,
@@ -119,7 +77,7 @@ pub(super) fn panel(
                         .style(|s| s.max_width(220.0).text_ellipsis()),
                     clickable_icon(
                         || SparrowIcons::CLOSE,
-                        move || close_session(&close_terminal, id),
+                        move || close_terminal.close_run_debug_session(id),
                         || false,
                         || false,
                         || "Close debug session",
@@ -183,7 +141,7 @@ pub(super) fn panel(
                 .entry(MenuItem::new("Close All").action(move || {
                     for (id, p) in close.run_debug_process(false) {
                         if p.mode == RunDebugMode::Debug {
-                            close_session(&close, id);
+                            close.close_run_debug_session(id);
                         }
                     }
                 }))

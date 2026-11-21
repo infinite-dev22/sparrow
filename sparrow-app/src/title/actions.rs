@@ -230,8 +230,10 @@ pub(super) fn run_actions(
         ))
         .on_click_stop(move |_| {
             if let Some((id, _)) = debug_target.get_untracked() {
-                debug_window.terminal.focus_terminal_in_panel(id, crate::panel::kind::PanelKind::Debug);
-                debug_window.panel.show_panel(&crate::panel::kind::PanelKind::Debug);
+                debug_window
+                    .terminal
+                    .select_console(id, RunDebugMode::Debug);
+                debug_window.show_panel(crate::panel::kind::PanelKind::Debug);
             } else {
                 debug_window.launch_selected_configuration(RunDebugMode::Debug)
             }

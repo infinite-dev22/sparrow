@@ -1,6 +1,5 @@
 //! Debug console, output navigation and scrolling tools.
 
-//! Session tabs, debugger actions and console share one selected adapter session.
 use std::rc::Rc;
 
 use floem::{
@@ -9,11 +8,12 @@ use floem::{
     views::{Decorators, dyn_container, empty, stack},
 };
 
-use crate::panel::kind::PanelKind;
 use crate::{
-    config::icon::SparrowIcons, widgets::clickable_icon, window_tab::WindowTabData,
+    config::icon::SparrowIcons,
+    panel::kind::PanelKind,
+    widgets::{clickable_icon, sparrow_scroll},
+    window_tab::{Focus, WindowTabData},
 };
-use crate::widgets::sparrow_scroll;
 
 pub(super) fn console_view(
     window: Rc<WindowTabData>,
@@ -24,24 +24,28 @@ pub(super) fn console_view(
     let active = terminal.debug.active_term;
     let body_window = window.clone();
     dyn_container(
-        move || active.get(),
-        move |id| {
-            let Some(id) = id else {
+        move || {
+            active.get().map(|id| {
+                (
+                    id,
+                    terminal
+                        .console_terminal(id, true)
+                        .map(|terminal| terminal.term_id),
+                )
+            })
+        },
+        move |session| {
+            let Some((id, pty)) = session else {
                 return empty().into_any();
             };
-            // PTY-backed adapters retain the terminal's selection, ANSI and clipboard support.
-            if let Some(terminal) = body_window.terminal.get_terminal(&id) {
-                return crate::terminal::view::terminal_view(
-                    id,
-                    terminal.raw.read_only(),
-                    terminal.mode.read_only(),
-                    terminal.run_debug.read_only(),
-                    body_window.terminal.clone(),
-                    terminal.launch_error,
-                    body_window.common.internal_command,
-                    body_window.workspace.clone(),
-                    PanelKind::Debug,
-                )
+            if let Some(terminal) =
+                pty.and_then(|id| body_window.terminal.get_terminal(&id))
+            {
+                let focus = body_window.common.focus;
+                return crate::terminal::view::terminal_view(terminal, move || {
+                    focus.get() == Focus::Panel(PanelKind::Debug)
+                        && active.get() == Some(id)
+                })
                 .style(|s| s.size_full())
                 .into_any();
             }

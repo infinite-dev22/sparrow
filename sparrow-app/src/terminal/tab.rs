@@ -5,8 +5,7 @@ use sparrow_rpc::terminal::TerminalProfile;
 
 use super::data::TerminalData;
 use crate::{
-    debug::RunDebugProcess, id::TerminalTabId, window_tab::CommonData,
-    workspace::SparrowWorkspace,
+    id::TerminalTabId, window_tab::CommonData, workspace::SparrowWorkspace,
 };
 
 #[derive(Clone)]
@@ -23,19 +22,8 @@ impl TerminalTabData {
         profile: Option<TerminalProfile>,
         common: Rc<CommonData>,
     ) -> Self {
-        TerminalTabData::new_run_debug(workspace, None, profile, common)
-    }
-
-    /// Create the information for a terminal tab, which can contain multiple terminals.  
-    pub fn new_run_debug(
-        workspace: Arc<SparrowWorkspace>,
-        run_debug: Option<RunDebugProcess>,
-        profile: Option<TerminalProfile>,
-        common: Rc<CommonData>,
-    ) -> Self {
         let cx = common.scope.create_child();
-        let terminal_data =
-            TerminalData::new_run_debug(cx, workspace, run_debug, profile, common);
+        let terminal_data = TerminalData::new(cx, workspace, profile, common);
         let terminals = im::vector![(cx.create_rw_signal(0), terminal_data)];
         let terminals = cx.create_rw_signal(terminals);
         let active = cx.create_rw_signal(0);

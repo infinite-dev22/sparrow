@@ -32,7 +32,7 @@ use super::{
 };
 use crate::{
     command::{CommandExecuted, CommandKind, InternalCommand},
-    debug::{RunDebugMode, RunDebugProcess},
+    debug::RunDebugProcess,
     keypress::{KeyPressFocus, condition::Condition},
     window_tab::CommonData,
     workspace::SparrowWorkspace,
@@ -658,6 +658,17 @@ impl TerminalData {
         }
     }
 
+    pub fn clear_buffer(&self) {
+        use alacritty_terminal::vte::ansi::{ClearMode, Handler};
+        let Some(raw) = self.raw.try_get_untracked() else {
+            return;
+        };
+        let mut raw = raw.write();
+        raw.term.clear_screen(ClearMode::All);
+        raw.term.clear_screen(ClearMode::Saved);
+        self.common.view_id.get_untracked().request_paint();
+    }
+
     pub fn wheel_scroll(&self, delta: f64) {
         let config = self.common.config.get_untracked();
         let step = config.terminal_line_height() as f64;
@@ -784,16 +795,6 @@ impl TerminalData {
     }
     pub fn stop(&self) {
         self.activity.set(None);
-        if let Some(dap_id) = self.run_debug.with_untracked(|x| {
-            if let Some(process) = x {
-                if !process.is_prelaunch && process.mode == RunDebugMode::Debug {
-                    return Some(process.config.dap_id);
-                }
-            }
-            None
-        }) {
-            self.common.proxy.dap_stop(dap_id);
-        }
         self.common.proxy.terminal_close(self.term_id);
     }
 }

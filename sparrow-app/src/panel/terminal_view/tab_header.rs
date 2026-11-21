@@ -17,7 +17,6 @@ use crate::panel::kind::PanelKind;
 use crate::{
     command::SparrowWorkbenchCommand,
     config::{color::SparrowColor, icon::SparrowIcons},
-    debug::RunDebugMode,
     widgets::clickable_icon,
     window_tab::{Focus, WindowTabData},
 };
@@ -50,7 +49,6 @@ pub(super) fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl Vi
             |(_, tab)| tab.terminal_tab_id,
             move |(index, tab)| {
                 let terminal = terminal.clone();
-                let local_terminal = terminal.clone();
                 let terminal_tab_id = tab.terminal_tab_id;
 
                 let title = {
@@ -59,69 +57,29 @@ pub(super) fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl Vi
                         let Some(terminal) = tab.active_terminal(true) else {
                             return String::new();
                         };
-                        if let Some(name) = terminal.run_debug.with(|run_debug| {
-                            run_debug.as_ref().map(|r| r.config.name.clone())
-                        }) {
-                            return name;
-                        }
                         if !is_local {
                             return terminal.title.get();
                         }
 
-                        let preceding_shell_tabs = tab_info.with(|info| {
-                            info.tabs
-                                .iter()
-                                .take_while(|(_, tab)| {
-                                    tab.terminal_tab_id != terminal_tab_id
-                                })
-                                .filter(|(_, tab)| {
-                                    tab.active_terminal(true).is_some_and(
-                                        |terminal| {
-                                            terminal.run_debug.with(Option::is_none)
-                                        },
-                                    )
-                                })
-                                .count()
-                        });
-                        if preceding_shell_tabs == 0 {
-                            "local".to_owned()
-                        } else {
-                            format!("local ({})", preceding_shell_tabs + 1)
+                        match index.get() {
+                            0 => "local".to_owned(),
+                            index => format!("local {}", index + 1),
                         }
                     }
                 };
 
-                let svg_string = move || {
-                    let terminal = tab.active_terminal(true);
-                    let run_debug = terminal.as_ref().map(|t| t.run_debug);
-                    if let Some(run_debug) = run_debug {
-                        if let Some((mode, stopped)) = run_debug.with(|run_debug| {
-                            run_debug.as_ref().map(|r| (r.mode, r.stopped))
-                        }) {
-                            let svg = match (mode, stopped) {
-                                (RunDebugMode::Run, false) => SparrowIcons::START,
-                                (RunDebugMode::Run, true) => {
-                                    SparrowIcons::RUN_ERRORS
-                                }
-                                (RunDebugMode::Debug, false) => SparrowIcons::DEBUG,
-                                (RunDebugMode::Debug, true) => {
-                                    SparrowIcons::DEBUG_DISCONNECT
-                                }
-                            };
-                            return svg;
-                        }
-                    }
-                    SparrowIcons::TERMINAL
-                };
                 stack((
                     container({
                         stack((
                             container(
-                                svg(move || config.get().ui_svg(svg_string()))
-                                    .style(move |s| {
-                                        let config = config.get();
-                                        let size = config.ui.icon_size() as f32;
-                                        s.size(size, size).color(config.color(
+                                svg(move || {
+                                    config.get().ui_svg(SparrowIcons::TERMINAL)
+                                })
+                                .style(move |s| {
+                                    let config = config.get();
+                                    let size = config.ui.icon_size() as f32;
+                                    s.size(size, size).color(
+                                        config.color(
                                             SparrowColor::SPARROW_ICON_ACTIVE,
                                         ))
                                     }),
@@ -209,7 +167,6 @@ pub(super) fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl Vi
                             tab_info.update(|tab| {
                                 tab.active = index.get_untracked();
                             });
-                            local_terminal.update_debug_active_term();
                         }
                     },
                 )

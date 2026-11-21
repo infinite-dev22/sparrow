@@ -273,28 +273,11 @@ fn scaffold_view(window: Rc<WindowTabData>) -> impl View {
                             crate::dart::sdk::find_dart_binary(Some(&ctx.root))
                         {
                             pub_window.common.internal_command.send(
-                                crate::command::InternalCommand::NewTerminal {
-                                    profile: Some(
-                                        sparrow_rpc::terminal::TerminalProfile {
-                                            name: format!(
-                                                "Pub Get · {}",
-                                                ctx.package
-                                            ),
-                                            command: Some(
-                                                dart.display().to_string(),
-                                            ),
-                                            arguments: Some(vec![
-                                                "pub".into(),
-                                                "get".into(),
-                                            ]),
-                                            workdir:
-                                                lsp_types::Url::from_directory_path(
-                                                    &ctx.root,
-                                                )
-                                                .ok(),
-                                            ..Default::default()
-                                        },
-                                    ),
+                                crate::command::InternalCommand::RunProjectTask {
+                                    name: format!("Pub Get · {}", ctx.package),
+                                    program: dart.display().to_string(),
+                                    args: vec!["pub".into(), "get".into()],
+                                    cwd: Some(ctx.root.clone()),
                                 },
                             );
                         } else {

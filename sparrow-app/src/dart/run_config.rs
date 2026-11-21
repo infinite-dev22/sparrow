@@ -78,7 +78,9 @@ pub fn configuration_for_file(
 }
 
 pub fn is_flutter_run(config: &RunDebugConfig) -> bool {
-    config.debug_command.is_none() && is_flutter_target(config)
+    config.config_source != sparrow_rpc::dap_types::ConfigSource::ProjectTask
+        && config.debug_command.is_none()
+        && is_flutter_target(config)
 }
 
 pub fn is_flutter_target(config: &RunDebugConfig) -> bool {
@@ -92,15 +94,13 @@ pub fn is_flutter_target(config: &RunDebugConfig) -> bool {
             .is_some_and(|arg| matches!(arg.as_str(), "run" | "attach"))
 }
 
-/// Keep session presentation independent of the PTY used to run its process.
 pub fn console_panel(
     mode: crate::debug::RunDebugMode,
-    config: &RunDebugConfig,
 ) -> crate::panel::kind::PanelKind {
-    if mode == crate::debug::RunDebugMode::Run && is_flutter_run(config) {
-        crate::panel::kind::PanelKind::FlutterRun
-    } else {
-        crate::panel::kind::PanelKind::Terminal
+    use crate::{debug::RunDebugMode, panel::kind::PanelKind};
+    match mode {
+        RunDebugMode::Run => PanelKind::FlutterRun,
+        RunDebugMode::Debug => PanelKind::Debug,
     }
 }
 
@@ -987,42 +987,19 @@ mod toolbar_tests {
 mod flutter_session_tests {
     use super::*;
     #[test]
-    fn console_routing_preserves_flutter_sessions_across_focus_and_restart() {
+    fn project_sessions_use_dedicated_panels() {
         use crate::{debug::RunDebugMode, panel::kind::PanelKind};
-        let mut config: RunDebugConfig = serde_json::from_value(serde_json::json!({
-            "name":"app", "program":"/sdk/flutter/bin/flutter", "args":["run","--target","lib/main.dart"],
-            "prelaunch":{"program":"dart","args":["run","tool/build.dart"]}
-        })).unwrap();
-        assert_eq!(
-            console_panel(RunDebugMode::Run, &config),
-            PanelKind::FlutterRun
-        );
-        assert_eq!(
-            console_panel(RunDebugMode::Debug, &config),
-            PanelKind::Terminal
-        );
-        config.args = Some(vec!["attach".into()]);
-        assert_eq!(
-            console_panel(RunDebugMode::Run, &config),
-            PanelKind::FlutterRun
-        );
-        config.args = Some(vec!["test".into()]);
-        assert_eq!(
-            console_panel(RunDebugMode::Run, &config),
-            PanelKind::Terminal
-        );
-        config.program = "dart".into();
-        config.args = Some(vec!["run".into(), "bin/main.dart".into()]);
-        assert_eq!(
-            console_panel(RunDebugMode::Run, &config),
-            PanelKind::Terminal
-        );
+        assert_eq!(console_panel(RunDebugMode::Run), PanelKind::FlutterRun);
+        assert_eq!(console_panel(RunDebugMode::Debug), PanelKind::Debug);
     }
 
     #[test]
     fn cli_sessions_exclude_tests_tools_and_adapter_owned_processes() {
         let mut config: RunDebugConfig = serde_json::from_value(serde_json::json!({"name":"app","program":"/sdk/flutter","args":["run","--target","lib/main.dart"]})).unwrap();
         assert!(is_flutter_run(&config));
+        config.config_source = sparrow_rpc::dap_types::ConfigSource::ProjectTask;
+        assert!(!is_flutter_run(&config));
+        config.config_source = sparrow_rpc::dap_types::ConfigSource::Palette;
         config.debug_command = Some(vec!["dart".into()]);
         assert!(!is_flutter_run(&config));
         config.debug_command = None;

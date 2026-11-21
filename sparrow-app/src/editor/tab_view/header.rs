@@ -26,8 +26,7 @@ use floem::{
     text::Style as FontStyle,
     unit::PxPctAuto,
     views::{
-        Decorators, clip, container, dyn_stack, empty, label,
-        stack, svg, text,
+        Decorators, clip, container, dyn_stack, empty, label, stack, svg, text,
     },
 };
 
@@ -483,7 +482,7 @@ pub(super) fn editor_tab_header(
                     .with_untracked(|editor_tab| editor_tab.children[active].1)
                     .get_untracked()
             })
-            .scroll_style(|s| s.hide_bars(true))
+            .scroll_style(|s| s.hide_bars(true).vertical_scroll_as_horizontal(true))
             .style(|s| s.absolute().size_full()),
         )
         .style(|s| {
