@@ -3,13 +3,12 @@ use std::rc::Rc;
 
 use floem::{
     View,
-    reactive::{SignalGet, create_rw_signal},
+    reactive::{Scope, SignalGet, SignalUpdate, create_rw_signal},
     views::Decorators,
 };
 
 use crate::{
-    config::color::SparrowColor,
-    editor::{EditorData, view::read_only_editor_content},
+    config::color::SparrowColor, editor::view::read_only_editor_content,
     window_tab::WindowTabData,
 };
 
@@ -20,21 +19,24 @@ pub(super) fn editor_preview(window: Rc<WindowTabData>, issue: Issue) -> impl Vi
     let severity = rank(&issue.diagnostic);
     let (doc, _) = window.main_split.get_doc(issue.path.clone(), None);
     let pending = !doc.loaded();
-    let editor = EditorData::new_doc(
-        floem::reactive::Scope::current(),
-        doc,
-        None,
-        None,
-        None,
-        window.common.clone(),
-    );
+    let scope = Scope::current().create_child();
+    let editors = window.main_split.editors;
+    // Document layout looks up the editor in the workspace registry.
+    let editor =
+        editors.make_from_doc(scope, doc, None, None, None, window.common.clone());
+    let id = editor.id();
+    editor.editor.read_only.set(true);
     editor.go_to_location(issue.location(true), pending, None);
-    let editor = create_rw_signal(editor);
-    read_only_editor_content(window, editor).style(move |s| {
-        let config = config.get();
-        s.size_full()
-            .border_top(2.0)
-            .border_color(colors::severity_color(&config, severity))
-            .background(config.color(SparrowColor::EDITOR_BACKGROUND))
-    })
+    read_only_editor_content(window, create_rw_signal(editor))
+        .style(move |s| {
+            let config = config.get();
+            s.size_full()
+                .border_top(2.0)
+                .border_color(colors::severity_color(&config, severity))
+                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+        })
+        .on_cleanup(move || {
+            editors.remove(id);
+            scope.dispose();
+        })
 }

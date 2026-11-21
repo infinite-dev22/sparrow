@@ -30,6 +30,7 @@ pub mod web_link;
 pub use breadcrumb::breadcrumb_item;
 pub(crate) use button::native_button_has_focus;
 pub use button::{ButtonKind, button};
+pub(crate) use button::button_with_content;
 pub use checkbox::{checkbox, labeled_checkbox};
 pub use dialog_surface::dialog_surface;
 pub use divider::{Divider, DividerVariant};

@@ -56,15 +56,16 @@ pub(super) fn badge(
 ) -> impl View {
     stack((
         svg(move || config.get().ui_svg(severity_icon(severity)))
-            .style(|s| s.size(10.0, 10.0).flex_shrink(0.0_f32)),
+            .style(move |s| {
+                let (_, ink) = badge_colors(&config.get(), severity);
+                s.size(10.0, 10.0).flex_shrink(0.0_f32).color(ink)
+            }),
         label(move || text.clone()).style(|s| s.selectable(false)),
     ))
     .style(move |s| {
-        let config = config.get();
-        let tone = severity_color(&config, severity);
-        let background = surface(&config).lerp_rect(tone, 0.14);
+        let (background, ink) = badge_colors(&config.get(), severity);
         s.background(background)
-            .color(readable(tone, background))
+            .color(ink)
             .font_size(12.0)
             .font_weight(floem::text::Weight(550))
             .padding_horiz(4.0)
@@ -74,6 +75,12 @@ pub(super) fn badge(
             .border_radius(4.0)
             .flex_shrink(0.0_f32)
     })
+}
+
+fn badge_colors(config: &SparrowConfig, severity: usize) -> (Color, Color) {
+    let tone = severity_color(config, severity);
+    let background = surface(config).lerp_rect(tone, 0.14);
+    (background, readable(tone, background))
 }
 
 pub(super) fn badges(

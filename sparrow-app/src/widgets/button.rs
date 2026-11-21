@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap, fmt::Display, sync::Arc};
 
 use floem::{
-    View, ViewId,
+    IntoView, View, ViewId,
     event::{Event, EventListener, EventPropagation},
     keyboard::{KeyCode, PhysicalKey},
     reactive::{ReadSignal, SignalGet},
@@ -25,41 +25,46 @@ pub fn button<T: Display + 'static>(
     kind: ButtonKind,
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> impl View {
-    native_button_keyboard(floem_button(label(text).style(|s| s.selectable(false))))
-        .style(move |s| {
-            let config = config.get();
-            s.items_center()
-                .justify_center()
-                .border_radius(4.0)
-                .apply_if(kind != ButtonKind::Plain, |s| {
-                    s.border(1.0)
-                        .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                })
-                .apply_if(kind == ButtonKind::Primary, |s| {
-                    s.background(
-                        config
-                            .color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND),
-                    )
-                })
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer).background(
-                        config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-                .active(|s| {
-                    s.background(
-                        config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
-                    )
-                })
-                .focus_visible(|s| {
-                    s.outline(1.0)
-                        .outline_color(config.color(SparrowColor::EDITOR_CARET))
-                })
-                .disabled(|s| {
-                    s.cursor(CursorStyle::Default)
-                        .color(config.color(SparrowColor::PANEL_FOREGROUND_DIM))
-                })
-        })
+    button_with_content(label(text).style(|s| s.selectable(false)), kind, config)
+}
+
+pub(crate) fn button_with_content(
+    content: impl IntoView + 'static,
+    kind: ButtonKind,
+    config: ReadSignal<Arc<SparrowConfig>>,
+) -> impl View {
+    native_button_keyboard(floem_button(content)).style(move |s| {
+        let config = config.get();
+        s.items_center()
+            .justify_center()
+            .border_radius(4.0)
+            .apply_if(kind != ButtonKind::Plain, |s| {
+                s.border(1.0)
+                    .border_color(config.color(SparrowColor::SPARROW_BORDER))
+            })
+            .apply_if(kind == ButtonKind::Primary, |s| {
+                s.background(
+                    config.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND),
+                )
+            })
+            .hover(|s| {
+                s.cursor(CursorStyle::Pointer)
+                    .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+            })
+            .active(|s| {
+                s.background(
+                    config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND),
+                )
+            })
+            .focus_visible(|s| {
+                s.outline(1.0)
+                    .outline_color(config.color(SparrowColor::EDITOR_CARET))
+            })
+            .disabled(|s| {
+                s.cursor(CursorStyle::Default)
+                    .color(config.color(SparrowColor::PANEL_FOREGROUND_DIM))
+            })
+    })
 }
 
 // Floem dispatches the native button click before its KeyDown listeners. Stop

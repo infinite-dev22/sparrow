@@ -18,8 +18,9 @@ use crate::{
     editor::location::{EditorLocation, EditorPosition},
     widgets::{
         ButtonKind, button,
+        button_with_content,
         popup_menu::{Menu, MenuItem, show_context_menu},
-        sparrow_scroll,
+        sparrow_scroll, tooltip_label,
     },
     window_tab::WindowTabData,
 };
@@ -42,6 +43,13 @@ pub(super) fn details(
         position.line + 1,
         position.character + 1
     );
+    let file_name = issue
+        .path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let coordinates = format!(":{}:{}", position.line + 1, position.character + 1);
     let related = issue
         .diagnostic
         .related_information
@@ -114,15 +122,33 @@ pub(super) fn details(
             label(|| "Problem details").style(|s| s.font_bold()),
             label(move || message.clone())
                 .style(|s| s.width_full().selectable(true)),
-            button(move || location.clone(), ButtonKind::Plain, config)
+            tooltip_label(
+                config,
+                button_with_content(
+                    stack((
+                        label(move || file_name.clone()).style(|s| {
+                            s.min_width(0.0).text_ellipsis().selectable(false)
+                        }),
+                        label(move || coordinates.clone())
+                            .style(|s| s.flex_shrink(0.0_f32).selectable(false)),
+                    ))
+                    .style(|s| s.min_width(0.0).items_center()),
+                    ButtonKind::Plain,
+                    config,
+                )
                 .on_click_stop(move |_| jump(&open, &target, false))
                 .style(move |s| {
                     let config = config.get();
-                    s.max_width_full().color(colors::readable(
-                        config.color(SparrowColor::EDITOR_LINK),
-                        config.color(SparrowColor::PANEL_BACKGROUND),
-                    ))
+                    s.min_width(0.0).max_width_full().justify_start().color(
+                        colors::readable(
+                            config.color(SparrowColor::EDITOR_LINK),
+                            config.color(SparrowColor::PANEL_BACKGROUND),
+                        ),
+                    )
                 }),
+                move || location.clone(),
+            )
+            .style(|s| s.min_width(0.0).max_width_full()),
             dyn_stack(
                 move || description.clone().into_iter(),
                 |url| url.clone(),

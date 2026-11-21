@@ -163,14 +163,12 @@ pub(crate) fn read_only_editor_content(
     window: Rc<WindowTabData>,
     editor: RwSignal<EditorData>,
 ) -> impl View {
-    let scope = editor.with_untracked(|editor| editor.scope);
     let debug_breakline = window.terminal.breakline;
     stack((
         editor_gutter(window, editor).style(|s| s.pointer_events_none()),
         editor_content(editor, debug_breakline, |_| false, true)
             .style(|s| s.min_width(0.0).flex_grow(1.0_f32)),
     ))
-    .on_cleanup(move || scope.dispose())
 }
 
 fn editor_content(
@@ -221,7 +219,12 @@ fn editor_content(
                         .margin_top(4.0)
                         .min_size_full()
                         .cursor(CursorStyle::Text)
-                        .apply_if(read_only, |s| s.pointer_events_none())
+                        .apply_if(read_only, |s| {
+                            s.pointer_events_none().set(
+                                floem::views::editor::ScrollBeyondLastLine,
+                                false,
+                            )
+                        })
                 },
             );
 
@@ -295,6 +298,11 @@ fn editor_content(
             (width, line_height as f64),
         )
         .inflate(10.0, 0.0);
+
+        if read_only {
+            // Keep source context visible even before the preview's first layout.
+            return rect.inflate(0.0, 2.0 * line_height as f64);
+        }
 
         let viewport = viewport.get_untracked();
         let smallest_distance = (viewport.y0 - rect.y0)
