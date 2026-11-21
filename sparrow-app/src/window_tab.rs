@@ -785,13 +785,19 @@ impl WindowTabData {
         {
             let terminal = window_tab_data.terminal.clone();
             let flutter = window_tab_data.flutter_hot_reload.clone();
-            cx.create_effect(move |_| {
+            let inspector = window_tab_data.flutter_inspector.clone();
+            cx.create_effect(move |previous: Option<Option<sparrow_rpc::dap_types::DapId>>| {
                 let processes = terminal.run_debug_process(true);
                 let session = processes.iter().rev().find(|(_, process)| {
                     !process.stopped
                         && (!process.is_prelaunch || process.config.prelaunch.is_none())
                         && crate::dart::run_config::is_flutter_target(&process.config)
                 });
+                let current = session.map(|(_, process)| process.config.dap_id);
+                if previous.flatten().is_some_and(|previous| Some(previous) != current) {
+                    flutter.ws_uri.set(None);
+                    inspector.disconnect();
+                }
                 if let Some((id, _)) = session {
                     flutter.active_term.set(Some(*id));
                     flutter.state.set(crate::dart::FlutterRunState::Running);
@@ -799,6 +805,7 @@ impl WindowTabData {
                     flutter.state.set(crate::dart::FlutterRunState::Idle);
                     flutter.ws_uri.set(None);
                 }
+                current
             });
         }
 

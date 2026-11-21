@@ -23,17 +23,18 @@
 //! - Single background thread owns the socket. One loop alternates between
 //!   a short-timeout `read()` and draining a command channel. UI never
 //!   blocks on the network.
-//! - Timeouts on the underlying `TcpStream` bound read latency to 100 ms
-//!   when idle — small enough that UI commands are effectively immediate.
+//! - A short read timeout bounds idle command dispatch latency. Runtime
+//!   changes wait for the preceding VM reply so Flutter applies them in order.
 //! - All state transitions (connect/disconnect/reconnect) live in that
 //!   thread. The UI just calls `connect(url)` or `disconnect()`.
 
 use std::{
+    collections::VecDeque,
     io,
     net::TcpStream,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU64, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -50,6 +51,9 @@ use crate::window_tab::CommonData;
 type NotifSender = std::sync::mpsc::Sender<Notification>;
 type NotifReceiver = std::sync::mpsc::Receiver<Notification>;
 
+const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const SERVICE_EXTENSION_TIMEOUT: Duration = Duration::from_secs(5);
+
 // ─────────────────────────────────────────────────────────────────────
 //  Public API
 // ─────────────────────────────────────────────────────────────────────
@@ -58,24 +62,65 @@ type NotifReceiver = std::sync::mpsc::Receiver<Notification>;
 #[derive(Clone)]
 pub struct VmServiceClient {
     tx: Sender<Command>,
-    connected: Arc<AtomicBool>,
+    ready_generation: Arc<AtomicU64>,
+    generation: Arc<AtomicU64>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RuntimeFlags {
+    pub debug_paint: bool,
+    pub performance_overlay: bool,
+    pub slow_animations: bool,
+    pub repaint_rainbow: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RuntimeSwitches {
+    pub debug_paint: RwSignal<bool>,
+    pub performance_overlay: RwSignal<bool>,
+    pub slow_animations: RwSignal<bool>,
+    pub repaint_rainbow: RwSignal<bool>,
+}
+
+impl RuntimeSwitches {
+    fn new(cx: Scope) -> Self {
+        Self {
+            debug_paint: cx.create_rw_signal(false),
+            performance_overlay: cx.create_rw_signal(false),
+            slow_animations: cx.create_rw_signal(false),
+            repaint_rainbow: cx.create_rw_signal(false),
+        }
+    }
+
+    fn set(self, flags: RuntimeFlags) {
+        floem::reactive::batch(|| {
+            self.debug_paint.set(flags.debug_paint);
+            self.performance_overlay.set(flags.performance_overlay);
+            self.slow_animations.set(flags.slow_animations);
+            self.repaint_rainbow.set(flags.repaint_rainbow);
+        });
+    }
 }
 
 /// Events emitted from the connection thread to the UI.
 #[derive(Debug, Clone)]
 pub enum Notification {
     /// WS upgraded + handshake complete.
-    Connected,
+    Connected(u64, RuntimeFlags),
+    Restarting(u64),
     /// Connection closed (server exit, network error, or explicit
     /// disconnect).
-    Disconnected,
+    Disconnected(u64),
     /// Transport / protocol failure. Auto-reconnect is not attempted.
-    Error(String),
+    Error(u64, String),
     /// Fresh widget tree from `ext.flutter.inspector.getRootWidgetSummaryTree`.
     WidgetTree(InspectorNode),
     /// Extension event (`Flutter.Frame`, `Flutter.ServiceExtensionStateChanged`,
     /// etc.). Not currently consumed but plumbed through for future use.
-    Event { method: String, params: Value },
+    Event {
+        method: String,
+        params: Value,
+    },
 }
 
 /// A single node in the live widget tree.
@@ -92,39 +137,65 @@ impl VmServiceClient {
     pub fn new() -> (Self, NotifReceiver) {
         let (tx, rx) = unbounded();
         let (notif_tx, notif_rx) = std::sync::mpsc::channel(); // was: unbounded()
-        let connected = Arc::new(AtomicBool::new(false));
+        let ready_generation = Arc::new(AtomicU64::new(0));
+        let generation = Arc::new(AtomicU64::new(0));
 
         let worker = ConnectionWorker {
             rx,
             notif_tx,
-            connected: connected.clone(),
+            ready_generation: ready_generation.clone(),
+            generation: generation.clone(),
         };
         thread::Builder::new()
             .name("DartVmService".into())
             .spawn(move || worker.run())
             .expect("spawn DartVmService worker");
 
-        (Self { tx, connected }, notif_rx)
+        (
+            Self {
+                tx,
+                ready_generation,
+                generation,
+            },
+            notif_rx,
+        )
     }
 
     /// Connect to a VM service URL (`http://127.0.0.1:PORT/TOKEN=/`).
     /// Any existing connection is dropped first.
     pub fn connect(&self, url: String) {
-        let _ = self.tx.send(Command::Connect(url));
+        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.ready_generation.store(0, Ordering::Release);
+        let _ = self.tx.send(Command::Connect(Connection {
+            url,
+            generation,
+            previous_isolate: None,
+        }));
     }
 
     /// Disconnect from the current URL, if any.
     pub fn disconnect(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.ready_generation.store(0, Ordering::Release);
         let _ = self.tx.send(Command::Disconnect);
     }
 
     pub fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::Relaxed)
+        let generation = self.generation.load(Ordering::SeqCst);
+        generation != 0
+            && self.ready_generation.load(Ordering::Acquire) == generation
     }
 
     /// Invoke a Flutter service extension (e.g. `ext.flutter.debugPaint`, `ext.flutter.showPerformanceOverlay`).
     pub fn call_service_extension(&self, method: impl Into<String>, params: Value) {
+        let generation = self.generation.load(Ordering::SeqCst);
+        if generation == 0
+            || self.ready_generation.load(Ordering::Acquire) != generation
+        {
+            return;
+        }
         let _ = self.tx.send(Command::CallServiceExtension {
+            generation,
             method: method.into(),
             params,
         });
@@ -132,7 +203,8 @@ impl VmServiceClient {
 
     /// Toggle Flutter debug paint visual bounds.
     pub fn set_debug_paint(&self, isolate_id: Option<&str>, enabled: bool) {
-        let mut params = json!({ "enabled": if enabled { "true" } else { "false" } });
+        let mut params =
+            json!({ "enabled": if enabled { "true" } else { "false" } });
         if let Some(id) = isolate_id {
             if let Some(map) = params.as_object_mut() {
                 map.insert("isolateId".to_string(), json!(id));
@@ -143,7 +215,8 @@ impl VmServiceClient {
 
     /// Toggle Flutter performance overlay.
     pub fn set_performance_overlay(&self, isolate_id: Option<&str>, enabled: bool) {
-        let mut params = json!({ "enabled": if enabled { "true" } else { "false" } });
+        let mut params =
+            json!({ "enabled": if enabled { "true" } else { "false" } });
         if let Some(id) = isolate_id {
             if let Some(map) = params.as_object_mut() {
                 map.insert("isolateId".to_string(), json!(id));
@@ -154,7 +227,8 @@ impl VmServiceClient {
 
     /// Toggle Flutter slow animations (5.0x dilation).
     pub fn set_slow_animations(&self, isolate_id: Option<&str>, enabled: bool) {
-        let mut params = json!({ "timeDilation": if enabled { "5.0" } else { "1.0" } });
+        let mut params =
+            json!({ "timeDilation": if enabled { "5.0" } else { "1.0" } });
         if let Some(id) = isolate_id {
             if let Some(map) = params.as_object_mut() {
                 map.insert("isolateId".to_string(), json!(id));
@@ -165,7 +239,8 @@ impl VmServiceClient {
 
     /// Toggle Flutter repaint rainbow.
     pub fn set_repaint_rainbow(&self, isolate_id: Option<&str>, enabled: bool) {
-        let mut params = json!({ "enabled": if enabled { "true" } else { "false" } });
+        let mut params =
+            json!({ "enabled": if enabled { "true" } else { "false" } });
         if let Some(id) = isolate_id {
             if let Some(map) = params.as_object_mut() {
                 map.insert("isolateId".to_string(), json!(id));
@@ -191,9 +266,20 @@ impl VmServiceClient {
 // ─────────────────────────────────────────────────────────────────────
 
 enum Command {
-    Connect(String),
+    Connect(Connection),
     Disconnect,
-    CallServiceExtension { method: String, params: Value },
+    CallServiceExtension {
+        generation: u64,
+        method: String,
+        params: Value,
+    },
+}
+
+struct Connection {
+    url: String,
+    generation: u64,
+    // A hot restart can reuse the WebSocket URL while replacing the isolate.
+    previous_isolate: Option<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -203,65 +289,160 @@ enum Command {
 struct ConnectionWorker {
     rx: Receiver<Command>,
     notif_tx: NotifSender,
-    connected: Arc<AtomicBool>,
+    ready_generation: Arc<AtomicU64>,
+    generation: Arc<AtomicU64>,
 }
 
 impl ConnectionWorker {
     fn run(self) {
-        let mut next_url = None;
+        let mut next_connection = None;
         loop {
-            // Wait for a Connect / Disconnect / Shutdown while idle.
-            let url = match next_url.take() {
-                Some(url) => url,
+            // Wait for a connection while idle.
+            let connection = match next_connection.take() {
+                Some(connection) => connection,
                 None => match self.rx.recv() {
                     Ok(Command::Connect(url)) => url,
-                    Ok(Command::Disconnect | Command::CallServiceExtension { .. }) => continue,
+                    Ok(
+                        Command::Disconnect | Command::CallServiceExtension { .. },
+                    ) => continue,
                     Err(_) => return,
                 },
             };
 
-            match self.run_connection(&url) {
-                Ok(reconnect) => next_url = reconnect,
+            if connection.generation != self.generation.load(Ordering::SeqCst) {
+                continue;
+            }
+            match self.run_connection(&connection) {
+                Ok(reconnect) => next_connection = reconnect,
                 Err(err) => {
-                    let _ = self.notif_tx.send(Notification::Error(err));
+                    let _ = self
+                        .notif_tx
+                        .send(Notification::Error(connection.generation, err));
                 }
             }
-            self.connected.store(false, Ordering::Relaxed);
-            let _ = self.notif_tx.send(Notification::Disconnected);
+            self.ready_generation.store(0, Ordering::Release);
+            let _ = self
+                .notif_tx
+                .send(Notification::Disconnected(connection.generation));
         }
     }
 
-    fn run_connection(&self, vm_url: &str) -> Result<Option<String>, String> {
-        let ws_url = to_ws_url(vm_url)?;
-        let (mut socket, isolate_id) = self.open_and_handshake(&ws_url)?;
+    fn run_connection(
+        &self,
+        connection: &Connection,
+    ) -> Result<Option<Connection>, String> {
+        let ws_url = to_ws_url(&connection.url)?;
+        let (mut socket, isolate_id, extensions) =
+            self.open_and_handshake(&ws_url, connection)?;
+        let flags =
+            self.read_runtime_flags(&mut socket, &isolate_id, &extensions)?;
+        socket
+            .get_ref()
+            .set_read_timeout(Some(COMMAND_POLL_INTERVAL))
+            .map_err(|e| format!("set VM service polling interval: {e}"))?;
 
-        self.connected.store(true, Ordering::Relaxed);
-        let _ = self.notif_tx.send(Notification::Connected);
+        if connection.generation != self.generation.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        self.ready_generation
+            .store(connection.generation, Ordering::Release);
+        let _ = self
+            .notif_tx
+            .send(Notification::Connected(connection.generation, flags));
 
         // Initial tree fetch, before any frame arrives.
         self.send_widget_tree_request(&mut socket, 10, &isolate_id)?;
 
         let mut last_refresh = Instant::now();
+        let mut pending_extensions = VecDeque::new();
+        let mut in_flight: Option<(i64, String, Instant)> = None;
         loop {
             // Drain pending UI commands.
             loop {
                 match self.rx.try_recv() {
                     Ok(Command::Connect(url)) => return Ok(Some(url)),
-                    Ok(Command::Disconnect) | Err(TryRecvError::Disconnected) => return Ok(None),
+                    Ok(Command::Disconnect) | Err(TryRecvError::Disconnected) => {
+                        return Ok(None);
+                    }
                     Err(TryRecvError::Empty) => break,
-                    Ok(Command::CallServiceExtension { method, mut params }) => {
-                        if let Some(params) = params.as_object_mut() {
-                            params.entry("isolateId").or_insert_with(|| json!(isolate_id));
+                    Ok(Command::CallServiceExtension {
+                        generation,
+                        method,
+                        params,
+                    }) => {
+                        if generation == connection.generation
+                            && generation == self.generation.load(Ordering::SeqCst)
+                        {
+                            pending_extensions.push_back((method, params));
                         }
-                        self.send_nonblocking(&mut socket, next_request_id(), &method, params)?;
                     }
                 }
             }
 
-            // Read one message (blocking with a short timeout).
+            if connection.generation != self.generation.load(Ordering::SeqCst) {
+                return Ok(None);
+            }
+
+            if let Some((_, method, deadline)) = &in_flight {
+                if Instant::now() >= *deadline {
+                    return Err(format!(
+                        "VM service timed out waiting for {method}"
+                    ));
+                }
+            } else if let Some((method, mut params)) = pending_extensions.pop_front()
+            {
+                if let Some(params) = params.as_object_mut() {
+                    params
+                        .entry("isolateId")
+                        .or_insert_with(|| json!(isolate_id));
+                }
+                let id = next_request_id();
+                self.send_nonblocking(&mut socket, id, &method, params)?;
+                in_flight =
+                    Some((id, method, Instant::now() + SERVICE_EXTENSION_TIMEOUT));
+            }
+
             match socket.read() {
                 Ok(Message::Text(text)) => {
                     if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                        if v["method"] == "streamNotify"
+                            && v["params"]["streamId"] == "Isolate"
+                            && v["params"]["event"]["kind"] == "IsolateExit"
+                            && v["params"]["event"]["isolate"]["id"].as_str()
+                                == Some(&isolate_id)
+                        {
+                            let generation = connection.generation + 1;
+                            if self
+                                .generation
+                                .compare_exchange(
+                                    connection.generation,
+                                    generation,
+                                    Ordering::SeqCst,
+                                    Ordering::SeqCst,
+                                )
+                                .is_err()
+                            {
+                                return Ok(None);
+                            }
+                            self.ready_generation.store(0, Ordering::Release);
+                            let _ = self
+                                .notif_tx
+                                .send(Notification::Restarting(generation));
+                            return Ok(Some(Connection {
+                                url: connection.url.clone(),
+                                generation,
+                                previous_isolate: Some(isolate_id),
+                            }));
+                        }
+                        if let Some((id, method, _)) = &in_flight
+                            && v.get("id").and_then(Value::as_i64) == Some(*id)
+                        {
+                            if let Some(error) = v.get("error") {
+                                tracing::warn!(%method, %error, "Flutter service extension failed");
+                            }
+                            in_flight = None;
+                            continue;
+                        }
                         self.dispatch_message(
                             v,
                             &mut socket,
@@ -290,7 +471,8 @@ impl ConnectionWorker {
     fn open_and_handshake(
         &self,
         ws_url: &str,
-    ) -> Result<(WebSocket<TcpStream>, String), String> {
+        connection: &Connection,
+    ) -> Result<(WebSocket<TcpStream>, String, Vec<String>), String> {
         // Parse host:port ourselves so we can set socket timeouts before
         // wrapping in `tungstenite`.
         let parsed =
@@ -306,6 +488,9 @@ impl ConnectionWorker {
         let stream = TcpStream::connect(&addr)
             .map_err(|e| format!("tcp connect {addr}: {e}"))?;
         stream
+            .set_nodelay(true)
+            .map_err(|e| format!("set_nodelay: {e}"))?;
+        stream
             .set_read_timeout(Some(Duration::from_millis(100)))
             .map_err(|e| format!("set_read_timeout: {e}"))?;
         stream
@@ -315,38 +500,100 @@ impl ConnectionWorker {
         let (mut socket, _response) = tungstenite::client(ws_url, stream)
             .map_err(|e| format!("ws handshake: {e}"))?;
 
-        // 1. getVM
-        let isolate_id = self
-            .send_blocking(&mut socket, 1, "getVM", json!({}))
-            .and_then(|v| {
-                v.get("result")
-                    .and_then(|r| r.get("isolates"))
-                    .and_then(|arr| arr.as_array())
-                    .and_then(|arr| arr.first())
-                    .and_then(|iso| iso.get("id"))
-                    .and_then(|id| id.as_str())
-                    .map(|s| s.to_string())
-                    .ok_or_else(|| "getVM: no isolates".to_string())
-            })?;
+        for stream in ["Isolate", "Extension", "Debug"] {
+            self.send_blocking(
+                &mut socket,
+                next_request_id(),
+                "streamListen",
+                json!({ "streamId": stream }),
+            )?;
+        }
 
-        // 2. streamListen("Extension") — required before extension events
-        //    (Flutter.Frame) will flow.
-        self.send_blocking(
-            &mut socket,
-            2,
-            "streamListen",
-            json!({ "streamId": "Extension" }),
-        )?;
+        let deadline = Instant::now() + SERVICE_EXTENSION_TIMEOUT;
+        while Instant::now() < deadline {
+            if self.generation.load(Ordering::SeqCst) != connection.generation {
+                return Err("Flutter VM connection was replaced".into());
+            }
+            let vm = self.send_blocking(
+                &mut socket,
+                next_request_id(),
+                "getVM",
+                json!({}),
+            )?;
+            if let Some(isolate_id) = vm["result"]["isolates"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|isolate| isolate["id"].as_str())
+                .find(|id| Some(*id) != connection.previous_isolate.as_deref())
+            {
+                let isolate = self.send_blocking(
+                    &mut socket,
+                    next_request_id(),
+                    "getIsolate",
+                    json!({ "isolateId": isolate_id }),
+                )?;
+                let extensions: Vec<_> = isolate["result"]["extensionRPCs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect();
+                if extensions
+                    .iter()
+                    .any(|extension| extension == "ext.flutter.timeDilation")
+                {
+                    return Ok((socket, isolate_id.to_owned(), extensions));
+                }
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        Err("Flutter VM did not register its runtime extensions".into())
+    }
 
-        // 3. streamListen("Debug") — for pause / resume events.
-        let _ = self.send_blocking(
-            &mut socket,
-            3,
-            "streamListen",
-            json!({ "streamId": "Debug" }),
-        );
-
-        Ok((socket, isolate_id))
+    fn read_runtime_flags(
+        &self,
+        socket: &mut WebSocket<TcpStream>,
+        isolate_id: &str,
+        extensions: &[String],
+    ) -> Result<RuntimeFlags, String> {
+        let mut flags = RuntimeFlags::default();
+        for (method, key, flag) in [
+            ("ext.flutter.debugPaint", "enabled", &mut flags.debug_paint),
+            (
+                "ext.flutter.showPerformanceOverlay",
+                "enabled",
+                &mut flags.performance_overlay,
+            ),
+            (
+                "ext.flutter.timeDilation",
+                "timeDilation",
+                &mut flags.slow_animations,
+            ),
+            (
+                "ext.flutter.repaintRainbow",
+                "enabled",
+                &mut flags.repaint_rainbow,
+            ),
+        ] {
+            if extensions.iter().any(|extension| extension == method) {
+                let reply = self.send_blocking(
+                    socket,
+                    next_request_id(),
+                    method,
+                    json!({ "isolateId": isolate_id }),
+                )?;
+                let result = &reply["result"][key];
+                *flag = if key == "enabled" {
+                    result.as_bool().unwrap_or_else(|| result == "true")
+                } else {
+                    result.as_f64().or_else(|| result.as_str()?.parse().ok())
+                        == Some(5.0)
+                };
+            }
+        }
+        Ok(flags)
     }
 
     fn send_nonblocking(
@@ -500,9 +747,9 @@ fn to_ws_url(vm_url: &str) -> Result<String, String> {
         return Ok(vm_url.to_owned());
     }
     let trimmed = vm_url.trim_end_matches('/');
-    let base = trimmed
-        .strip_prefix("http://")
-        .ok_or_else(|| "Expected a local VM service HTTP or WebSocket URL".to_string())?;
+    let base = trimmed.strip_prefix("http://").ok_or_else(|| {
+        "Expected a local VM service HTTP or WebSocket URL".to_string()
+    })?;
     Ok(format!("ws://{base}/ws"))
 }
 
@@ -613,6 +860,7 @@ pub struct FlutterInspectorData {
     pub root: RwSignal<Option<RwSignal<InspectorNodeData>>>,
     pub selected_node: RwSignal<Option<RwSignal<InspectorNodeData>>>,
     pub updates: ReadSignal<Option<Notification>>,
+    pub(crate) runtime_switches: RuntimeSwitches,
     pub common: std::rc::Rc<CommonData>,
     cx: Scope,
 }
@@ -628,6 +876,7 @@ impl FlutterInspectorData {
             root: cx.create_rw_signal(None),
             selected_node: cx.create_rw_signal(None),
             updates,
+            runtime_switches: RuntimeSwitches::new(cx),
             common,
             cx,
         }
@@ -644,6 +893,7 @@ impl FlutterInspectorData {
         }
         self.vm_url.set(Some((term_id, url.clone())));
         self.state.set(InspectorState::Connecting);
+        self.runtime_switches.set(RuntimeFlags::default());
         self.client.connect(url);
     }
 
@@ -653,19 +903,32 @@ impl FlutterInspectorData {
         self.root.set(None);
         self.selected_node.set(None);
         self.state.set(InspectorState::Disconnected);
+        self.runtime_switches.set(RuntimeFlags::default());
     }
 
     /// Apply a notification received from the connection thread.
     pub fn apply(&self, notif: &Notification) {
         match notif {
-            Notification::Connected => {
+            Notification::Connected(generation, flags)
+                if self.is_current(*generation) =>
+            {
+                self.runtime_switches.set(*flags);
                 self.state.set(InspectorState::Connected);
             }
-            Notification::Disconnected => {
+            Notification::Restarting(generation) if self.is_current(*generation) => {
+                self.state.set(InspectorState::Connecting);
+                self.runtime_switches.set(RuntimeFlags::default());
+                self.root.set(None);
+                self.selected_node.set(None);
+            }
+            Notification::Disconnected(generation)
+                if self.is_current(*generation) =>
+            {
                 self.state.set(InspectorState::Disconnected);
+                self.runtime_switches.set(RuntimeFlags::default());
                 self.root.set(None);
             }
-            Notification::Error(e) => {
+            Notification::Error(generation, e) if self.is_current(*generation) => {
                 tracing::warn!("VM service error: {e}");
                 self.state.set(InspectorState::Disconnected);
             }
@@ -673,8 +936,12 @@ impl FlutterInspectorData {
                 let root = InspectorNodeData::from_node(self.cx, tree.clone());
                 self.root.set(Some(root));
             }
-            Notification::Event { .. } => {}
+            _ => {}
         }
+    }
+
+    fn is_current(&self, generation: u64) -> bool {
+        self.client.generation.load(Ordering::SeqCst) == generation
     }
 }
 
@@ -707,6 +974,147 @@ mod tests {
     #[test]
     fn to_ws_url_rejects_https() {
         assert!(to_ws_url("https://127.0.0.1:41677/TOKEN=/").is_err());
+    }
+
+    #[test]
+    fn service_extensions_wait_for_the_matching_reply_in_order() {
+        fn request(socket: &mut WebSocket<TcpStream>) -> Value {
+            serde_json::from_str(
+                socket.read().unwrap().into_text().unwrap().as_str(),
+            )
+            .unwrap()
+        }
+        fn respond(socket: &mut WebSocket<TcpStream>, id: &Value, result: Value) {
+            let response = json!({ "jsonrpc": "2.0", "id": id, "result": result });
+            socket
+                .send(Message::Text(response.to_string().into()))
+                .unwrap();
+        }
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let (client, _notifications) = VmServiceClient::new();
+        client.connect(format!("http://{}/", listener.local_addr().unwrap()));
+        let connect_fixture = |isolate_id: &str| {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            for _ in 0..3 {
+                let listen = request(&mut socket);
+                respond(&mut socket, &listen["id"], json!({ "type": "Success" }));
+            }
+            let vm = request(&mut socket);
+            respond(
+                &mut socket,
+                &vm["id"],
+                json!({ "isolates": [{"id": isolate_id}] }),
+            );
+            let isolate = request(&mut socket);
+            respond(
+                &mut socket,
+                &isolate["id"],
+                json!({ "extensionRPCs": ["ext.flutter.timeDilation"] }),
+            );
+            let query = request(&mut socket);
+            respond(&mut socket, &query["id"], json!({ "timeDilation": "1.0" }));
+            socket
+        };
+        let mut socket = connect_fixture("isolates/1");
+        let tree = request(&mut socket);
+        client.set_debug_paint(None, true);
+        client.set_debug_paint(None, false);
+        client.set_slow_animations(None, true);
+        let on = request(&mut socket);
+        assert_eq!(on["method"], "ext.flutter.debugPaint");
+        assert_eq!(
+            on["params"],
+            json!({ "enabled": "true", "isolateId": "isolates/1" })
+        );
+        respond(&mut socket, &tree["id"], json!({}));
+        socket
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        assert!(matches!(
+            socket.read(),
+            Err(tungstenite::Error::Io(e))
+                if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)
+        ));
+        socket
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        respond(&mut socket, &on["id"], json!({ "enabled": "true" }));
+        let off = request(&mut socket);
+        assert_eq!(off["method"], "ext.flutter.debugPaint");
+        assert_eq!(off["params"]["enabled"], "false");
+        respond(&mut socket, &off["id"], json!({ "enabled": "false" }));
+        let slow = request(&mut socket);
+        assert_eq!(slow["method"], "ext.flutter.timeDilation");
+        assert_eq!(slow["params"]["timeDilation"], "5.0");
+        respond(&mut socket, &slow["id"], json!({ "timeDilation": "5.0" }));
+        client.set_debug_paint(None, true);
+        let in_flight = request(&mut socket);
+        assert_eq!(in_flight["params"]["isolateId"], "isolates/1");
+        client.set_repaint_rainbow(None, true);
+        let exit = json!({
+            "jsonrpc": "2.0",
+            "method": "streamNotify",
+            "params": {
+                "streamId": "Isolate",
+                "event": { "kind": "IsolateExit", "isolate": { "id": "isolates/1" } }
+            }
+        });
+        socket.send(Message::Text(exit.to_string().into())).unwrap();
+
+        let mut replacement = connect_fixture("isolates/2");
+        let tree = request(&mut replacement);
+        respond(&mut replacement, &tree["id"], json!({}));
+        replacement
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        assert!(matches!(
+            replacement.read(),
+            Err(tungstenite::Error::Io(e))
+                if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)
+        ));
+        replacement
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client.set_repaint_rainbow(None, false);
+        let current = request(&mut replacement);
+        assert_eq!(current["method"], "ext.flutter.repaintRainbow");
+        assert_eq!(
+            current["params"],
+            json!({ "isolateId": "isolates/2", "enabled": "false" })
+        );
+        respond(
+            &mut replacement,
+            &current["id"],
+            json!({ "enabled": "false" }),
+        );
+
+        client.set_debug_paint(None, true);
+        let in_flight = request(&mut replacement);
+        assert_eq!(in_flight["params"]["isolateId"], "isolates/2");
+        client.set_slow_animations(None, true);
+        client.connect(format!("http://{}/", listener.local_addr().unwrap()));
+
+        let mut rerun = connect_fixture("isolates/3");
+        let tree = request(&mut rerun);
+        respond(&mut rerun, &tree["id"], json!({}));
+        rerun
+            .get_ref()
+            .set_read_timeout(Some(Duration::from_millis(50)))
+            .unwrap();
+        assert!(matches!(
+            rerun.read(),
+            Err(tungstenite::Error::Io(e))
+                if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)
+        ));
     }
 
     #[test]

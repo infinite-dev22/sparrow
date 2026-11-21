@@ -6,10 +6,7 @@ use std::rc::Rc;
 
 use floem::{
     View,
-    reactive::create_rw_signal,
-    views::{
-        Decorators, stack,
-    },
+    views::{Decorators, stack},
 };
 
 use super::position::PanelPosition;
@@ -33,12 +30,7 @@ pub fn flutter_inspector_panel(
     let ui_line_height = window_tab_data.common.ui_line_height;
     let state = data.state.read_only();
 
-    // VM runtime toggle flags
-    let debug_paint = create_rw_signal(false);
-    let perf_overlay = create_rw_signal(false);
-    let slow_animations = create_rw_signal(false);
-    let repaint_rainbow = create_rw_signal(false);
-
+    let switches = data.runtime_switches;
     let client = data.client.clone();
 
     stack((
@@ -46,10 +38,10 @@ pub fn flutter_inspector_panel(
         // Quick toggle action bar
         toggle_bar(
             client,
-            debug_paint,
-            perf_overlay,
-            slow_animations,
-            repaint_rainbow,
+            switches.debug_paint,
+            switches.performance_overlay,
+            switches.slow_animations,
+            switches.repaint_rainbow,
             state,
             config,
         ),

@@ -5,17 +5,15 @@ use std::rc::Rc;
 
 use floem::{
     View,
-    reactive::{create_rw_signal, SignalGet},
-    views::{
-        Decorators, empty, label, scroll, stack,
-    },
+    reactive::SignalGet,
+    views::{Decorators, empty, label, scroll, stack},
 };
 
 use super::position::PanelPosition;
 use crate::{
-    widgets::{clickable_icon, toggle_row},
     config::{color::SparrowColor, icon::SparrowIcons},
     dart::InspectorState,
+    widgets::{clickable_icon, toggle_row},
     window_tab::WindowTabData,
 };
 
@@ -34,12 +32,8 @@ pub fn flutter_performance_panel(
     let config = window_tab_data.common.config;
     let state = inspector.state;
 
-    // Local toggle states for VM service runtime flags
-    let debug_paint = create_rw_signal(false);
-    let perf_overlay = create_rw_signal(false);
-    let slow_animations = create_rw_signal(false);
-    let repaint_rainbow = create_rw_signal(false);
-
+    let switches = inspector.runtime_switches;
+    let disconnected = move || state.get() != InspectorState::Connected;
     let client = inspector.client.clone();
 
     stack((
@@ -48,7 +42,9 @@ pub fn flutter_performance_panel(
             label(move || match state.get() {
                 InspectorState::Connected => "Flutter VM: Connected".to_string(),
                 InspectorState::Connecting => "Flutter VM: Connecting…".to_string(),
-                InspectorState::Disconnected => "Flutter VM: Disconnected".to_string(),
+                InspectorState::Disconnected => {
+                    "Flutter VM: Disconnected".to_string()
+                }
             })
             .style(move |s| {
                 let c = config.get();
@@ -78,56 +74,57 @@ pub fn flutter_performance_panel(
                 .border_bottom(1.0)
                 .border_color(c.color(SparrowColor::SPARROW_BORDER))
         }),
-
         scroll(
             stack((
                 // Rendering performance indicators (UI vs Raster thread counters)
                 devtools,
                 perf_metrics_section(config),
-
                 // Runtime toggle controls
                 section_header("RUNTIME DIAGNOSTIC TOGGLES", config),
-
                 toggle_row(
                     "Toggle Debug Paint",
                     Some("Draw visual layout and padding boundaries"),
-                    debug_paint,
+                    switches.debug_paint,
                     {
                         let c = client.clone();
                         move |val| c.set_debug_paint(None, val)
                     },
                     config,
-                ),
+                )
+                .disabled(disconnected),
                 toggle_row(
                     "Show Performance Overlay",
                     Some("Display real-time GPU/Raster and UI frame graphs"),
-                    perf_overlay,
+                    switches.performance_overlay,
                     {
                         let c = client.clone();
                         move |val| c.set_performance_overlay(None, val)
                     },
                     config,
-                ),
+                )
+                .disabled(disconnected),
                 toggle_row(
                     "Slow Animations (5.0x)",
                     Some("Dilate animation time to inspect UI transitions"),
-                    slow_animations,
+                    switches.slow_animations,
                     {
                         let c = client.clone();
                         move |val| c.set_slow_animations(None, val)
                     },
                     config,
-                ),
+                )
+                .disabled(disconnected),
                 toggle_row(
                     "Repaint Rainbow",
                     Some("Rotate layer border colors when repainted"),
-                    repaint_rainbow,
+                    switches.repaint_rainbow,
                     {
                         let c = client.clone();
                         move |val| c.set_repaint_rainbow(None, val)
                     },
                     config,
-                ),
+                )
+                .disabled(disconnected),
             ))
             .style(|s| s.flex_col().min_width_full()),
         )
@@ -139,7 +136,9 @@ pub fn flutter_performance_panel(
 
 fn section_header(
     title: &'static str,
-    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
+    config: floem::reactive::ReadSignal<
+        std::sync::Arc<crate::config::SparrowConfig>,
+    >,
 ) -> impl View {
     label(move || title.to_string()).style(move |s| {
         let c = config.get();
