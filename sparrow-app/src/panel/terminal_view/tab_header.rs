@@ -27,6 +27,7 @@ pub(super) fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl Vi
     let terminal = window_tab_data.terminal.clone();
     let config = window_tab_data.common.config;
     let focus = window_tab_data.common.focus;
+    let is_local = window_tab_data.workspace.kind.is_local();
     let active_index = move || terminal.tab_info.with(|info| info.active);
     let tab_info = terminal.tab_info;
     let header_width = create_rw_signal(0.0);
@@ -55,19 +56,38 @@ pub(super) fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl Vi
                 let title = {
                     let tab = tab.clone();
                     move || {
-                        let terminal = tab.active_terminal(true);
-                        let run_debug = terminal.as_ref().map(|t| t.run_debug);
-                        if let Some(run_debug) = run_debug {
-                            if let Some(name) = run_debug.with(|run_debug| {
-                                run_debug.as_ref().map(|r| r.config.name.clone())
-                            }) {
-                                return name;
-                            }
+                        let Some(terminal) = tab.active_terminal(true) else {
+                            return String::new();
+                        };
+                        if let Some(name) = terminal.run_debug.with(|run_debug| {
+                            run_debug.as_ref().map(|r| r.config.name.clone())
+                        }) {
+                            return name;
+                        }
+                        if !is_local {
+                            return terminal.title.get();
                         }
 
-                        let title = terminal.map(|t| t.title);
-                        let title = title.map(|t| t.get());
-                        title.unwrap_or_default()
+                        let preceding_shell_tabs = tab_info.with(|info| {
+                            info.tabs
+                                .iter()
+                                .take_while(|(_, tab)| {
+                                    tab.terminal_tab_id != terminal_tab_id
+                                })
+                                .filter(|(_, tab)| {
+                                    tab.active_terminal(true).is_some_and(
+                                        |terminal| {
+                                            terminal.run_debug.with(Option::is_none)
+                                        },
+                                    )
+                                })
+                                .count()
+                        });
+                        if preceding_shell_tabs == 0 {
+                            "local".to_owned()
+                        } else {
+                            format!("local ({})", preceding_shell_tabs + 1)
+                        }
                     }
                 };
 
