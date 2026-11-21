@@ -208,9 +208,10 @@ fn show(menu: Menu, position: Option<Point>, anchor: Option<ViewId>) {
     let pos = position.unwrap_or_else(|| POINTER.with(|last| *last.borrow()));
     let config = common.config;
     let size = common.window_common.size;
-    let levels = create_rw_signal(vec![menu.clone()]);
-    let selections = create_rw_signal(vec![first_enabled(&menu)]);
     let id = add_overlay(Point::ZERO, move |overlay| {
+        // The overlay can outlive the callback that requested it.
+        let selections = create_rw_signal(vec![first_enabled(&menu)]);
+        let levels = create_rw_signal(vec![menu]);
         let columns=dyn_stack(move ||levels.get().into_iter().enumerate().collect::<Vec<_>>(),|(depth,menu)|(*depth,menu.title.clone()),move |(depth,menu)|{
             let width=(menu.entries.iter().map(|item|item.title().chars().count()).max().unwrap_or(12) as f64*7.0+56.0).clamp(220.0,440.0);
             let row_count=menu.entries.len();
