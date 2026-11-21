@@ -39,7 +39,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
 use floem::reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate};
 use serde_json::{Value, json};
 use sparrow_rpc::terminal::TermId;
@@ -154,7 +154,7 @@ impl VmServiceClient {
 
     /// Toggle Flutter slow animations (5.0x dilation).
     pub fn set_slow_animations(&self, isolate_id: Option<&str>, enabled: bool) {
-        let mut params = json!({ "timeDilation": if enabled { 5.0 } else { 1.0 } });
+        let mut params = json!({ "timeDilation": if enabled { "5.0" } else { "1.0" } });
         if let Some(id) = isolate_id {
             if let Some(map) = params.as_object_mut() {
                 map.insert("isolateId".to_string(), json!(id));
@@ -186,12 +186,6 @@ impl VmServiceClient {
     }
 }
 
-impl Drop for VmServiceClient {
-    fn drop(&mut self) {
-        let _ = self.tx.send(Command::Shutdown);
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────
 //  Commands (UI → worker)
 // ─────────────────────────────────────────────────────────────────────
@@ -199,7 +193,6 @@ impl Drop for VmServiceClient {
 enum Command {
     Connect(String),
     Disconnect,
-    Shutdown,
     CallServiceExtension { method: String, params: Value },
 }
 
@@ -215,24 +208,31 @@ struct ConnectionWorker {
 
 impl ConnectionWorker {
     fn run(self) {
+        let mut next_url = None;
         loop {
             // Wait for a Connect / Disconnect / Shutdown while idle.
-            let url = match self.rx.recv() {
-                Ok(Command::Connect(url)) => url,
-                Ok(Command::Disconnect) | Ok(Command::Shutdown) | Ok(Command::CallServiceExtension { .. }) => continue,
-                Err(_) => return,
+            let url = match next_url.take() {
+                Some(url) => url,
+                None => match self.rx.recv() {
+                    Ok(Command::Connect(url)) => url,
+                    Ok(Command::Disconnect | Command::CallServiceExtension { .. }) => continue,
+                    Err(_) => return,
+                },
             };
 
-            if let Err(err) = self.run_connection(&url) {
-                let _ = self.notif_tx.send(Notification::Error(err));
+            match self.run_connection(&url) {
+                Ok(reconnect) => next_url = reconnect,
+                Err(err) => {
+                    let _ = self.notif_tx.send(Notification::Error(err));
+                }
             }
             self.connected.store(false, Ordering::Relaxed);
             let _ = self.notif_tx.send(Notification::Disconnected);
         }
     }
 
-    fn run_connection(&self, http_url: &str) -> Result<(), String> {
-        let ws_url = to_ws_url(http_url)?;
+    fn run_connection(&self, vm_url: &str) -> Result<Option<String>, String> {
+        let ws_url = to_ws_url(vm_url)?;
         let (mut socket, isolate_id) = self.open_and_handshake(&ws_url)?;
 
         self.connected.store(true, Ordering::Relaxed);
@@ -244,16 +244,16 @@ impl ConnectionWorker {
         let mut last_refresh = Instant::now();
         loop {
             // Drain pending UI commands.
-            while let Ok(cmd) = self.rx.try_recv() {
-                match cmd {
-                    Command::Connect(_new_url) => {
-                        // Reconnect: bail out, outer loop will pick up the
-                        // new URL from the queue.
-                        return Ok(());
-                    }
-                    Command::Disconnect | Command::Shutdown => return Ok(()),
-                    Command::CallServiceExtension { method, params } => {
-                        let _ = self.send_nonblocking(&mut socket, 100, &method, params);
+            loop {
+                match self.rx.try_recv() {
+                    Ok(Command::Connect(url)) => return Ok(Some(url)),
+                    Ok(Command::Disconnect) | Err(TryRecvError::Disconnected) => return Ok(None),
+                    Err(TryRecvError::Empty) => break,
+                    Ok(Command::CallServiceExtension { method, mut params }) => {
+                        if let Some(params) = params.as_object_mut() {
+                            params.entry("isolateId").or_insert_with(|| json!(isolate_id));
+                        }
+                        self.send_nonblocking(&mut socket, next_request_id(), &method, params)?;
                     }
                 }
             }
@@ -274,7 +274,7 @@ impl ConnectionWorker {
                 | Ok(Message::Pong(_))
                 | Ok(Message::Binary(_))
                 | Ok(Message::Frame(_)) => {}
-                Ok(Message::Close(_)) => return Ok(()),
+                Ok(Message::Close(_)) => return Ok(None),
                 Err(tungstenite::Error::Io(e))
                     if matches!(
                         e.kind(),
@@ -469,7 +469,7 @@ impl ConnectionWorker {
                 // Fire-and-forget refresh — response handled above.
                 self.send_widget_tree_request(
                     socket,
-                    next_id_for_tree(),
+                    next_request_id(),
                     isolate_id,
                 )?;
             }
@@ -483,7 +483,7 @@ impl ConnectionWorker {
     }
 }
 
-fn next_id_for_tree() -> i64 {
+fn next_request_id() -> i64 {
     // Simple monotonic tick — any i64 works as long as it's unique per
     // outstanding request. The state machine is single-threaded, so a
     // thread-local counter isn't needed; we just bump a static.
@@ -495,11 +495,14 @@ fn next_id_for_tree() -> i64 {
 /// Convert the printed HTTP URL to the WebSocket endpoint.
 ///
 /// `http://127.0.0.1:PORT/TOKEN=/` → `ws://127.0.0.1:PORT/TOKEN=/ws`
-fn to_ws_url(http_url: &str) -> Result<String, String> {
-    let trimmed = http_url.trim_end_matches('/');
+fn to_ws_url(vm_url: &str) -> Result<String, String> {
+    if vm_url.starts_with("ws://") {
+        return Ok(vm_url.to_owned());
+    }
+    let trimmed = vm_url.trim_end_matches('/');
     let base = trimmed
         .strip_prefix("http://")
-        .ok_or_else(|| format!("not an http url: {http_url}"))?;
+        .ok_or_else(|| "Expected a local VM service HTTP or WebSocket URL".to_string())?;
     Ok(format!("ws://{base}/ws"))
 }
 
@@ -693,6 +696,12 @@ mod tests {
             to_ws_url("http://127.0.0.1:41677/TOKEN=/").unwrap(),
             to_ws_url("http://127.0.0.1:41677/TOKEN=").unwrap()
         );
+    }
+
+    #[test]
+    fn to_ws_url_preserves_debug_adapter_websocket() {
+        let url = "ws://127.0.0.1:41677/TOKEN=/ws";
+        assert_eq!(to_ws_url(url).unwrap(), url);
     }
 
     #[test]

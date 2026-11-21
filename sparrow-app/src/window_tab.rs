@@ -1157,7 +1157,7 @@ impl WindowTabData {
             });
         }
 
-        // ── Flutter inspector: connect when VM Service URL is received from daemon ──
+        // Connect when either live Flutter tool window needs the VM service.
         {
             let inspector = flutter_inspector.clone();
             let inspector_panel = window_tab_data.panel.clone();
@@ -1167,7 +1167,11 @@ impl WindowTabData {
                     let running = hot_reload.state.get()
                         == crate::dart::FlutterRunState::Running;
                     let _ = inspector_panel.styles.get();
-                    if running && !ws_uri.is_empty() && inspector_panel.is_panel_visible(&PanelKind::FlutterInspector) {
+                    if running
+                        && !ws_uri.is_empty()
+                        && (inspector_panel.is_panel_visible(&PanelKind::FlutterInspector)
+                            || inspector_panel.is_panel_visible(&PanelKind::FlutterPerformance))
+                    {
                         let term_id = hot_reload
                             .active_term
                             .get_untracked()
@@ -3142,6 +3146,19 @@ impl WindowTabData {
                 crate::background_tasks::debug_event(&self.common.background_tasks.reporter(), dap_id, event);
                 self.handle_debug_action_event(*dap_id, event);
 
+                if event["type"] == "dart.debuggerUris"
+                    && let Some(uri) = event["body"]["vmServiceUri"].as_str()
+                    && self.terminal.debug.adapter_sessions.with_untracked(|sessions| {
+                        sessions.get(dap_id).is_some_and(|(term, process)| {
+                            !process.stopped
+                                && self.flutter_hot_reload.active_term.get_untracked() == Some(*term)
+                                && crate::dart::run_config::is_flutter_target(&process.config)
+                        })
+                    })
+                {
+                    self.flutter_hot_reload.ws_uri.set(Some(uri.to_owned()));
+                }
+
                 if let Some(output) = event.get("output").and_then(|v| v.as_str()) {
                     if self.terminal.debug.daps.with_untracked(|daps| daps.contains_key(dap_id)) {
                         self.terminal.debug.console_output.update(|buffers| {
@@ -3969,7 +3986,7 @@ impl WindowTabData {
 
     pub fn show_panel(&self, kind: PanelKind) {
         let kind = kind.canonical();
-        if kind == PanelKind::FlutterInspector {
+        if matches!(kind, PanelKind::FlutterInspector | PanelKind::FlutterPerformance) {
             if let (Some(term), Some(uri)) = (self.flutter_hot_reload.active_term.get_untracked(), self.flutter_hot_reload.ws_uri.get_untracked()) {
                 self.flutter_inspector.on_vm_url(term, uri);
             }
