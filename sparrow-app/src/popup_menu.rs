@@ -7,7 +7,7 @@ use floem::{
     keyboard::{Key, NamedKey},
     kurbo::Point,
     reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal},
-    views::{Decorators, dyn_stack, empty, label, scroll, stack},
+    views::{Decorators, dyn_stack, label, scroll, stack},
 };
 use std::{
     cell::RefCell,
@@ -214,7 +214,13 @@ fn show(menu: Menu, position: Option<Point>, anchor: Option<ViewId>) {
             let width=(menu.entries.iter().map(|item|item.title().chars().count()).max().unwrap_or(12) as f64*7.0+56.0).clamp(220.0,440.0);
             let row_count=menu.entries.len();
             let rows=dyn_stack(move ||menu.entries.clone().into_iter().enumerate().collect::<Vec<_>>(),|(index,_)|*index,move |(index,entry)| {
-                if matches!(entry,MenuEntry::Separator){return empty().style(move |s|s.height(1.0).margin_vert(4.0).margin_horiz(8.0).background(config.get().color(SparrowColor::SPARROW_BORDER))).into_any();}
+                if matches!(entry, MenuEntry::Separator) {
+                    return crate::divider::Divider::new(config)
+                        .spacing(4.0)
+                        .indent(8.0)
+                        .into_view()
+                        .into_any();
+                }
                 let enabled=entry.enabled();let title=entry.title().to_string();let child=matches!(entry,MenuEntry::SubMenu(_));
                 stack((label(move ||title.clone()).style(|s|s.flex_grow(1.0_f32)),label(move ||if child {"›"}else{""}).style(|s|s.margin_left(24.0))))
                     .on_event_stop(EventListener::PointerEnter,move |_|{if enabled{enter(levels,selections,depth,index,overlay,restore,false);}})

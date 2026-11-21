@@ -14,7 +14,7 @@ use floem::{
         create_rw_signal,
     },
     views::{
-        Decorators, dyn_stack, empty, img_from_path, label, rich_text, scroll, stack,
+        Decorators, dyn_stack, img_from_path, label, rich_text, scroll, stack,
     },
 };
 use sparrow_core::buffer::rope_text::RopeText;
@@ -246,12 +246,8 @@ pub fn preview(
                 MarkdownContent::Text(layout) => rich_text(move || layout.clone())
                     .style(|s| s.width_full())
                     .into_any(),
-                MarkdownContent::Separator => empty()
-                    .style(move |s| {
-                        s.height(1.0).width_full().background(
-                            config.get().color(SparrowColor::SPARROW_BORDER),
-                        )
-                    })
+                MarkdownContent::Separator => crate::divider::Divider::new(config)
+                    .into_view()
                     .into_any(),
             },
         )

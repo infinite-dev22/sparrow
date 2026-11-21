@@ -3216,12 +3216,10 @@ fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
                 )
                 .style(|s| s.max_width_full()),
                 MarkdownContent::Image { .. } => container(empty()),
-                MarkdownContent::Separator => container(empty().style(move |s| {
-                    s.width_full()
-                        .margin_vert(5.0)
-                        .height(1.0)
-                        .background(config.get().color(SparrowColor::SPARROW_BORDER))
-                })),
+                MarkdownContent::Separator => container(
+                    crate::divider::Divider::new(config).spacing(5.0).into_view()
+                        .style(|s| s.width_full()),
+                ),
             },
         )
         .style(|s| s.flex_col().padding_horiz(10.0).padding_vert(5.0)),

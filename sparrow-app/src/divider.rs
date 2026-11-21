@@ -1,6 +1,16 @@
-use floem::IntoView;
-use floem::peniko::Color;
-use floem::prelude::*;
+//! Decorative separators for stacks and toolbars.
+
+use std::sync::Arc;
+
+use floem::{
+    View,
+    peniko::Color,
+    reactive::{ReadSignal, SignalGet},
+    style::AlignItems,
+    views::{Decorators, empty},
+};
+
+use crate::config::{SparrowConfig, color::SparrowColor};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DividerVariant {
@@ -8,74 +18,79 @@ pub enum DividerVariant {
     Vertical,
 }
 
+/// A theme-aware rule that stretches across the cross axis of its parent stack.
+/// Use a horizontal rule in a column and a vertical rule in a row.
 pub struct Divider {
+    config: ReadSignal<Arc<SparrowConfig>>,
     variant: DividerVariant,
-    height: f32,
-    width: f32,
-    color: Color,
+    thickness: f32,
+    color: Option<Color>,
     indent: f32,
+    spacing: f32,
 }
 
 impl Divider {
-    pub fn new() -> Self {
+    pub fn new(config: ReadSignal<Arc<SparrowConfig>>) -> Self {
         Self {
+            config,
             variant: DividerVariant::Horizontal,
-            height: 1.0,
-            width: 1.0,
-            color: Color::from_rgb8(200, 200, 200),
+            thickness: 1.0,
+            color: None,
             indent: 0.0,
+            spacing: 0.0,
         }
     }
 
-    pub fn variant(&mut self, variant: DividerVariant) -> &mut Self {
+    pub fn variant(mut self, variant: DividerVariant) -> Self {
         self.variant = variant;
         self
     }
 
-    pub fn height(&mut self, height: f32) -> &mut Self {
-        self.height = height;
+    pub fn thickness(mut self, pixels: f32) -> Self {
+        self.thickness = pixels.max(0.0);
         self
     }
 
-    pub fn width(&mut self, width: f32) -> &mut Self {
-        self.width = width;
+    /// Override the theme's separator color.
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
         self
     }
 
-    pub fn color(&mut self, color: Color) -> &mut Self {
-        self.color = color;
+    /// Inset both ends of the rule.
+    pub fn indent(mut self, pixels: f32) -> Self {
+        self.indent = pixels.max(0.0);
         self
     }
 
-    pub fn indent(&mut self, indent: f32) -> &mut Self {
-        self.indent = indent;
+    /// Leave space between the rule and the views it separates.
+    pub fn spacing(mut self, pixels: f32) -> Self {
+        self.spacing = pixels.max(0.0);
         self
     }
 
-    pub fn into_view(self) -> impl IntoView {
-        let variant = self.variant;
-        let height = self.height;
-        let width = self.width;
-        let color = self.color;
-        let indent = self.indent;
-
-        let view = empty().style(move |s| {
-            let base = s.background(color);
-
-            match variant {
-                DividerVariant::Horizontal => {
-                    base.width_full()
-                        .height(height)
-                        .margin_vert(indent)
+    pub fn into_view(self) -> impl View {
+        empty()
+            .style(move |s| {
+                let color = self.color.unwrap_or_else(|| {
+                    self.config.get().color(SparrowColor::SPARROW_BORDER)
+                });
+                let s = s
+                    .background(color)
+                    .align_self(Some(AlignItems::Stretch))
+                    .flex_shrink(0.0_f32)
+                    .pointer_events_none();
+                match self.variant {
+                    DividerVariant::Horizontal => s
+                        .height(self.thickness)
+                        .margin_horiz(self.indent)
+                        .margin_vert(self.spacing),
+                    DividerVariant::Vertical => s
+                        .width(self.thickness)
+                        .margin_vert(self.indent)
+                        .margin_horiz(self.spacing),
                 }
-                DividerVariant::Vertical => {
-                    base.height_full()
-                        .width(width)
-                        .margin_horiz(indent)
-                }
-            }
-        });
-
-        view.into_any()
+            })
+            .debug_name("Divider")
     }
 }

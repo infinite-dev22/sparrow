@@ -32,6 +32,7 @@ use crate::{
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     dart::FlutterHotReloadData,
     db::SparrowDb,
+    divider::Divider,
     listener::Listener,
     update::ReleaseInfo,
     window_tab::WindowTabData,
@@ -1137,13 +1138,7 @@ pub fn project_switcher(
         })
     };
 
-    let divider = move || {
-        empty().style(move |s| {
-            s.height(1.0)
-                .margin_vert(6.0)
-                .background(config.get().color(SparrowColor::SPARROW_BORDER))
-        })
-    };
+    let divider = move || Divider::new(config).spacing(6.0).into_view();
 
     let build_project_item =
         move |workspace: Arc<SparrowWorkspace>, branch: String, is_current: bool| {
@@ -1390,14 +1385,7 @@ pub fn branch_switcher(
         })
     };
 
-    // Thin divider
-    let divider = move |margin: f32| {
-        empty().style(move |s| {
-            s.height(1.0)
-                .margin_vert(margin)
-                .background(config.get().color(SparrowColor::SPARROW_BORDER))
-        })
-    };
+    let divider = move |spacing| Divider::new(config).spacing(spacing).into_view();
 
     // Helper to draw a single branch/tag row
     let branch_row = move |name: String, is_current: bool| {
@@ -1893,11 +1881,7 @@ pub fn device_selector_overlay(
                     }),
                     // Emulators section (if any available)
                     stack((
-                        empty().style(move |s| {
-                            s.height(1.0).margin_vert(6.0).background(
-                                config.get().color(SparrowColor::SPARROW_BORDER),
-                            )
-                        }),
+                        Divider::new(config).spacing(6.0).into_view(),
                         label(|| "Available Emulators".to_string()).style(
                             move |s| {
                                 let c = config.get();
@@ -1929,12 +1913,7 @@ pub fn device_selector_overlay(
                                 .apply_if(is_empty, |s| s.hide())
                         }
                     }),
-                    // Divider
-                    empty().style(move |s| {
-                        s.height(1.0).margin_vert(6.0).background(
-                            config.get().color(SparrowColor::SPARROW_BORDER),
-                        )
-                    }),
+                    Divider::new(config).spacing(6.0).into_view(),
                     // Refresh Devices Action
                     container(
                         stack((

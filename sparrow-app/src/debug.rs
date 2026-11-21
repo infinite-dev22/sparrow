@@ -8,7 +8,7 @@ use std::{
 
 use floem::reactive::create_memo;
 use floem::style::Display;
-use floem::views::{Decorators, container, empty, stack};
+use floem::views::{Decorators, container, stack};
 use floem::{
     ext_event::create_ext_action,
     reactive::{Memo, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
@@ -858,11 +858,10 @@ pub fn debug_floating_toolbar(
                 }),
                 "Step Out",
             ),
-            empty().style(move |s| {
-                s.width(1.0)
-                    .height(16.0)
-                    .background(config.get().color(SparrowColor::SPARROW_BORDER))
-            }),
+            crate::divider::Divider::new(config)
+                .variant(crate::divider::DividerVariant::Vertical)
+                .into_view()
+                .style(|s| s.height(16.0).align_self(None)),
             icon_btn(
                 SparrowIcons::DEBUG_RESTART,
                 Box::new({

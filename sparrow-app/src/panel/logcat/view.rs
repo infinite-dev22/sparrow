@@ -1,11 +1,11 @@
-use crate::tooltip::TooltipExt;
 use super::{
     Buffer, Pane, State,
     model::{self, Entry},
     query::Query,
 };
-use crate::divider::Divider;
+use crate::divider::{Divider, DividerVariant};
 use crate::panel::kind::PanelKind;
+use crate::tooltip::TooltipExt;
 use crate::{
     app::clickable_icon,
     config::{color::SparrowColor, icon::SparrowIcons},
@@ -19,8 +19,8 @@ use floem::{
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
     style::CursorStyle,
     views::{
-        Decorators, dyn_container, dyn_stack, empty, label, scroll,
-        stack, svg, virtual_stack,
+        Decorators, dyn_container, dyn_stack, empty, label, scroll, stack, svg,
+        virtual_stack,
     },
 };
 use std::sync::Arc;
@@ -216,11 +216,9 @@ pub(super) fn panel(state: State) -> impl View {
                         pane_view(body_state.clone(), pane).style(|s| {
                             s.width_pct(50.0).min_width(0.0).height_full()
                         }),
-                        empty().style(move |s| {
-                            s.width(1.0).height_full().background(
-                                config.get().color(SparrowColor::SPARROW_BORDER),
-                            )
-                        }),
+                        Divider::new(config)
+                            .variant(DividerVariant::Vertical)
+                            .into_view(),
                         pane_view(body_state.clone(), other).style(|s| {
                             s.flex_grow(1.0_f32)
                                 .flex_basis(0)
@@ -767,9 +765,10 @@ fn pane_view(state: State, pane: Pane) -> impl View {
     let body_height = create_rw_signal(0.0_f64);
     let toolbar_state = state.clone();
     let toolbar_pane = pane.clone();
-    // Reserve one slot for the chevron. Actions that cannot fit move into it.
+    // Reserve room for the chevron and its separator.
     let primary_count = create_memo(move |_| {
-        ((body_height.get() / TOOLBAR_BUTTON).floor() as usize)
+        (((body_height.get() - TOOLBAR_DIVIDER).max(0.0) / TOOLBAR_BUTTON).floor()
+            as usize)
             .saturating_sub(1)
             .min(PRIMARY_ACTIONS)
     });
@@ -1141,6 +1140,7 @@ fn toolbar_actions(
 
 const TOOLBAR_BUTTON: f64 = 26.0;
 const TOOLBAR_WIDTH: f64 = 34.0;
+const TOOLBAR_DIVIDER: f64 = 1.0;
 const PRIMARY_ACTIONS: usize = 7;
 
 fn logcat_toolbar(
@@ -1154,7 +1154,6 @@ fn logcat_toolbar(
     let mut actions = toolbar_actions(state, pane, shown, jump);
     let secondary = actions.split_off(primary_count);
     let expanded = create_rw_signal(false);
-    let divider = Divider::new().into_view();
     let chevron = clickable_icon(
         || SparrowIcons::ITEM_CLOSED,
         move || expanded.set(true),
@@ -1192,7 +1191,15 @@ fn logcat_toolbar(
                 .border_color(config.color(SparrowColor::SPARROW_BORDER))
                 .apply_if(!expanded.get(), |s| s.hide())
         });
-    let overflow = stack((divider, chevron, flyout))
+    let trigger = stack((
+        Divider::new(config)
+            .thickness(TOOLBAR_DIVIDER as f32)
+            .indent(6.0)
+            .into_view(),
+        chevron,
+    ))
+    .style(|s| s.width(TOOLBAR_WIDTH).flex_col().flex_shrink(0.0_f32));
+    let overflow = stack((trigger, flyout))
         .on_event_cont(EventListener::PointerLeave, move |_| expanded.set(false))
         .on_event(EventListener::KeyDown, move |event| {
             if expanded.get() && matches!(event, Event::KeyDown(key) if key.key.logical_key == Key::Named(NamedKey::Escape)) {
