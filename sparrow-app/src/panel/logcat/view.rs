@@ -85,6 +85,7 @@ pub(super) fn panel(state: State) -> impl View {
                         .items_center()
                         .padding_horiz(7.0)
                         .margin_right(4.0)
+                        .flex_shrink(0.0_f32)
                         .border_radius(3.0)
                         .border(1.0)
                         .border_color(if active.get() == id {
@@ -105,7 +106,8 @@ pub(super) fn panel(state: State) -> impl View {
         })
         .style(|s| s.items_center()),
     )
-    .style(|s| s.min_width(0.0).flex_shrink(1.0_f32).max_width_pct(80.0));
+    .scroll_style(|s| s.hide_bars(true).vertical_scroll_as_horizontal(true))
+    .style(|s| s.min_width(0.0).flex_shrink(1.0_f32));
     let header = super::super::chrome::header(
         state.window.clone(),
         PanelKind::Logcat,
@@ -129,7 +131,7 @@ pub(super) fn panel(state: State) -> impl View {
                 config,
             ),
         ))
-        .style(|s| s.items_center().min_width(0.0)),
+        .style(|s| s.items_center().min_width(0.0).flex_shrink(1.0_f32)),
     );
     let import_state = state.clone();
     let load = state.clone();
@@ -352,6 +354,7 @@ fn variant_bar(state: State) -> impl View {
                 .style(|s| s.width(280.0).max_width_full().flex_shrink(1.0_f32))
         },
     );
+    let choices = choices.style(|s| s.min_width(0.0).flex_shrink(1.0_f32));
     let summary = state.clone();
     let details = state.clone();
     let refresh = state.clone();
@@ -548,20 +551,18 @@ fn pane_view(state: State, pane: Pane) -> impl View {
         )
     })
     .style(move |s| {
-        s.width(if width.get() > 500.0 {
-            396.0
-        } else {
-            width.get() - 16.0
-        })
-        .max_width_full()
-        .height(30.0)
-        .items_center()
-        .padding_horiz(12.0)
-        .border(1.0)
-        .border_radius(3.0)
-        .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-        .text_ellipsis()
-        .cursor(CursorStyle::Pointer)
+        s.width(396.0)
+            .min_width(0.0)
+            .max_width_full()
+            .flex_shrink(0.0_f32)
+            .height(30.0)
+            .items_center()
+            .padding_horiz(12.0)
+            .border(1.0)
+            .border_radius(3.0)
+            .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+            .text_ellipsis()
+            .cursor(CursorStyle::Pointer)
     });
     let hist = state.clone();
     let hist_p = pane.clone();
@@ -629,8 +630,9 @@ fn pane_view(state: State, pane: Pane) -> impl View {
         }),
     ))
     .style(move |s| {
-        s.flex_grow(1.0_f32)
-            .flex_basis(0)
+        let narrow = width.get() <= 500.0;
+        s.apply_if(!narrow, |s| s.flex_grow(1.0_f32).flex_basis(0))
+            .apply_if(narrow, |s| s.width_full().flex_shrink(0.0_f32))
             .min_width(0.0)
             .height(30.0)
             .items_center()
@@ -646,7 +648,7 @@ fn pane_view(state: State, pane: Pane) -> impl View {
             .items_center()
             .flex_shrink(0.0_f32)
             .apply_if(width.get() <= 500.0, |s| {
-                s.flex_col().items_stretch().padding_vert(5.0)
+                s.flex_col().items_start().padding_vert(5.0).gap(8.0)
             })
     });
     let error_p = pane.clone();
@@ -691,8 +693,11 @@ fn pane_view(state: State, pane: Pane) -> impl View {
     ))
     .style(move |s| {
         s.width_full()
+            .min_width(0.0)
             .height(30.0)
+            .flex_shrink(0.0_f32)
             .items_center()
+            .gap(8.0)
             .padding_horiz(12.0)
             .background(Color::from_rgb8(69, 51, 29))
             .apply_if(
@@ -755,230 +760,29 @@ fn pane_view(state: State, pane: Pane) -> impl View {
             });
         });
     }
-    let pause = pane.clone();
-    let clear_p = pane.clone();
-    let restart_pane = pane.clone();
-    let restart_window = state.window.clone();
     let follow = pane.follow;
-    let compact = pane.compact;
-    let format_pane = pane.clone();
-    let format_state = state.clone();
-    let wrap = pane.wrap;
-    let split = state.clone();
     let jump = create_rw_signal(None::<usize>);
-    let next_rows = shown;
-    let previous_rows = shown;
-    let copy = shown;
-    let export = shown;
-    let export_window = state.window.clone();
-    let toolbar = stack((
-        clickable_icon(
-            || SparrowIcons::LOGCAT_CLEAR,
-            move || {
-                clear_p.data.update(Buffer::clear);
-                clear_p.frozen.set(Vec::new());
-            },
-            || false,
-            || false,
-            || "Clear displayed logs",
-            config,
-        ),
-        clickable_icon(
-            move || {
-                if pane.paused.get() {
-                    SparrowIcons::DEBUG_CONTINUE
-                } else {
-                    SparrowIcons::DEBUG_PAUSE
-                }
-            },
-            move || pause.pause(),
-            || false,
-            || false,
-            || "Pause / Resume display",
-            config,
-        ),
-        clickable_icon(
-            || SparrowIcons::LOGCAT_REFRESH,
-            move || {
-                if let Some(path) = restart_pane.file_path.get_untracked() {
-                    restart_pane.load_file(
-                        path,
-                        restart_window.clone(),
-                        Some(restart_pane.query.get_untracked()),
-                    );
-                } else {
-                    restart_pane.restart.update(|r| *r += 1);
-                }
-            },
-            || false,
-            || false,
-            || "Restart Logcat",
-            config,
-        ),
-        clickable_icon(
-            || SparrowIcons::FOLD_DOWN,
-            move || follow.set(true),
-            move || follow.get(),
-            || false,
-            || "Scroll to end",
-            config,
-        ),
-        clickable_icon(
-            || SparrowIcons::SEARCH_BACKWARD,
-            move || {
-                follow.set(false);
-                let rows = previous_rows.get_untracked();
-                let current = jump.get_untracked().unwrap_or(rows.len());
-                jump.set(
-                    rows.iter()
-                        .enumerate()
-                        .rev()
-                        .find(|(i, e)| {
-                            *i < current
-                                && model::priority(&e.level.to_string()).unwrap_or(0)
-                                    >= 4
-                        })
-                        .map(|(i, _)| i),
-                );
-            },
-            || false,
-            || false,
-            || "Previous error",
-            config,
-        ),
-        clickable_icon(
-            || SparrowIcons::SEARCH_FORWARD,
-            move || {
-                follow.set(false);
-                let current = jump.get_untracked();
-                jump.set(next_rows.with_untracked(|rows| {
-                    rows.iter()
-                        .enumerate()
-                        .find(|(i, e)| {
-                            current.is_none_or(|current| *i > current)
-                                && model::priority(&e.level.to_string()).unwrap_or(0)
-                                    >= 4
-                        })
-                        .map(|(i, _)| i)
-                }));
-            },
-            || false,
-            || false,
-            || "Next error",
-            config,
-        ),
-        clickable_icon(
-            || SparrowIcons::LOGCAT_WRAP,
-            move || wrap.update(|w| *w = !*w),
-            move || wrap.get(),
-            || false,
-            || "Soft wrap messages",
-            config,
-        ),
-        clickable_icon(
-            || SparrowIcons::SETTINGS,
-            || {},
-            move || compact.get(),
-            || false,
-            || "Configure Logcat formatting",
-            config,
-        )
-        .ide_popout_menu(move || {
-            formatting_menu(format_pane.clone(), format_state.clone())
-        }),
-        clickable_icon(
-            || SparrowIcons::SPLIT_HORIZONTAL,
-            move || {
-                if split.panes.with_untracked(|p| p.len()) < 2 {
-                    split.add();
-                }
-                split.split.update(|s| *s = !*s);
-            },
-            move || state.split.get(),
-            || false,
-            || "Split / Unsplit Logcat",
-            config,
-        ),
-        clickable_icon(
-            || SparrowIcons::LOGCAT_COPY,
-            move || {
-                crate::menus::copy_text(
-                    &copy
-                        .get_untracked()
-                        .iter()
-                        .map(|e| e.raw.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n"),
-                )
-            },
-            || false,
-            || false,
-            || "Copy filtered logs",
-            config,
-        ),
-        clickable_icon(
-            || SparrowIcons::LOGCAT_EXPORT,
-            move || {
-                let entries = export.get_untracked();
-                let window = export_window.clone();
-                floem::action::save_as(
-                    floem::file::FileDialogOptions::new().title("Export Logcat"),
-                    move |file| {
-                        if let Some(mut file) = file {
-                            if let Some(path) = file.path.pop() {
-                                let content = if path
-                                    .extension()
-                                    .is_some_and(|e| e.eq_ignore_ascii_case("json"))
-                                {
-                                    super::archive::encode(&entries)
-                                } else {
-                                    Ok(entries
-                                        .iter()
-                                        .map(|e| e.raw.as_str())
-                                        .collect::<Vec<_>>()
-                                        .join("\n"))
-                                };
-                                if let Err(error) = content.and_then(|text| {
-                                    std::fs::write(path, text)
-                                        .map_err(|e| e.to_string())
-                                }) {
-                                    window.show_alert(
-                                        "Cannot export logs".into(),
-                                        error.to_string(),
-                                        Vec::new(),
-                                    );
-                                }
-                            }
-                        }
-                    },
-                );
-            },
-            || false,
-            || false,
-            || "Export filtered logs…",
-            config,
-        ),
-        label(|| "?")
-            .on_click_stop(move |_| {
-                let _ =
-                    open::that("https://developer.android.com/studio/debug/logcat");
-            })
-            .style(|s| {
-                s.size(24.0, 24.0)
-                    .items_center()
-                    .justify_center()
-                    .cursor(CursorStyle::Pointer)
-            }),
-    ))
-    .style(|s| {
-        s.width(34.0)
-            .flex_shrink(0.0_f32)
-            .height_full()
-            .flex_col()
-            .items_center()
+    let body_height = create_rw_signal(0.0_f64);
+    let toolbar_state = state.clone();
+    let toolbar_pane = pane.clone();
+    // Reserve one slot for the chevron. Actions that cannot fit move into it.
+    let primary_count = create_memo(move |_| {
+        ((body_height.get() / TOOLBAR_BUTTON).floor() as usize)
+            .saturating_sub(1)
+            .min(PRIMARY_ACTIONS)
     });
-    let toolbar =
-        scroll(toolbar).style(|s| s.width(34.0).height_full().flex_shrink(0.0_f32));
+    let toolbar = dyn_container(
+        move || primary_count.get(),
+        move |count| {
+            logcat_toolbar(
+                toolbar_state.clone(),
+                toolbar_pane.clone(),
+                shown,
+                jump,
+                count,
+            )
+        },
+    );
     let formatting = pane.format;
     let wrap = pane.wrap;
     let row_height = move || formatting.get().height();
@@ -1057,21 +861,31 @@ fn pane_view(state: State, pane: Pane) -> impl View {
             s.flex_grow(1.0_f32)
                 .flex_basis(0)
                 .min_width(0.0)
-                .height_full()
+                .min_height(0.0)
+                .width_full()
         });
     stack((
         controls,
         warning,
         stack((
-            toolbar,
+            empty().style(|s| s.width(TOOLBAR_WIDTH).flex_shrink(0.0_f32)),
             stack((package_warning, viewport)).style(|s| {
                 s.flex_col()
                     .flex_grow(1.0_f32)
                     .flex_basis(0)
                     .min_width(0.0)
+                    .min_height(0.0)
                     .height_full()
             }),
+            toolbar.style(|s| {
+                s.absolute()
+                    .inset_left(0.0)
+                    .inset_top(0.0)
+                    .size_full()
+                    .z_index(10)
+            }),
         ))
+        .on_resize(move |rect| body_height.set(rect.height()))
         .style(|s| {
             s.width_full()
                 .flex_grow(1.0_f32)
@@ -1088,6 +902,316 @@ fn pane_view(state: State, pane: Pane) -> impl View {
             .color(config.get().color(SparrowColor::PANEL_FOREGROUND))
     })
 }
+fn toolbar_actions(
+    state: State,
+    pane: Pane,
+    shown: floem::reactive::Memo<Vec<Arc<Entry>>>,
+    jump: floem::reactive::RwSignal<Option<usize>>,
+) -> Vec<floem::AnyView> {
+    let config = state.window.common.config;
+    let pause = pane.clone();
+    let clear_p = pane.clone();
+    let restart_pane = pane.clone();
+    let restart_window = state.window.clone();
+    let follow = pane.follow;
+    let compact = pane.compact;
+    let format_pane = pane.clone();
+    let format_state = state.clone();
+    let wrap = pane.wrap;
+    let split = state.clone();
+    let next_rows = shown;
+    let previous_rows = shown;
+    let copy = shown;
+    let export = shown;
+    let export_window = state.window.clone();
+    vec![
+        clickable_icon(
+            || SparrowIcons::LOGCAT_CLEAR,
+            move || {
+                clear_p.data.update(Buffer::clear);
+                clear_p.frozen.set(Vec::new());
+            },
+            || false,
+            || false,
+            || "Clear displayed logs",
+            config,
+        )
+        .into_any(),
+        clickable_icon(
+            move || {
+                if pane.paused.get() {
+                    SparrowIcons::DEBUG_CONTINUE
+                } else {
+                    SparrowIcons::DEBUG_PAUSE
+                }
+            },
+            move || pause.pause(),
+            || false,
+            || false,
+            || "Pause / Resume display",
+            config,
+        )
+        .into_any(),
+        clickable_icon(
+            || SparrowIcons::LOGCAT_REFRESH,
+            move || {
+                if let Some(path) = restart_pane.file_path.get_untracked() {
+                    restart_pane.load_file(
+                        path,
+                        restart_window.clone(),
+                        Some(restart_pane.query.get_untracked()),
+                    );
+                } else {
+                    restart_pane.restart.update(|r| *r += 1);
+                }
+            },
+            || false,
+            || false,
+            || "Restart Logcat",
+            config,
+        )
+        .into_any(),
+        clickable_icon(
+            || SparrowIcons::FOLD_DOWN,
+            move || follow.set(true),
+            move || follow.get(),
+            || false,
+            || "Scroll to end",
+            config,
+        )
+        .into_any(),
+        clickable_icon(
+            || SparrowIcons::SEARCH_BACKWARD,
+            move || {
+                follow.set(false);
+                let rows = previous_rows.get_untracked();
+                let current = jump.get_untracked().unwrap_or(rows.len());
+                jump.set(
+                    rows.iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(i, e)| {
+                            *i < current
+                                && model::priority(&e.level.to_string()).unwrap_or(0)
+                                    >= 4
+                        })
+                        .map(|(i, _)| i),
+                );
+            },
+            || false,
+            || false,
+            || "Previous error",
+            config,
+        )
+        .into_any(),
+        clickable_icon(
+            || SparrowIcons::SEARCH_FORWARD,
+            move || {
+                follow.set(false);
+                let current = jump.get_untracked();
+                jump.set(next_rows.with_untracked(|rows| {
+                    rows.iter()
+                        .enumerate()
+                        .find(|(i, e)| {
+                            current.is_none_or(|current| *i > current)
+                                && model::priority(&e.level.to_string()).unwrap_or(0)
+                                    >= 4
+                        })
+                        .map(|(i, _)| i)
+                }));
+            },
+            || false,
+            || false,
+            || "Next error",
+            config,
+        )
+        .into_any(),
+        clickable_icon(
+            || SparrowIcons::LOGCAT_WRAP,
+            move || wrap.update(|w| *w = !*w),
+            move || wrap.get(),
+            || false,
+            || "Soft wrap messages",
+            config,
+        )
+        .into_any(),
+        clickable_icon(
+            || SparrowIcons::SETTINGS,
+            || {},
+            move || compact.get(),
+            || false,
+            || "Configure Logcat formatting",
+            config,
+        )
+        .ide_popout_menu(move || {
+            formatting_menu(format_pane.clone(), format_state.clone())
+        })
+        .into_any(),
+        clickable_icon(
+            || SparrowIcons::SPLIT_HORIZONTAL,
+            move || {
+                if split.panes.with_untracked(|p| p.len()) < 2 {
+                    split.add();
+                }
+                split.split.update(|s| *s = !*s);
+            },
+            move || state.split.get(),
+            || false,
+            || "Split / Unsplit Logcat",
+            config,
+        )
+        .into_any(),
+        clickable_icon(
+            || SparrowIcons::LOGCAT_COPY,
+            move || {
+                crate::menus::copy_text(
+                    &copy
+                        .get_untracked()
+                        .iter()
+                        .map(|e| e.raw.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                )
+            },
+            || false,
+            || false,
+            || "Copy filtered logs",
+            config,
+        )
+        .into_any(),
+        clickable_icon(
+            || SparrowIcons::LOGCAT_EXPORT,
+            move || {
+                let entries = export.get_untracked();
+                let window = export_window.clone();
+                floem::action::save_as(
+                    floem::file::FileDialogOptions::new().title("Export Logcat"),
+                    move |file| {
+                        if let Some(mut file) = file {
+                            if let Some(path) = file.path.pop() {
+                                let content = if path
+                                    .extension()
+                                    .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+                                {
+                                    super::archive::encode(&entries)
+                                } else {
+                                    Ok(entries
+                                        .iter()
+                                        .map(|e| e.raw.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join("\n"))
+                                };
+                                if let Err(error) = content.and_then(|text| {
+                                    std::fs::write(path, text)
+                                        .map_err(|e| e.to_string())
+                                }) {
+                                    window.show_alert(
+                                        "Cannot export logs".into(),
+                                        error.to_string(),
+                                        Vec::new(),
+                                    );
+                                }
+                            }
+                        }
+                    },
+                );
+            },
+            || false,
+            || false,
+            || "Export filtered logs…",
+            config,
+        )
+        .into_any(),
+        label(|| "?")
+            .on_click_stop(move |_| {
+                let _ =
+                    open::that("https://developer.android.com/studio/debug/logcat");
+            })
+            .style(|s| {
+                s.size(24.0, 24.0)
+                    .items_center()
+                    .justify_center()
+                    .cursor(CursorStyle::Pointer)
+            })
+            .into_any(),
+    ]
+}
+
+const TOOLBAR_BUTTON: f64 = 26.0;
+const TOOLBAR_WIDTH: f64 = 34.0;
+const PRIMARY_ACTIONS: usize = 7;
+
+fn logcat_toolbar(
+    state: State,
+    pane: Pane,
+    shown: floem::reactive::Memo<Vec<Arc<Entry>>>,
+    jump: floem::reactive::RwSignal<Option<usize>>,
+    primary_count: usize,
+) -> impl View {
+    let config = state.window.common.config;
+    let mut actions = toolbar_actions(state, pane, shown, jump);
+    let secondary = actions.split_off(primary_count);
+    let expanded = create_rw_signal(false);
+    let chevron = clickable_icon(
+        || SparrowIcons::ITEM_CLOSED,
+        move || expanded.set(true),
+        move || expanded.get(),
+        || false,
+        || "More Logcat actions",
+        config,
+    )
+    .keyboard_navigable()
+    .on_event_cont(EventListener::PointerEnter, move |_| expanded.set(true))
+    .on_event(EventListener::KeyDown, move |event| {
+        if matches!(event, Event::KeyDown(key) if matches!(key.key.logical_key, Key::Named(NamedKey::Enter | NamedKey::Space))) {
+            expanded.update(|open| *open = !*open);
+            EventPropagation::Stop
+        } else {
+            EventPropagation::Continue
+        }
+    })
+    .style(|s| s.size(TOOLBAR_WIDTH, TOOLBAR_BUTTON).flex_shrink(0.0_f32));
+    let flyout_width = secondary.len() as f64 * TOOLBAR_BUTTON + 2.0;
+    let flyout =
+        floem::views::h_stack_from_iter(secondary.into_iter().map(|action| {
+            action.style(|s| {
+                s.size(TOOLBAR_BUTTON, TOOLBAR_BUTTON).flex_shrink(0.0_f32)
+            })
+        }))
+        .style(move |s| {
+            let config = config.get();
+            s.width(flyout_width)
+                .flex_wrap(floem::taffy::FlexWrap::Wrap)
+                .min_width(0.0)
+                .background(config.color(SparrowColor::PANEL_BACKGROUND))
+                .border(1.0)
+                .border_radius(4.0)
+                .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                .apply_if(!expanded.get(), |s| s.hide())
+        });
+    let overflow = stack((chevron, flyout))
+        .on_event_cont(EventListener::PointerLeave, move |_| expanded.set(false))
+        .on_event(EventListener::KeyDown, move |event| {
+            if expanded.get() && matches!(event, Event::KeyDown(key) if key.key.logical_key == Key::Named(NamedKey::Escape)) {
+                expanded.set(false);
+                EventPropagation::Stop
+            } else {
+                EventPropagation::Continue
+            }
+        })
+        .style(|s| s.absolute().inset_left(0.0).inset_bottom(0.0).max_width_full().items_end().z_index(10));
+    stack((
+        floem::views::v_stack_from_iter(actions.into_iter().map(|action| {
+            action.style(|s| {
+                s.size(TOOLBAR_BUTTON, TOOLBAR_BUTTON).flex_shrink(0.0_f32)
+            })
+        }))
+        .style(|s| s.width(TOOLBAR_WIDTH).items_center()),
+        overflow,
+    ))
+    .style(|s| s.size_full())
+}
+
 #[derive(Clone, PartialEq)]
 struct Row {
     entry: Arc<Entry>,
