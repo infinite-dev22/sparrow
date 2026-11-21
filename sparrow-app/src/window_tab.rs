@@ -205,6 +205,7 @@ pub struct WindowTabData {
     pub flutter_inspector: FlutterInspectorData,
     pub devtools: crate::dart::devtools::DevToolsData,
     pub flutter_project: crate::dart::project_wizard::ProjectWizard,
+    pub(crate) inspections: crate::panel::problems_view::Inspections,
     pub flutter_test: crate::dart::test_service::FlutterTestData,
     pub source_control: SourceControlData,
     pub rename: RenameData,
@@ -686,6 +687,7 @@ impl WindowTabData {
                     .display()
                     .to_string(),
             ),
+            inspections: crate::panel::problems_view::Inspections::new(cx),
             flutter_test: crate::dart::test_service::FlutterTestData::new(
                 cx,
                 common.proxy.clone(),
@@ -1932,6 +1934,10 @@ impl WindowTabData {
             }
             ActivateRunToolWindow => self.toggle_panel_focus(PanelKind::FlutterRun),
             ActivateDebugToolWindow => self.toggle_panel_focus(PanelKind::Debug),
+            InspectCode => {
+                self.inspections.start(self);
+                self.show_panel(PanelKind::Problems);
+            }
             ActivateProblemsToolWindow => self.toggle_panel_focus(PanelKind::Problems),
             ActivateStructureToolWindow => self.toggle_panel_focus(PanelKind::DartOutline),
             ActivateGitToolWindow => self.toggle_panel_focus(PanelKind::GitHistory),

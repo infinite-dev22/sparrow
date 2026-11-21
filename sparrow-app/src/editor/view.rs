@@ -43,6 +43,7 @@ mod paint;
 mod sticky_header;
 
 pub use container::editor_container_view;
+pub(crate) use container::read_only_editor_content;
 pub use diff_markers::{changes_colors_all, changes_colors_screen};
 pub(crate) use gutter::toggle_gutter_breakpoint;
 pub use sticky_header::StickyHeaderInfo;

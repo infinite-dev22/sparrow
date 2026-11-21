@@ -720,6 +720,7 @@ fn window_tab(
     let layout_rect = window_tab_data.layout_rect;
     let config = window_tab_data.common.config;
     let workbench_command = window_tab_data.common.workbench_command;
+    let inspections = window_tab_data.inspections;
     let window_tab_scope = window_tab_data.scope;
     let hover_active = window_tab_data.common.hover.active;
     let title_menus = [
@@ -804,6 +805,7 @@ fn window_tab(
         device_selector_overlay(window_tab_data.clone(), device_chip_origin),
     ))
     .on_cleanup(move || {
+        inspections.cancel();
         window_tab_scope.dispose();
     })
     .on_event_cont(EventListener::PointerMove, move |event| {
@@ -1662,8 +1664,9 @@ pub fn window_menu(
                     data: None,
                 });
             }))
-            .entry(MenuItem::new("Inspect Code...").enabled(false))
-            .entry(MenuItem::new("Analyze Code").enabled(false))
+            .entry(MenuItem::new("Inspect Code…").action(move || {
+                workbench_command.send(InspectCode);
+            }))
             .separator()
             .entry(MenuItem::new("Comment with Line Comment").action(move || {
                 sparrow_command.send(SparrowCommand {

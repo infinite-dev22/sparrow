@@ -97,7 +97,7 @@ pub fn editor_container_view(
                     screen_lines,
                     viewport,
                 ),
-                editor_content(editor, debug_breakline, is_active),
+                editor_content(editor, debug_breakline, is_active, false),
                 empty().style(move |s| {
                     let config = config.get();
                     s.absolute()
@@ -159,10 +159,25 @@ pub fn editor_container_view(
     .debug_name("Editor Container")
 }
 
+pub(crate) fn read_only_editor_content(
+    window: Rc<WindowTabData>,
+    editor: RwSignal<EditorData>,
+) -> impl View {
+    let scope = editor.with_untracked(|editor| editor.scope);
+    let debug_breakline = window.terminal.breakline;
+    stack((
+        editor_gutter(window, editor).style(|s| s.pointer_events_none()),
+        editor_content(editor, debug_breakline, |_| false, true)
+            .style(|s| s.min_width(0.0).flex_grow(1.0_f32)),
+    ))
+    .on_cleanup(move || scope.dispose())
+}
+
 fn editor_content(
     e_data: RwSignal<EditorData>,
     debug_breakline: Memo<Option<(usize, PathBuf)>>,
     is_active: impl Fn(bool) -> bool + 'static + Copy,
+    read_only: bool,
 ) -> impl View {
     let (
         cursor,
@@ -206,6 +221,7 @@ fn editor_content(
                         .margin_top(4.0)
                         .min_size_full()
                         .cursor(CursorStyle::Text)
+                        .apply_if(read_only, |s| s.pointer_events_none())
                 },
             );
 

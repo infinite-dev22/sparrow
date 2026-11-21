@@ -102,6 +102,7 @@ fn stripe_picker(
 ) -> impl View {
     let panel = window_tab_data.panel.clone();
     let panels = panel.panels;
+    let problems_pinned = panel.section_open(crate::panel::data::PanelSection::ProblemsSidebar);
     let config = window_tab_data.common.config;
     let dragging = window_tab_data.common.dragging;
     dyn_stack(
@@ -111,7 +112,10 @@ fn stripe_picker(
                 .panels
                 .with(|panels| panels.get(&position).cloned().unwrap_or_default())
                 .into_iter()
-                .filter(|kind| kind.pinned() || active == Some((*kind, true)))
+                .filter(|kind| {
+                    active == Some((*kind, true))
+                        || (kind.pinned() && (*kind != PanelKind::Problems || problems_pinned.get()))
+                })
                 .collect::<Vec<_>>()
         },
         |p| *p,

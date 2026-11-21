@@ -577,6 +577,9 @@ pub enum SparrowWorkbenchCommand {
         serialize = "activate_debug_tool_window"
     )]
     ActivateDebugToolWindow,
+    #[strum(serialize = "inspect_code")]
+    #[strum(message = "Inspect Code")]
+    InspectCode,
     #[strum(
         message = "Activate Problems Tool Window",
         serialize = "activate_problems_tool_window"

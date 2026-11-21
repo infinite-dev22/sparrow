@@ -295,7 +295,7 @@ fn editor_gutter_folding_view(
         svg(move || {
             let icon_str = match folding_display_item {
                 FoldingDisplayItem::UnfoldStart(_) => SparrowIcons::FOLD_DOWN,
-                FoldingDisplayItem::Folded(_) => SparrowIcons::FOLD,
+                FoldingDisplayItem::Folded(_) => SparrowIcons::FOLD_CLOSE,
                 FoldingDisplayItem::UnfoldEnd(_) => SparrowIcons::FOLD_UP,
             };
             config.get().ui_svg(icon_str)

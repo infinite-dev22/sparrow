@@ -12,7 +12,8 @@
 
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    io::{Read, Seek},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
     thread,
@@ -160,43 +161,89 @@ fn check_dart_available() -> bool {
 }
 
 fn run_dart_analyze(
-    path: &PathBuf,
+    path: &Path,
     _epoch: u64,
 ) -> Result<HashMap<PathBuf, Vec<Diagnostic>>, String> {
-    let dart_bin = crate::dart::sdk::find_dart_binary(None)
-        .unwrap_or_else(|| PathBuf::from("dart"));
+    inspect_workspace(path, &AtomicBool::new(false))?
+        .ok_or_else(|| "Analysis cancelled.".into())
+}
 
-    let output = Command::new(&dart_bin)
+/// Return one complete snapshot of saved-file diagnostics. Temporary output
+/// files keep the subprocess from blocking on a full pipe while it is polled.
+pub(crate) fn inspect_workspace(
+    path: &Path,
+    cancel: &AtomicBool,
+) -> Result<Option<HashMap<PathBuf, Vec<Diagnostic>>>, String> {
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
+    let root = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
+    let dart = crate::dart::sdk::find_dart_binary(Some(root)).ok_or_else(|| {
+        "Configure a Dart or Flutter SDK to inspect this project.".to_owned()
+    })?;
+    let mut stdout = tempfile::tempfile().map_err(|e| e.to_string())?;
+    let mut stderr = tempfile::tempfile().map_err(|e| e.to_string())?;
+    let mut child = Command::new(dart)
+        .current_dir(root)
+        .env("CI", "true")
         .arg("analyze")
         .arg("--format=json")
         .arg(path)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("failed to spawn `dart analyze`: {e}"))?;
-
-    // `dart analyze` exit code semantics:
-    //   0 = no issues   1 = issues found   other = real failure
-    // Both 0 and 1 produce valid JSON on stdout. Anything else is an error.
-    let code = output.status.code().unwrap_or(-1);
-    if code != 0 && code != 1 {
-        return Err(format!(
-            "`dart analyze` failed (exit {code}): {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-
-    let json: AnalyzeJson = serde_json::from_slice(&output.stdout).map_err(|e| {
-        format!(
-            "failed to parse `dart analyze` JSON: {e}\nstdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&output.stdout).trim(),
-            String::from_utf8_lossy(&output.stderr).trim(),
-        )
-    })?;
+        .stdin(Stdio::null())
+        .stdout(stdout.try_clone().map_err(|e| e.to_string())?)
+        .stderr(stderr.try_clone().map_err(|e| e.to_string())?)
+        .spawn()
+        .map_err(|e| format!("Could not start Dart analysis: {e}"))?;
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Could not wait for Dart analysis: {error}"));
+            }
+        }
+    };
+    let mut json_bytes = Vec::new();
+    stdout
+        .rewind()
+        .and_then(|_| stdout.read_to_end(&mut json_bytes))
+        .map_err(|error| format!("Could not read Dart analysis results: {error}"))?;
+    // Dart uses a nonzero exit status when it finds errors. A valid JSON
+    // report is still a completed inspection.
+    let json: AnalyzeJson =
+        serde_json::from_slice(&json_bytes).map_err(|error| {
+            let mut details = String::new();
+            let _ = stderr
+                .rewind()
+                .and_then(|_| stderr.read_to_string(&mut details));
+            format!(
+                "Dart analysis did not return a report ({status}): {}",
+                if details.trim().is_empty() {
+                    error.to_string()
+                } else {
+                    details.trim().to_owned()
+                }
+            )
+        })?;
 
     let mut by_file: HashMap<PathBuf, Vec<Diagnostic>> = HashMap::new();
     for raw in json.diagnostics {
-        let file = raw.location.file.clone();
+        let file = if raw.location.file.is_absolute() {
+            raw.location.file.clone()
+        } else {
+            root.join(&raw.location.file)
+        };
         by_file
             .entry(file)
             .or_default()
@@ -205,7 +252,7 @@ fn run_dart_analyze(
     for diags in by_file.values_mut() {
         diags.sort_by_key(|d| (d.range.start.line, d.range.start.character));
     }
-    Ok(by_file)
+    Ok(Some(by_file))
 }
 
 fn convert_diagnostic(raw: DartDiagnostic) -> Diagnostic {
@@ -226,9 +273,18 @@ fn convert_diagnostic(raw: DartDiagnostic) -> Diagnostic {
         },
         severity: Some(severity),
         code: Some(NumberOrString::String(raw.code)),
-        code_description: None,
+        code_description: raw
+            .documentation
+            .and_then(|url| url::Url::parse(&url).ok())
+            .filter(|url| matches!(url.scheme(), "https" | "http"))
+            .map(|href| lsp_types::CodeDescription { href }),
         source: Some("dart".into()),
-        message: raw.problem_message,
+        message: match raw.correction_message {
+            Some(hint) if !hint.is_empty() => {
+                format!("{}\n{hint}", raw.problem_message)
+            }
+            _ => raw.problem_message,
+        },
         related_information: None,
         tags: None,
         data: None,
@@ -255,8 +311,8 @@ struct DartDiagnostic {
     #[serde(rename = "problemMessage")]
     problem_message: String,
     #[serde(rename = "correctionMessage")]
-    #[allow(dead_code)]
     correction_message: Option<String>,
+    documentation: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,6 +363,7 @@ mod tests {
             },
             problem_message: "msg".into(),
             correction_message: None,
+            documentation: None,
         };
         convert_diagnostic(raw)
     }
@@ -353,5 +410,37 @@ mod tests {
         // construction works.
         let svc = DartAnalyzerService::new();
         let _ = svc.is_available();
+    }
+
+    #[test]
+    #[ignore = "requires a local Dart SDK"]
+    fn analyzes_saved_workspace_and_reports_errors_from_nonzero_exit() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("main.dart");
+        std::fs::write(
+            root.path().join("pubspec.yaml"),
+            "name: inspection_test\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n",
+        )
+        .unwrap();
+        std::fs::write(&path, "void main() { print(missing); }\n").unwrap();
+        let cancel = AtomicBool::new(false);
+        let findings = inspect_workspace(root.path(), &cancel).unwrap().unwrap();
+        let errors = &findings[&path.canonicalize().unwrap()];
+        assert_eq!(errors[0].severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(
+            errors[0].code,
+            Some(NumberOrString::String("undefined_identifier".into()))
+        );
+        assert!(errors[0].code_description.is_some());
+
+        std::fs::write(&path, "void main() {}\n").unwrap();
+        assert!(
+            inspect_workspace(root.path(), &cancel)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        cancel.store(true, Ordering::Relaxed);
+        assert!(inspect_workspace(root.path(), &cancel).unwrap().is_none());
     }
 }

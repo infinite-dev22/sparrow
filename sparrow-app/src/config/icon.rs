@@ -59,7 +59,8 @@ impl SparrowIcons {
     pub const SCM_CHANGE_ADD: &'static str = "scm.change.add";
     pub const SCM_CHANGE_REMOVE: &'static str = "scm.change.remove";
 
-    pub const FOLD: &'static str = "fold";
+    pub const FOLD_CLOSE: &'static str = "fold";
+    pub const FOLD_OPEN: &'static str = "unfold";
     pub const FOLD_UP: &'static str = "fold.up";
     pub const FOLD_DOWN: &'static str = "fold.down";
 

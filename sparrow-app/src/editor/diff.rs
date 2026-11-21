@@ -368,7 +368,7 @@ pub fn diff_show_more_section_view(
             label(move || format!("{} Hidden Lines", section.lines)),
             label(|| "|".to_string()).style(|s| s.margin_left(10.0)),
             stack((
-                svg(move || config.get().ui_svg(SparrowIcons::FOLD)).style(
+                svg(move || config.get().ui_svg(SparrowIcons::FOLD_CLOSE)).style(
                     move |s| {
                         let config = config.get();
                         let size = config.ui.icon_size() as f32;

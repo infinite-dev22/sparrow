@@ -80,6 +80,7 @@ pub enum PanelSection {
     Variable,
     StackFrame,
     Breakpoint,
+    ProblemsSidebar,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

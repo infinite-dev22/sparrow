@@ -82,6 +82,7 @@ name = "sparrow Modern"
 # ── Panels / folding ─────────────────────────────────────────────────────
 "palette.menu"       = "chevron-down.svg"        # Lucide
 "fold"               = "chevrons-down-up.svg"    # Lucide
+"unfold"               = "chevrons-up-down.svg"    # Lucide
 "fold.up"            = "chevrons-up.svg"         # Lucide
 "fold.down"          = "chevrons-down.svg"       # Lucide
 "dropdown.arrow"     = "chevron-down.svg"        # Lucide
