@@ -12,7 +12,7 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
-    views::{Decorators, dyn_stack, empty, label, scroll, stack, svg},
+    views::{Decorators, dyn_stack, empty, label, stack, svg},
 };
 use lsp_types::{Diagnostic, DiagnosticSeverity};
 use std::{
@@ -24,6 +24,7 @@ use std::{
 mod details;
 
 use details::details;
+use crate::widgets::sparrow_scroll;
 
 #[derive(Clone, PartialEq)]
 struct Issue {
@@ -220,7 +221,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 config,
             )
             .style(move |s| s.absolute().apply_if(!grouped.with(|r| r.is_empty()), |s| s.hide())),
-            scroll(dyn_stack(move ||grouped.get(), |(p, rows)|(p.clone(), rows.iter().map(|r|(r.diagnostic.range, rank(&r.diagnostic), r.diagnostic.message.clone(),r.offset)).collect::<Vec<_>>()),move |(path,rows)| {
+            sparrow_scroll(dyn_stack(move ||grouped.get(), |(p, rows)|(p.clone(), rows.iter().map(|r|(r.diagnostic.range, rank(&r.diagnostic), r.diagnostic.message.clone(),r.offset)).collect::<Vec<_>>()),move |(path,rows)| {
                 let group_path=path.clone(); let style_path=path.clone(); let icon_path=path.clone();
                 let name=path.file_name().unwrap_or_default().to_string_lossy().into_owned();
                 let folder=path.parent().map(|p|root.as_ref().and_then(|r|p.strip_prefix(r).ok()).unwrap_or(p).display().to_string()).unwrap_or_default();

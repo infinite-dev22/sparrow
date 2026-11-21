@@ -8,7 +8,7 @@ use floem::{
         create_rw_signal,
     },
     style::{CursorStyle, Style},
-    views::{Decorators, container, dyn_stack, label, scroll, stack, svg},
+    views::{Decorators, container, dyn_stack, label, stack, svg},
 };
 use lsp_types::{DiagnosticRelatedInformation, DiagnosticSeverity};
 
@@ -23,6 +23,7 @@ use crate::{
     window_tab::WindowTabData,
     workspace::SparrowWorkspace,
 };
+use crate::widgets::sparrow_scroll;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticGroup {
@@ -92,7 +93,7 @@ fn problem_section(
     let main_split = window_tab_data.main_split.clone();
     let internal_command = window_tab_data.common.internal_command;
     container({
-        scroll(
+        sparrow_scroll(
             dyn_stack(
                 move || main_split.diagnostics.get(),
                 |(p, _)| p.clone(),

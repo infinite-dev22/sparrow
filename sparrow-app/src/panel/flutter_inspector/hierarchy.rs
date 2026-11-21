@@ -8,7 +8,7 @@ use floem::{
     reactive::{ReadSignal, RwSignal, SignalGet, SignalUpdate},
     style::CursorStyle,
     views::{
-        Decorators, VirtualVector, empty, label, scroll, stack, svg, virtual_stack,
+        Decorators, VirtualVector, empty, label, stack, svg, virtual_stack,
     },
 };
 
@@ -17,7 +17,7 @@ use crate::{
     dart::vm_service::{FlutterInspectorData, InspectorNodeData},
     widgets::clickable_icon,
 };
-
+use crate::widgets::sparrow_scroll;
 use super::properties::property_inspector_view;
 
 pub(super) fn tree_and_properties_view(
@@ -30,7 +30,7 @@ pub(super) fn tree_and_properties_view(
 
     stack((
         // Top section: Widget Tree Hierarchy
-        scroll(
+        sparrow_scroll(
             virtual_stack(
                 move || TreeList::new(root.get()),
                 move |(i, _, node)| (*i, node.get_untracked().node.value_id.clone()),

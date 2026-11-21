@@ -17,11 +17,11 @@ use floem::{
             text::Document,
             text_document::TextDocument,
         },
-        label, scroll, stack, text_editor_keys,
+        label, stack, text_editor_keys,
     },
 };
 use std::{cell::RefCell, collections::BTreeMap, path::PathBuf, rc::Rc};
-
+use crate::widgets::sparrow_scroll;
 use super::{action_controls::action_controls, analyzer, language};
 
 pub(in crate::scaffold::manager) fn view(window: Rc<WindowTabData>) -> impl View {
@@ -98,7 +98,7 @@ pub(in crate::scaffold::manager) fn view(window: Rc<WindowTabData>) -> impl View
     });
     let file_focus = focus.clone();
     let files =
-        scroll(
+        sparrow_scroll(
             dyn_stack(
                 move || {
                     draft
@@ -291,7 +291,7 @@ pub(in crate::scaffold::manager) fn view(window: Rc<WindowTabData>) -> impl View
     .style(|s| s.flex_grow(1.0_f32).min_width(0.0).height_full());
     let popup_handle = active_editor.clone();
     let popup_analyzer = analyzer.clone();
-    let popup = scroll(
+    let popup = sparrow_scroll(
         dyn_stack(
             move || {
                 suggestions
@@ -343,7 +343,7 @@ pub(in crate::scaffold::manager) fn view(window: Rc<WindowTabData>) -> impl View
     });
     let diagnostic_handle = active_editor.clone();
     let rows_focus = focus.clone();
-    let diagnostic_rows = scroll(
+    let diagnostic_rows = sparrow_scroll(
         dyn_stack(
             move || {
                 diagnostics
@@ -406,7 +406,7 @@ pub(in crate::scaffold::manager) fn view(window: Rc<WindowTabData>) -> impl View
     ))
     .style(|s| s.flex_col().flex_grow(1.0_f32).min_width(0.0).height_full());
     let action_preview = analyzer.actions.preview;
-    let output = scroll(
+    let output = sparrow_scroll(
         dyn_stack(
             move || {
                 let mut text = match rendered.get() {

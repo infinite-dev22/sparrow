@@ -5,12 +5,10 @@ use std::rc::Rc;
 use floem::{
     View,
     event::{EventListener, EventPropagation},
-    kurbo::Size,
     reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal},
     style::CursorStyle,
     views::{
         Decorators, container, dyn_stack, empty, label,
-        scroll::{Thickness, VerticalScrollAsHorizontal, scroll},
         stack, svg,
     },
 };
@@ -23,6 +21,7 @@ use crate::{
     widgets::clickable_icon,
     window_tab::{Focus, WindowTabData},
 };
+use crate::widgets::horizontal_scroll;
 
 pub(super) fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl View {
     let terminal = window_tab_data.terminal.clone();
@@ -33,12 +32,11 @@ pub(super) fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl Vi
     let header_width = create_rw_signal(0.0);
     let header_height = create_rw_signal(0.0);
     let icon_width = create_rw_signal(0.0);
-    let scroll_size = create_rw_signal(Size::ZERO);
     let workbench_command = window_tab_data.common.workbench_command;
 
     let hide_panel = window_tab_data.panel.clone();
     let tabs = stack((
-        scroll(dyn_stack(
+        horizontal_scroll(dyn_stack(
             move || {
                 let tabs = terminal.tab_info.with(|info| info.tabs.clone());
                 for (i, (index, _)) in tabs.iter().enumerate() {
@@ -197,18 +195,8 @@ pub(super) fn terminal_tab_header(window_tab_data: Rc<WindowTabData>) -> impl Vi
                 )
             },
         ))
-        .on_resize(move |rect| {
-            if rect.size() != scroll_size.get_untracked() {
-                scroll_size.set(rect.size());
-            }
-        })
-        .style(move |s| {
-            s.set(VerticalScrollAsHorizontal, true)
-                .max_width_pct(80.0)
-                .min_width(0.0)
-                .height_full()
-                .set(Thickness, 3)
-        }),
+        .scroll_style(|s| s.handle_thickness(3).track_thickness(3))
+        .style(|s| s.max_width_pct(80.0).min_width(0.0).height_full()),
         container(clickable_icon(
             || SparrowIcons::ADD,
             move || {

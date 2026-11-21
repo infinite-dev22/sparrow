@@ -7,7 +7,7 @@ use floem::{
     reactive::{ReadSignal, RwSignal, SignalGet, SignalUpdate, create_effect},
     style::{CursorStyle, Display},
     text::Weight,
-    views::{Decorators, container, dyn_stack, empty, label, scroll, stack, svg},
+    views::{Decorators, container, dyn_stack, empty, label, stack, svg},
 };
 use std::{rc::Rc, sync::Arc};
 
@@ -18,6 +18,7 @@ use crate::{
     widgets::divider::Divider,
     window_tab::WindowTabData,
 };
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn device_selector(
     hot_reload: FlutterHotReloadData,
@@ -260,7 +261,7 @@ pub fn device_selector_overlay(
             .style(|s| s.absolute().size_full()),
         // Menu Panel
         container(
-            scroll(
+            sparrow_scroll(
                 stack((
                     // Section header: Running Devices
                     label(|| "Running Devices".to_string()).style(move |s| {

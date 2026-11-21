@@ -14,11 +14,11 @@ use floem::{
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
     style::CursorStyle,
     views::{
-        Decorators, dyn_container, empty, label, scroll, stack, svg, virtual_stack,
+        Decorators, dyn_container, empty, label, stack, svg, virtual_stack,
     },
 };
 use std::sync::Arc;
-
+use crate::widgets::sparrow_scroll;
 use super::history::history;
 use super::row::{Row, log_row, wrap_message};
 use super::toolbar::{
@@ -368,7 +368,7 @@ pub(super) fn pane_view(state: State, pane: Pane) -> impl View {
     )
     .item_size_fixed(move || row_height())
     .style(|s| s.flex_col().min_width_full());
-    let viewport = scroll(rows)
+    let viewport = sparrow_scroll(rows)
         .on_event_cont(EventListener::PointerWheel, move |_| {
             follow.set(false);
             jump.set(None);

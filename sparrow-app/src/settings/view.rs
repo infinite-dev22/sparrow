@@ -10,7 +10,7 @@ use floem::{
         create_memo, create_rw_signal,
     },
     style::CursorStyle,
-    views::{Decorators, container, dyn_stack, label, scroll::scroll, stack},
+    views::{Decorators, container, dyn_stack, label, stack},
 };
 use indexmap::IndexMap;
 use sparrow_rpc::plugin::VoltID;
@@ -19,7 +19,7 @@ use crate::{
     config::color::SparrowColor, main_split::Editors, plugin::InstalledVoltData,
     widgets::text_input::TextInputBuilder, window_tab::CommonData,
 };
-
+use crate::widgets::sparrow_scroll;
 use super::{SettingsData, setting_row::settings_item_view};
 
 pub fn settings_view(
@@ -175,7 +175,7 @@ pub fn settings_view(
 
     stack((
         container({
-            scroll({
+            sparrow_scroll({
                 container(switcher())
                     .style(|s| s.padding_vert(20.0).width_pct(100.0))
             })
@@ -205,7 +205,7 @@ pub fn settings_view(
             })
             .style(|s| s.padding_horiz(50.0).padding_vert(20.0)),
             container({
-                scroll({
+                sparrow_scroll({
                     dyn_stack(
                         move || filtered_items_signal.get(),
                         |item| {

@@ -10,9 +10,10 @@ use floem::{
         RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_effect,
         create_rw_signal,
     },
-    views::{Decorators, label, scroll, stack},
+    views::{Decorators, label, stack},
 };
 use std::rc::Rc;
+use crate::widgets::sparrow_scroll;
 
 #[derive(Clone, Copy)]
 pub(super) struct RenameForm {
@@ -64,7 +65,7 @@ impl RenameForm {
         stack((
             label(||"Rename resource and usages").style(|s|s.font_bold()),
             text_input(rename_name, config).disabled(move ||rename_busy.get()).placeholder("New resource name"),
-            scroll(label(move ||rename_plan.with(|p|p.as_ref().map(|p|p.details()).unwrap_or_default()))).style(|s|s.width_full().max_height(220.0)),
+            sparrow_scroll(label(move ||rename_plan.with(|p|p.as_ref().map(|p|p.details()).unwrap_or_default()))).style(|s|s.width_full().max_height(220.0)),
             label(move ||rename_error.get()),
             stack((
                 label(||"Cancel").on_click_stop(move |_|{if !rename_busy.get_untracked(){rename_resource.set(None);}}),

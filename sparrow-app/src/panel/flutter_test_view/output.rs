@@ -7,8 +7,9 @@ use crate::{
 use floem::{
     View,
     reactive::{SignalGet, SignalWith},
-    views::{Decorators, dyn_stack, label, scroll, stack},
+    views::{Decorators, dyn_stack, label, stack},
 };
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn test_output(data: &WindowTabData) -> impl View + use<> {
     let run = data.flutter_test.run;
@@ -17,7 +18,7 @@ pub(super) fn test_output(data: &WindowTabData) -> impl View + use<> {
     let internal = data.common.internal_command;
     let workspace = data.workspace.path.clone();
     let targets = data.flutter_test.last_targets;
-    scroll(
+    sparrow_scroll(
         stack((
             label(move || {
                 selected

@@ -17,7 +17,7 @@ use floem::{
         Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
         create_rw_signal,
     },
-    views::{Decorators, dyn_stack, label, scroll, stack, svg},
+    views::{Decorators, dyn_stack, label, stack, svg},
 };
 use std::{
     path::{Path, PathBuf},
@@ -319,7 +319,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             )
         })
     };
-    let log_rows = scroll(
+    let log_rows = crate::widgets::sparrow_scroll(
         dyn_stack(
             move || filtered.get(),
             |commit| {
@@ -424,7 +424,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             stack((text_input(branch_query, config).placeholder("Branch or tag"),
                 label(||"HEAD (Current Branch)").on_click_stop(move |_|branch.set("HEAD".into())).style(|s|s.height(26.0).items_center().padding_left(18.0)),
                 label(||"All branches").on_click_stop(move |_|branch.set(String::new())).style(|s|s.height(24.0).items_center().padding_left(18.0)),
-                scroll(stack((label(move ||if local_open.get(){"⌄  Local"}else{"›  Local"}).on_click_stop(move |_|local_open.update(|value|*value=!*value)).style(|s|s.height(24.0).items_center().padding_left(8.0)),branches(false),label(move ||if remote_open.get(){"⌄  Remote"}else{"›  Remote"}).on_click_stop(move |_|remote_open.update(|value|*value=!*value)).style(|s|s.height(24.0).items_center().padding_left(8.0)),branches(true))).style(|s|s.flex_col().width_full())).style(|s|s.flex_grow(1.0_f32).width_full().min_height(0.0))
+                crate::widgets::sparrow_scroll(stack((label(move ||if local_open.get(){"⌄  Local"}else{"›  Local"}).on_click_stop(move |_|local_open.update(|value|*value=!*value)).style(|s|s.height(24.0).items_center().padding_left(8.0)),branches(false),label(move ||if remote_open.get(){"⌄  Remote"}else{"›  Remote"}).on_click_stop(move |_|remote_open.update(|value|*value=!*value)).style(|s|s.height(24.0).items_center().padding_left(8.0)),branches(true))).style(|s|s.flex_col().width_full())).style(|s|s.flex_grow(1.0_f32).width_full().min_height(0.0))
             )).style(move |s|s.width_pct(27.0).height_full().padding(6.0).flex_col().border_right(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
             stack((stack((text_input(query, config).placeholder("Text or hash").style(move |s|s.min_width(80.0).width_pct(32.0)),
                 text_input(user, config).placeholder("User").style(move |s|s.width(100.0)),
@@ -439,7 +439,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 label(move ||state.with(|s|s.error.clone())).style(move |s|s.width_full().padding(12.0).apply_if(state.with(|s|s.error.is_empty()),|s|s.hide())),
                 label(||"No commits match these filters.").style(move |s|s.padding(16.0).apply_if(!filtered.with(|r|r.is_empty()),|s|s.hide())),log_rows
             )).style(|s|s.width_pct(48.0).height_full().flex_col()),
-            stack((scroll(dyn_stack(move ||detail.with(|d|file_tree(&d.files,&closed.get())),move |file|(selected.get_untracked(),file.path.clone(),file.directory),move |file|{
+            stack((crate::widgets::sparrow_scroll(dyn_stack(move ||detail.with(|d|file_tree(&d.files,&closed.get())),move |file|(selected.get_untracked(),file.path.clone(),file.directory),move |file|{
                 let target=file.path.clone();let folder_toggle=file.path.clone();let selection=file.path.clone();let highlight=file.path.clone();let directory=file.directory;let level=file.level;let count=file.count;let revision=selected.get_untracked();let split=split.clone();let root=state.with_untracked(|s|s.root.clone());let folder=file.path.parent().unwrap_or(Path::new("")).to_string_lossy().to_string();
                 stack((label(move ||if directory{if closed.with(|set|set.contains(&folder_toggle)){"›"}else{"⌄"}}else{""}).style(|s|s.width(10.0)),
                     svg({let path=file.path.clone();move ||if directory{config.get().folder_svg(&path).0}else{config.get().file_svg(&path).0}}).style(|s|s.size(14.0,14.0)),label(move ||if directory{format!("{}  {count} files",file.path.file_name().unwrap_or_default().to_string_lossy())}else{file.path.file_name().unwrap_or_default().to_string_lossy().to_string()}).style(|s|s.text_ellipsis()),label(move ||if directory{String::new()}else{folder.clone()}).style(move |s|s.min_width(0.0).text_ellipsis().color(config.get().color(SparrowColor::EDITOR_DIM)))))
@@ -447,7 +447,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     .on_double_click_stop(move |_|{if !directory{split.open_revision_diff(root.join(&target),revision.clone(),root.clone());}})
                     .style(move |s|s.height(24.0).width_full().items_center().gap(6.0).padding_left((level*14+6)as f32).padding_right(6.0).apply_if(selected_file.with(|selected|selected.as_ref()==Some(&highlight)),|s|s.background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND))).color(config.get().color(match file.status.as_str(){"A"=>SparrowColor::SOURCE_CONTROL_ADDED,"D"=>SparrowColor::SOURCE_CONTROL_REMOVED,_=>if directory{SparrowColor::PANEL_FOREGROUND}else{SparrowColor::SOURCE_CONTROL_MODIFIED}})))
             }).style(|s|s.flex_col().width_full())).style(move |s|s.width_full().height_pct(50.0).min_height(40.0).border_bottom(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
-                scroll(label(move ||detail.with(|d|if d.error.is_empty(){d.message.clone()}else{d.error.clone()})).style(|s|s.width_full().padding(12.0))).style(|s|s.width_full().flex_grow(1.0_f32).min_height(0.0))
+                crate::widgets::sparrow_scroll(label(move ||detail.with(|d|if d.error.is_empty(){d.message.clone()}else{d.error.clone()})).style(|s|s.width_full().padding(12.0))).style(|s|s.width_full().flex_grow(1.0_f32).min_height(0.0))
             )).style(move |s|s.width_pct(25.0).height_full().flex_col().border_left(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER)))
         )).style(|s|s.width_full().flex_grow(1.0_f32).min_height(0.0))
     )).style(|s|s.absolute().size_full().flex_col().font_size(13.0))

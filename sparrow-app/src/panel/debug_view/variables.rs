@@ -6,7 +6,7 @@ use floem::{
     View,
     peniko::Color,
     reactive::{SignalGet, SignalWith},
-    views::{Decorators, container, scroll, stack, svg, text, virtual_stack},
+    views::{Decorators, container, stack, svg, text, virtual_stack},
 };
 
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
     debug::DapVariable,
     window_tab::WindowTabData,
 };
+use crate::widgets::sparrow_scroll;
 
 pub(in crate::panel) fn variables_view(
     window_tab_data: Rc<WindowTabData>,
@@ -23,7 +24,7 @@ pub(in crate::panel) fn variables_view(
     let ui_line_height = window_tab_data.common.ui_line_height;
     let config = window_tab_data.common.config;
     container(
-        scroll(
+        sparrow_scroll(
             virtual_stack(
                 move || {
                     let dap = terminal.get_active_dap(true);

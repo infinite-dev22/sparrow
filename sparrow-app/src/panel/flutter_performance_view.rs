@@ -6,7 +6,7 @@ use std::rc::Rc;
 use floem::{
     View,
     reactive::SignalGet,
-    views::{Decorators, empty, label, scroll, stack},
+    views::{Decorators, empty, label, stack},
 };
 
 use super::position::PanelPosition;
@@ -22,6 +22,7 @@ mod metrics;
 
 use devtools::devtools_controls;
 use metrics::perf_metrics_section;
+use crate::widgets::sparrow_scroll;
 
 pub fn flutter_performance_panel(
     window_tab_data: Rc<WindowTabData>,
@@ -74,7 +75,7 @@ pub fn flutter_performance_panel(
                 .border_bottom(1.0)
                 .border_color(c.color(SparrowColor::SPARROW_BORDER))
         }),
-        scroll(
+        sparrow_scroll(
             stack((
                 // Rendering performance indicators (UI vs Raster thread counters)
                 devtools,

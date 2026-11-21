@@ -6,7 +6,7 @@ use floem::{
     keyboard::{Key, Modifiers, NamedKey},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::{
-        Decorators, dyn_container, dyn_stack, empty, label, scroll, stack,
+        Decorators, dyn_container, dyn_stack, empty, label, stack,
     },
 };
 use std::{
@@ -14,6 +14,7 @@ use std::{
     collections::HashMap,
     rc::Rc,
 };
+use crate::widgets::sparrow_scroll;
 
 type Enabled = Rc<dyn Fn() -> bool>;
 type Submit = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
@@ -205,7 +206,7 @@ impl ModalFocus {
                                 .apply_if(enabled && selected.get() == index, |s| s.background(config.get().color(crate::config::color::SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND))))
                     }
                 }).style(|s| s.flex_col().width_full());
-                let menu = scroll(rows).ensure_visible(move || floem::kurbo::Rect::new(0.0, selected.get() as f64 * 26.0, 1.0, (selected.get() + 1) as f64 * 26.0))
+                let menu = sparrow_scroll(rows).ensure_visible(move || floem::kurbo::Rect::new(0.0, selected.get() as f64 * 26.0, 1.0, (selected.get() + 1) as f64 * 26.0))
                     .style(move |s| s.width(width).max_height(312.0));
                 let menu = stack((menu,)).keyboard_navigable().on_event_stop(EventListener::PointerDown, |_| {})
                     .style(move |s| s.absolute().inset_left(x).inset_top(y).width(width).max_height(320.0).padding_vert(4.0).flex_col().border(1.0).border_radius(5.0)

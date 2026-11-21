@@ -5,7 +5,7 @@ use floem::{
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate},
     style::CursorStyle,
     views::{
-        Decorators, VirtualVector, container, label, scroll, stack, svg,
+        Decorators, VirtualVector, container, label, stack, svg,
         virtual_stack,
     },
 };
@@ -21,6 +21,7 @@ use crate::{
     editor::location::EditorLocation,
     window_tab::WindowTabData,
 };
+use crate::widgets::sparrow_scroll;
 
 pub fn implementation_panel(
     window_tab_data: Rc<WindowTabData>,
@@ -38,7 +39,7 @@ pub fn common_reference_panel(
 ) -> impl View {
     let config = window_tab_data.common.config;
     let ui_line_height = window_tab_data.common.ui_line_height;
-    scroll(
+    sparrow_scroll(
         virtual_stack(
             each_fn,
             move |(_, _, data)| data.view_id(),

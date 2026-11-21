@@ -25,12 +25,13 @@ use floem::{
     style::{CustomStylable, CustomStyle, Style, StyleClass, StyleClassRef, Width},
     style_class,
     unit::PxPctAuto,
-    views::{Decorators, empty, scroll, stack, svg, text},
+    views::{Decorators, empty, stack, svg, text},
 };
 
 use floem::views::{list, scroll::ScrollClass};
 
 use crate::config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons};
+use crate::widgets::sparrow_scroll;
 
 // Floem's OverlayView moves overlays inside a five-pixel window margin at
 // paint time. Keep our frame inside that margin so paint and hit-testing
@@ -455,7 +456,7 @@ impl<T: Clone> Dropdown<T> {
                 })
                 .on_event_stop(EventListener::PointerMove, |_| {});
             let inner_list_id = inner_list.id();
-            scroll(inner_list)
+            sparrow_scroll(inner_list)
                 .on_event_stop(EventListener::FocusGained, move |_| {
                     inner_list_id.request_focus();
                 })

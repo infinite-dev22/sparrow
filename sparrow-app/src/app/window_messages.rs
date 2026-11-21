@@ -11,13 +11,13 @@ use floem::{
     views::{
         Decorators, container, dyn_stack,
         editor::{core::register::Clipboard, text::SystemClipboard},
-        scroll::{PropagatePointerWheel, scroll},
+        scroll::PropagatePointerWheel,
         stack, svg, text,
     },
 };
 use lsp_types::{MessageType, ShowMessageParams};
 
-use crate::widgets::clickable_icon;
+use crate::widgets::{clickable_icon, sparrow_scroll};
 
 pub(super) fn window_message_view(
     messages: RwSignal<Vec<(String, ShowMessageParams)>>,
@@ -107,7 +107,7 @@ pub(super) fn window_message_view(
     container(
         container(
             container(
-                scroll(
+                sparrow_scroll(
                     dyn_stack(
                         move || messages.get().into_iter().enumerate(),
                         move |_| {

@@ -10,7 +10,7 @@ use floem::{
     peniko::kurbo::Rect,
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
     style::{CursorStyle, Style},
-    views::{Decorators, container, dyn_stack, label, scroll, stack, svg},
+    views::{Decorators, container, dyn_stack, label, stack, svg},
 };
 use sparrow_rpc::source_control::FileDiff;
 
@@ -22,6 +22,7 @@ use crate::{
     source_control::SourceControlData,
     widgets::checkbox,
 };
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn file_diffs_view(
     source_control: SourceControlData,
@@ -143,7 +144,7 @@ pub(super) fn file_diffs_view(
     };
 
     container({
-        scroll({
+        sparrow_scroll({
             dyn_stack(
                 move || {
                     file_diffs

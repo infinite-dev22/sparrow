@@ -680,8 +680,7 @@ impl ConnectionWorker {
             "method": "ext.flutter.inspector.getRootWidgetSummaryTree",
             "params": {
                 "isolateId": isolate_id,
-                "groupName": "sparrow",
-                "isSummaryTree": "true",
+                "objectGroup": "sparrow",
             },
         });
         let text = serde_json::to_string(&req)
@@ -754,13 +753,11 @@ fn to_ws_url(vm_url: &str) -> Result<String, String> {
 }
 
 fn parse_summary_tree(response: &Value) -> Option<InspectorNode> {
-    // Two shapes possible depending on server version:
-    //   1. { result: { value: { ... } } }       (VM service standard)
-    //   2. { value: { ... } }                    (some builds)
-    let inner = response
-        .get("value")
-        .or_else(|| response.get("result").and_then(|r| r.get("value")))?;
-    parse_node(inner)
+    // Flutter wraps the tree in the extension's result, inside the VM reply.
+    response
+        .get("result")
+        .and_then(parse_node)
+        .or_else(|| response.get("value").and_then(parse_node))
 }
 
 fn parse_node(v: &Value) -> Option<InspectorNode> {
@@ -1022,6 +1019,10 @@ mod tests {
         };
         let mut socket = connect_fixture("isolates/1");
         let tree = request(&mut socket);
+        assert_eq!(
+            tree["params"],
+            json!({ "isolateId": "isolates/1", "objectGroup": "sparrow" })
+        );
         client.set_debug_paint(None, true);
         client.set_debug_paint(None, false);
         client.set_slow_animations(None, true);
@@ -1156,14 +1157,16 @@ mod tests {
     fn parse_summary_tree_shapes() {
         let standard = json!({
             "result": {
-                "value": {
-                    "description": "Root",
-                    "type": "Root",
-                    "valueId": "r"
-                }
+                "description": "Root",
+                "type": "Root",
+                "valueId": "r",
+                "children": [{ "description": "Text" }]
             }
         });
-        assert_eq!(parse_summary_tree(&standard).unwrap().description, "Root");
+        let root = parse_summary_tree(&standard).unwrap();
+        assert_eq!(root.description, "Root");
+        assert_eq!(root.children[0].description, "Text");
+        assert!(parse_summary_tree(&json!({ "result": null })).is_none());
 
         let alternative = json!({
             "value": {

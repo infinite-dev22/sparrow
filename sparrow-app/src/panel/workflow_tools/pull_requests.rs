@@ -3,7 +3,7 @@
 use super::record;
 use crate::panel::{kind::PanelKind, reference_tools::output};
 use crate::widgets::popup_menu::{Menu, MenuItem};
-use crate::widgets::text_input;
+use crate::widgets::{sparrow_scroll, text_input};
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
     widgets::clickable_icon,
@@ -15,7 +15,7 @@ use floem::{
         Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
         create_rw_signal,
     },
-    views::{Decorators, dyn_stack, empty, label, scroll, stack},
+    views::{Decorators, dyn_stack, empty, label, stack},
 };
 use std::{path::Path, rc::Rc, time::Duration};
 
@@ -349,7 +349,7 @@ pub fn pull_requests(window: Rc<WindowTabData>) -> impl View {
                     |s| s.hide(),
                 )
         }),
-        scroll(
+        sparrow_scroll(
             dyn_stack(
                 move || filtered.get(),
                 |p| p.number,

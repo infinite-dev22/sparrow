@@ -6,8 +6,9 @@ use crate::{config::icon::SparrowIcons, widgets::clickable_icon};
 use floem::{
     View,
     reactive::{SignalGet, SignalUpdate, create_rw_signal},
-    views::{Decorators, dyn_container, label, scroll, stack},
+    views::{Decorators, dyn_container, label, stack},
 };
+use crate::widgets::sparrow_scroll;
 
 #[derive(Clone)]
 struct VariantChoice(String);
@@ -75,7 +76,7 @@ pub(super) fn variant_bar(state: State) -> impl View {
         .style(|s| s.text_ellipsis().min_width(0.0).flex_grow(1.0_f32))
         .tooltip(move || {
             let error = details.gradle_error.get();
-            scroll(label(move || {
+            sparrow_scroll(label(move || {
                 if error.is_empty() {
                     details.packages.get().join(", ")
                 } else {

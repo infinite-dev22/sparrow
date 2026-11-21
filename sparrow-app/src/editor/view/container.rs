@@ -16,7 +16,7 @@ use floem::{
         Decorators, container,
         editor::view::{LineRegion, cursor_caret},
         empty,
-        scroll::{PropagatePointerWheel, scroll},
+        scroll::PropagatePointerWheel,
         stack,
     },
 };
@@ -25,7 +25,7 @@ use super::EditorData;
 use crate::{
     doc::DocContent, window_tab::WindowTabData, workspace::SparrowWorkspace,
 };
-
+use crate::widgets::sparrow_scroll;
 use super::{
     breadcrumbs::editor_breadcrumbs,
     editor_view,
@@ -197,7 +197,7 @@ fn editor_content(
 
     let current_scroll = create_rw_signal(Rect::ZERO);
 
-    scroll({
+    sparrow_scroll({
         let editor_content_view =
             editor_view(e_data.get_untracked(), debug_breakline, is_active).style(
                 move |s| {

@@ -6,7 +6,7 @@ use floem::{
         RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal,
     },
     views::{
-        Decorators, container, dyn_stack, scroll, stack, text, virtual_stack,
+        Decorators, container, dyn_stack, stack, text, virtual_stack,
     },
 };
 use sparrow_core::mode::Modes;
@@ -23,6 +23,7 @@ use crate::{
 mod shortcut_picker;
 
 use shortcut_picker::keyboard_picker_view;
+use crate::widgets::sparrow_scroll;
 
 #[derive(Clone)]
 pub struct KeymapPicker {
@@ -350,7 +351,7 @@ pub fn keymap_view(editors: Editors, common: Rc<CommonData>) -> impl View {
                 .background(config.color(SparrowColor::EDITOR_CURRENT_LINE))
         }),
         container(
-            scroll(
+            sparrow_scroll(
                 virtual_stack(
                     items,
                     |(i, (cmd, keymap)): &(

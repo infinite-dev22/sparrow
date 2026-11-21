@@ -15,10 +15,11 @@ use floem::{
         RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
         create_rw_signal,
     },
-    views::{Decorators, dyn_stack, img_from_path, label, rich_text, scroll},
+    views::{Decorators, dyn_stack, img_from_path, label, rich_text},
 };
 use sparrow_core::buffer::rope_text::RopeText;
 use std::{path::Path, rc::Rc};
+use crate::widgets::sparrow_scroll;
 
 pub fn preview(
     window: Rc<WindowTabData>,
@@ -61,7 +62,7 @@ pub fn preview(
         let revision = rendered.with_untracked(|(revision, _)| *revision) + 1;
         rendered.set((revision, blocks));
     });
-    scroll(
+    sparrow_scroll(
         dyn_stack(
             move || {
                 rendered.with(|(revision, blocks)| {

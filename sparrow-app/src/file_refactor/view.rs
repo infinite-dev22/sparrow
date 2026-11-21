@@ -6,7 +6,7 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{SignalGet, SignalUpdate, SignalWith},
-    views::{Decorators, container, empty, label, scroll, stack},
+    views::{Decorators, container, empty, label, stack},
 };
 use std::rc::Rc;
 
@@ -149,7 +149,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     .border(1.0)
                     .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
             }),
-            scroll(label(move || {
+            sparrow_scroll(label(move || {
                 plan.with(|p| p.as_ref().map(|p| p.summary()).unwrap_or_default())
             }))
             .style(move |s| {
@@ -212,3 +212,4 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     focus.bind_root(dialog, active, config)
 }
 use crate::widgets::popup_menu::PopupMenuExt;
+use crate::widgets::sparrow_scroll;

@@ -8,7 +8,7 @@ use floem::{
     View,
     event::EventListener,
     reactive::{SignalGet, SignalUpdate, SignalWith},
-    views::{Decorators, dyn_stack, empty, label, scroll, stack},
+    views::{Decorators, dyn_stack, empty, label, stack},
 };
 use lapce_xi_rope::Rope;
 use lsp_types::CodeActionOrCommand;
@@ -18,7 +18,7 @@ use std::{
     rc::Rc,
     sync::{Arc, atomic::AtomicU64},
 };
-
+use crate::widgets::sparrow_scroll;
 use super::{Preview, PreviewFile, install};
 
 #[derive(Clone)]
@@ -124,7 +124,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 .apply_if(matches!(preview.get(),Preview::Empty) || matches!(preview.get(),Preview::Ready(p) if !p.files.is_empty()),|s|s.hide())
                 .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
         }),
-        scroll(
+        sparrow_scroll(
             dyn_stack(
                 move || match preview.get() {
                     Preview::Ready(p) => p.files,
@@ -192,7 +192,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let apply_data = data;
     let close_data = data;
     let retry_window = window.clone();
-    let list=scroll(stack((label(move ||data.with(|d|match &d.request_state {crate::code_action::ActionRequestState::Loading=>"Finding quick fixes…".to_string(),crate::code_action::ActionRequestState::Failed(error)=>error.clone(),crate::code_action::ActionRequestState::Ready=>"No quick fixes available".to_string()})).style(move |s|s.padding(10.0).apply_if(!data.with(|d|d.filtered_items.is_empty()),|s|s.hide())),dyn_stack(move ||data.with(|d|d.filtered_items.clone().into_iter().enumerate().collect::<Vec<_>>()),move |(i,_)|(data.with_untracked(|d|d.request_id),*i),move |(i,item)|{
+    let list=sparrow_scroll(stack((label(move ||data.with(|d|match &d.request_state {crate::code_action::ActionRequestState::Loading=>"Finding quick fixes…".to_string(),crate::code_action::ActionRequestState::Failed(error)=>error.clone(),crate::code_action::ActionRequestState::Ready=>"No quick fixes available".to_string()})).style(move |s|s.padding(10.0).apply_if(!data.with(|d|d.filtered_items.is_empty()),|s|s.hide())),dyn_stack(move ||data.with(|d|d.filtered_items.clone().into_iter().enumerate().collect::<Vec<_>>()),move |(i,_)|(data.with_untracked(|d|d.request_id),*i),move |(i,item)|{
         let title=item.title().replace('\n'," ");let disabled=matches!(&item.item,CodeActionOrCommand::CodeAction(a) if a.disabled.is_some());
         label(move ||title.clone()).on_click_stop(move |_|{let d=data.get_untracked();d.active.set(i);})
             .on_double_click_stop(move |_|data.get_untracked().select())

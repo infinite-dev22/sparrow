@@ -13,9 +13,10 @@ use floem::{
         SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
         create_rw_signal,
     },
-    views::{Decorators, dyn_stack, empty, label, scroll, stack},
+    views::{Decorators, dyn_stack, empty, label, stack},
 };
 use std::rc::Rc;
+use crate::widgets::sparrow_scroll;
 
 pub fn notifications(window: Rc<WindowTabData>) -> impl View {
     let config = window.common.config;
@@ -47,7 +48,7 @@ pub fn notifications(window: Rc<WindowTabData>) -> impl View {
                 .style(move |s|s.color(config.get().color(SparrowColor::EDITOR_LINK)))
         )).style(|s|s.height(30.0).items_center().padding_horiz(16.0).width_full()),
         label(||"No notifications").style(move |s|s.padding(24.0).apply_if(!notices.with(|n|n.is_empty()),|s|s.hide())),
-        scroll(dyn_stack(move ||groups.get(),|title|title.clone(),move |title|{
+        sparrow_scroll(dyn_stack(move ||groups.get(),|title|title.clone(),move |title|{
             let count_title=title.clone();let toggle_title=title.clone();let dismiss_title=title.clone();let rows_title=title.clone();
             stack((
                 stack((label(move ||{

@@ -9,10 +9,10 @@ use crate::{
 use floem::{
     IntoView, View,
     reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal},
-    views::{Decorators, dyn_container, dyn_stack, label, scroll, stack},
+    views::{Decorators, dyn_container, dyn_stack, label, stack},
 };
 use std::rc::Rc;
-
+use crate::widgets::sparrow_scroll;
 use super::expression_input::ExpressionInput;
 
 pub(super) fn variables_workspace(window: Rc<WindowTabData>) -> impl View {
@@ -131,7 +131,7 @@ pub(super) fn variables_workspace(window: Rc<WindowTabData>) -> impl View {
     )
     .style(|s| s.flex_col().width_full().max_height(150.0));
     let result_height = window.terminal.clone();
-    let results = scroll(results).style(move |s| {
+    let results = sparrow_scroll(results).style(move |s| {
         let count = result_height
             .get_active_dap(true)
             .map(|dap| dap.evaluation.entries.with(|entries| entries.len()))

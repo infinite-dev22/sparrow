@@ -5,7 +5,7 @@ use floem::{
     event::EventListener,
     reactive::{ReadSignal, SignalGet, SignalUpdate},
     style::{CursorStyle, Style},
-    views::{Decorators, container, label, scroll, stack, svg, virtual_stack},
+    views::{Decorators, container, label, stack, svg, virtual_stack},
 };
 use lapce_xi_rope::find::CaseMatching;
 
@@ -22,6 +22,7 @@ use crate::{
     window_tab::{Focus, WindowTabData},
     workspace::SparrowWorkspace,
 };
+use crate::widgets::sparrow_scroll;
 
 pub fn global_search_panel(
     window_tab_data: Rc<WindowTabData>,
@@ -115,7 +116,7 @@ fn search_result(
 ) -> impl View {
     let ui_line_height = global_search_data.common.ui_line_height;
     container({
-        scroll({
+        sparrow_scroll({
             virtual_stack(
                 move || global_search_data.clone(),
                 move |(path, _)| path.to_owned(),

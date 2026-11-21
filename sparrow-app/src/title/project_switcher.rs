@@ -11,7 +11,7 @@ use floem::{
     },
     style::{CursorStyle, Display},
     text::Weight,
-    views::{Decorators, container, dyn_stack, empty, label, scroll, stack, svg},
+    views::{Decorators, container, dyn_stack, empty, label, stack, svg},
 };
 use std::{path::Path, rc::Rc, sync::Arc};
 
@@ -23,6 +23,7 @@ use crate::{
     window_tab::WindowTabData,
     workspace::SparrowWorkspace,
 };
+use crate::widgets::sparrow_scroll;
 
 pub fn project_switcher(
     window_tab_data: Rc<WindowTabData>,
@@ -190,7 +191,7 @@ pub fn project_switcher(
             .style(|s| s.absolute().size_full()),
         // Panel
         container(
-            scroll(
+            sparrow_scroll(
                 stack((
                     menu_row(
                         None,

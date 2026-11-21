@@ -5,7 +5,7 @@ use floem::{
     reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
     views::{
-        Decorators, VirtualVector, container, empty, label, scroll, stack, svg,
+        Decorators, VirtualVector, container, empty, label, stack, svg,
         virtual_stack,
     },
 };
@@ -18,6 +18,7 @@ use crate::{
     editor::location::EditorLocation,
     window_tab::{CommonData, WindowTabData},
 };
+use crate::widgets::sparrow_scroll;
 
 #[derive(Clone, Debug)]
 pub struct CallHierarchyData {
@@ -130,7 +131,7 @@ pub fn show_hierarchy_panel(
     let config = call_hierarchy_data.common.config;
     let ui_line_height = call_hierarchy_data.common.ui_line_height;
     let scroll_to_line = call_hierarchy_data.scroll_to_line;
-    scroll(
+    sparrow_scroll(
         virtual_stack(
             move || VirtualList::new(call_hierarchy_data.root.get()),
             move |(_, _, item)| item.get_untracked().view_id,

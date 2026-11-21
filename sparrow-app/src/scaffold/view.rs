@@ -11,9 +11,10 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{SignalGet, SignalUpdate},
-    views::{Decorators, container, dyn_stack, label, scroll, stack},
+    views::{Decorators, container, dyn_stack, label, stack},
 };
 use std::{path::Path, rc::Rc};
+use crate::widgets::sparrow_scroll;
 
 pub fn view(window: Rc<WindowTabData>) -> impl View {
     let mode = window.scaffold.manager_mode;
@@ -66,7 +67,7 @@ fn scaffold_view(window: Rc<WindowTabData>) -> impl View {
         }
     });
     let file_focus = focus.clone();
-    let list = scroll(
+    let list = sparrow_scroll(
         dyn_stack(
             move || {
                 plan.get()
@@ -121,7 +122,7 @@ fn scaffold_view(window: Rc<WindowTabData>) -> impl View {
         .style(|s| s.flex_col()),
     )
     .style(|s| s.width(260.0).height_full());
-    let diff=scroll(dyn_stack(
+    let diff=sparrow_scroll(dyn_stack(
         move ||plan.get().map(|p|p.diff(selected.get())).unwrap_or_else(|| if export_mode.get() {"Select a bundled pack and Preview Export. Every exported file will appear here before anything is written.".into()} else {"Enter a name and select Preview Changes. Every affected file will appear here before anything is written.".into()}).lines().enumerate().map(|(i,line)|(i,line.to_string())).collect::<Vec<_>>(),
         |(i,line)|(*i,line.clone()),
         move |(_,line)| {
@@ -223,7 +224,7 @@ fn scaffold_view(window: Rc<WindowTabData>) -> impl View {
                 )
             }),
         ),
-        scroll(label(move || {
+        sparrow_scroll(label(move || {
             plan.get().map(|p| p.notes.join("\n")).unwrap_or_default()
         }))
         .style(|s| s.width_full().max_height(100.0)),

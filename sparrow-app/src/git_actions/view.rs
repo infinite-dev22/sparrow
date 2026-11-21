@@ -6,10 +6,10 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{SignalGet, SignalUpdate},
-    views::{Decorators, container, label, scroll, stack},
+    views::{Decorators, container, label, stack},
 };
 use std::{rc::Rc, sync::atomic::Ordering};
-
+use crate::widgets::sparrow_scroll;
 use super::menu;
 
 pub fn view(window: Rc<WindowTabData>) -> impl View {
@@ -41,7 +41,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     });
     let commands = window.common.internal_command;
     let background = state.active;
-    let body=stack((label(move ||format!("Git · {}",title.get())).style(|s|s.font_bold()),label(||"git").ide_popout_menu(move ||menu(commands,None)),input,label(move ||{let a=args.get();if a.contains("--hard"){"Hard reset discards tracked working-tree and staged changes."}else if a.starts_with("rebase"){"Rebase rewrites commit history. Resolve conflicts before continuing."}else{"Review the Git arguments above, then run. Output and errors appear below."}}),scroll(label(move ||output.get())).style(|s|s.width_full().height(300.0)),stack((focus.control(label(||"Run in Background").on_click_stop(move |_|background.set(false)).style(move |s|s.apply_if(!busy.get(),|s|s.hide()))),focus.control(label(move ||if busy.get(){"Running…"}else{"Run"}).on_click_stop(move |_|run.run(w.clone())).disabled(move ||busy.get())),focus.control(label(||"Copy output").on_click_stop(move |_|crate::menus::copy_text(&output.get_untracked()))),focus.control(label(move ||if busy.get(){"Cancel command"}else{"Close"}).on_click_stop(move |_|{if busy.get_untracked(){cancel.store(true,Ordering::Relaxed);}else{active.set(false);}})))).style(|s|s.gap(20.0)))).style(move |s| {
+    let body=stack((label(move ||format!("Git · {}",title.get())).style(|s|s.font_bold()),label(||"git").ide_popout_menu(move ||menu(commands,None)),input,label(move ||{let a=args.get();if a.contains("--hard"){"Hard reset discards tracked working-tree and staged changes."}else if a.starts_with("rebase"){"Rebase rewrites commit history. Resolve conflicts before continuing."}else{"Review the Git arguments above, then run. Output and errors appear below."}}),sparrow_scroll(label(move ||output.get())).style(|s|s.width_full().height(300.0)),stack((focus.control(label(||"Run in Background").on_click_stop(move |_|background.set(false)).style(move |s|s.apply_if(!busy.get(),|s|s.hide()))),focus.control(label(move ||if busy.get(){"Running…"}else{"Run"}).on_click_stop(move |_|run.run(w.clone())).disabled(move ||busy.get())),focus.control(label(||"Copy output").on_click_stop(move |_|crate::menus::copy_text(&output.get_untracked()))),focus.control(label(move ||if busy.get(){"Cancel command"}else{"Close"}).on_click_stop(move |_|{if busy.get_untracked(){cancel.store(true,Ordering::Relaxed);}else{active.set(false);}})))).style(|s|s.gap(20.0)))).style(move |s| {
         crate::widgets::dialog_surface(
             s.flex_col()
                 .width(720.0)

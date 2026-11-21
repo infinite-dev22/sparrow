@@ -12,7 +12,7 @@ use floem::{
     style::CursorStyle,
     text::{Attrs, AttrsList, FamilyOwned, TextLayout},
     views::{
-        Decorators, VirtualVector, container, empty, scroll::scroll, stack, text,
+        Decorators, VirtualVector, container, empty, stack, text,
         virtual_stack,
     },
 };
@@ -25,6 +25,7 @@ use crate::{
     widgets::text_input::TextInputBuilder,
     window_tab::CommonData,
 };
+use crate::widgets::sparrow_scroll;
 
 struct BTreeMapVirtualList(BTreeMap<String, String>);
 
@@ -325,7 +326,7 @@ pub fn theme_color_settings_view(
     let search_editor_id = search_editor.id();
     let buffer = search_editor.doc_signal().get_untracked().buffer;
 
-    scroll(
+    sparrow_scroll(
         stack((
             container({
                 TextInputBuilder::new()

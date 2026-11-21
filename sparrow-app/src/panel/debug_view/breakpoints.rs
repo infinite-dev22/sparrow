@@ -6,7 +6,7 @@ use floem::{
     View,
     event::EventListener,
     reactive::{SignalGet, SignalUpdate, create_rw_signal},
-    views::{Decorators, container, dyn_stack, scroll, stack, text},
+    views::{Decorators, container, dyn_stack, stack, text},
 };
 
 use crate::{
@@ -17,6 +17,7 @@ use crate::{
     widgets::clickable_icon,
     window_tab::WindowTabData,
 };
+use crate::widgets::sparrow_scroll;
 
 pub(in crate::panel) fn breakpoints_view(
     window_tab_data: Rc<WindowTabData>,
@@ -27,7 +28,7 @@ pub(in crate::panel) fn breakpoints_view(
     let available_width = create_rw_signal(0.0);
     let internal_command = window_tab_data.common.internal_command;
     container(
-        scroll(
+        sparrow_scroll(
             dyn_stack(
                 move || {
                     breakpoints

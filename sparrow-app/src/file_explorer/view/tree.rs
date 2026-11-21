@@ -11,7 +11,7 @@ use floem::{
         ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal,
     },
     style::{AlignItems, CursorStyle, Style},
-    views::{Decorators, container, label, scroll, stack, svg, virtual_stack},
+    views::{Decorators, container, label, stack, svg, virtual_stack},
 };
 use sparrow_rpc::{
     file::{FileNodeViewData, FileNodeViewKind, Naming},
@@ -27,7 +27,7 @@ use crate::{
     source_control::SourceControlData,
     window_tab::{Focus, WindowTabData},
 };
-
+use crate::widgets::sparrow_scroll;
 use super::naming::{
     file_node_input_view, initialize_naming_editor,
     initialize_naming_editor_with_path,
@@ -196,7 +196,7 @@ pub(super) fn file_explorer_view(
     let external =
         project::external_libraries(window, project_info, library_watch);
     let workspace_root = data.common.workspace.path.clone();
-    scroll(
+    sparrow_scroll(
         stack((
             container(
                 virtual_stack(

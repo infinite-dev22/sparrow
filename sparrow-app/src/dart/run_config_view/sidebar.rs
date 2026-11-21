@@ -9,12 +9,13 @@ use floem::{
     keyboard::{Key, Modifiers, NamedKey},
     reactive::{Scope, SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
-    views::{Decorators, dyn_stack, label, scroll, stack, svg},
+    views::{Decorators, dyn_stack, label, stack, svg},
 };
 use std::rc::Rc;
 
 use super::Dialog;
 use floem::reactive::Memo;
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn configuration_sidebar(
     d: Rc<Dialog>,
@@ -28,7 +29,7 @@ pub(super) fn configuration_sidebar(
     let remove = d.clone();
     let duplicate = d.clone();
     let list_focus = cx.create_rw_signal(None::<floem::ViewId>);
-    let configuration_list = scroll(
+    let configuration_list = sparrow_scroll(
         dyn_stack(
             {
                 let d = d.clone();

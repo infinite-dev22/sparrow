@@ -11,10 +11,11 @@ use floem::{
     reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal},
     style::CursorStyle,
     views::{
-        Decorators, dyn_container, dyn_stack, empty, label, scroll, stack, svg,
+        Decorators, dyn_container, dyn_stack, empty, label, stack, svg,
     },
 };
 use std::rc::Rc;
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn frames(window: Rc<WindowTabData>) -> impl View {
     let terminal = window.terminal.clone();
@@ -111,7 +112,7 @@ pub(super) fn frames(window: Rc<WindowTabData>) -> impl View {
             let traces = dap.stack_traces;
             let terminal = frame_window.terminal.clone();
             let internal = frame_window.common.internal_command;
-            let list = scroll(
+            let list = sparrow_scroll(
                 dyn_stack(
                     move || {
                         traces.with(|traces| {

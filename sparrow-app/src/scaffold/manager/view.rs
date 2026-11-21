@@ -12,9 +12,10 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{SignalGet, SignalUpdate},
-    views::{Decorators, container, dyn_stack, label, scroll, stack},
+    views::{Decorators, container, dyn_stack, label, stack},
 };
 use std::rc::Rc;
+use crate::widgets::sparrow_scroll;
 
 pub(in crate::scaffold) fn view(window: Rc<WindowTabData>) -> impl View {
     let editing = window.scaffold.manager.editor.open;
@@ -59,7 +60,7 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
     });
     let list_focus = focus.clone();
     let list =
-        scroll(
+        sparrow_scroll(
             dyn_stack(
                 move || {
                     let q = query.get().to_lowercase();
@@ -127,7 +128,7 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
         text.push_str("\nPriority: Project > User > Bundled. Higher-priority packs with the same ID override this entry.");
         text
     }).style(|s|s.width_full().padding(8.0));
-    let preview = scroll(dyn_stack(
+    let preview = sparrow_scroll(dyn_stack(
         move || {
             let text = plan.get().map(|p| {
                 let mut text = format!("{}\n{}\n",p.title,p.notes.join("\n"));

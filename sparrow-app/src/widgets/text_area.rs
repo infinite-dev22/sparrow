@@ -5,11 +5,12 @@ use floem::{
         SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal,
     },
     text::{Attrs, AttrsList, LineHeightValue, TextLayout},
-    views::{Decorators, container, label, rich_text, scroll, stack},
+    views::{Decorators, container, label, rich_text, stack},
 };
 use sparrow_core::buffer::rope_text::RopeText;
 
 use crate::{config::color::SparrowColor, editor::EditorData};
+use crate::widgets::sparrow_scroll;
 
 pub fn text_area(
     editor: EditorData,
@@ -89,7 +90,7 @@ pub fn text_area(
     };
 
     container(
-        scroll(
+        sparrow_scroll(
             stack((
                 rich_text(move || text_layout.get())
                     .on_resize(move |rect| {

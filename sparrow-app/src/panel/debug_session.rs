@@ -7,7 +7,7 @@ use floem::{
     reactive::{
         SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal,
     },
-    views::{Decorators, dyn_container, dyn_stack, label, scroll, stack},
+    views::{Decorators, dyn_container, dyn_stack, label, stack},
 };
 use sparrow_rpc::terminal::TermId;
 
@@ -25,6 +25,7 @@ use crate::{
 mod console;
 
 use console::console_view;
+use crate::widgets::sparrow_scroll;
 
 fn close_session(terminal: &TerminalPanelData, id: TermId) {
     let process = terminal
@@ -416,7 +417,7 @@ pub(super) fn panel(
             .into_any()
         },
     );
-    let toolbar = scroll(
+    let toolbar = sparrow_scroll(
         stack((
             controls,
             crate::widgets::tab_button(

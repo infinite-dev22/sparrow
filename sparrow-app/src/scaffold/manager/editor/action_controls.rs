@@ -7,11 +7,11 @@ use floem::{
     views::{
         Decorators, dyn_stack,
         editor::{Editor, text_document::TextDocument},
-        label, scroll, stack,
+        label, stack,
     },
 };
 use std::{cell::RefCell, collections::BTreeMap, path::PathBuf, rc::Rc};
-
+use crate::widgets::sparrow_scroll;
 use super::{Draft, analyzer};
 
 pub(super) fn action_controls(
@@ -78,7 +78,7 @@ pub(super) fn action_controls(
             focus.control(label(||"Cancel Action").on_click_stop(move |_|cancel.clear())),
         )).style(|s|s.gap(18.0).height(24.0).items_center()),
         label(move ||message.get()).style(|s|s.font_size(12.0)),
-        scroll(dyn_stack(move ||list.get().into_iter().enumerate().collect::<Vec<_>>(),
+        sparrow_scroll(dyn_stack(move ||list.get().into_iter().enumerate().collect::<Vec<_>>(),
             |(index,action)|(*index,action.title.clone()),move |(_,choice)| {
                 let session=session.clone();
                 let enabled=choice.disabled.is_none();

@@ -7,9 +7,10 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
-    views::{Decorators, container, dyn_stack, label, scroll, stack},
+    views::{Decorators, container, dyn_stack, label, stack},
 };
 use std::{path::PathBuf, rc::Rc};
+use crate::widgets::sparrow_scroll;
 
 pub fn view(window: Rc<WindowTabData>) -> impl View {
     let state = window.project_search.clone();
@@ -265,7 +266,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         }
     });
     let display_root = window.workspace.path.clone();
-    let rows = scroll(
+    let rows = sparrow_scroll(
         dyn_stack(
             move || {
                 results

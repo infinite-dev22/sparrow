@@ -5,7 +5,7 @@ use floem::{
     peniko::Color,
     reactive::{ReadSignal, SignalGet},
     style::CursorStyle,
-    views::{Decorators, button, scroll},
+    views::{Decorators, button},
 };
 
 use crate::config::{SparrowConfig, color::SparrowColor};
@@ -48,7 +48,7 @@ pub fn tab_button(
 
 /// A horizontal tab strip that scrolls when the labels exceed the available width.
 pub fn tab_strip(content: impl IntoView + 'static) -> impl View {
-    scroll(content)
-        .scroll_style(|s| s.hide_bars(true).vertical_scroll_as_horizontal(true))
+    super::horizontal_scroll(content)
+        .scroll_style(|s| s.hide_bars(true))
         .style(|s| s.min_width(0.0).flex_shrink(1.0_f32))
 }

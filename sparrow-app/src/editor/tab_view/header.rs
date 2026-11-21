@@ -27,12 +27,12 @@ use floem::{
     unit::PxPctAuto,
     views::{
         Decorators, clip, container, dyn_stack, empty, label,
-        scroll::{VerticalScrollAsHorizontal, scroll},
         stack, svg, text,
     },
 };
 
 use crate::widgets::clickable_icon;
+use crate::widgets::horizontal_scroll;
 use crate::widgets::tooltip::tooltip_tip;
 
 use super::context_menu::tab_secondary_click;
@@ -463,7 +463,7 @@ pub(super) fn editor_tab_header(
         })
         .style(|s| s.flex_shrink(0f32)),
         container(
-            scroll({
+            horizontal_scroll({
                 dyn_stack(items, key, view_fn)
                     .on_resize(move |rect| {
                         let size = rect.size();
@@ -484,11 +484,7 @@ pub(super) fn editor_tab_header(
                     .get_untracked()
             })
             .scroll_style(|s| s.hide_bars(true))
-            .style(|s| {
-                s.set(VerticalScrollAsHorizontal, true)
-                    .absolute()
-                    .size_full()
-            }),
+            .style(|s| s.absolute().size_full()),
         )
         .style(|s| {
             s.height_full()

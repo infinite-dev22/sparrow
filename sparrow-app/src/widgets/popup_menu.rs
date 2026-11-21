@@ -1,4 +1,5 @@
 //! Themed, in-window menus shared by the editor, tool windows and toolbar.
+use crate::widgets::sparrow_scroll;
 use crate::{config::color::SparrowColor, window_tab::CommonData};
 use floem::{
     IntoView, View, ViewId,
@@ -7,7 +8,7 @@ use floem::{
     keyboard::{Key, NamedKey},
     kurbo::Point,
     reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal},
-    views::{Decorators, dyn_stack, label, scroll, stack},
+    views::{Decorators, dyn_stack, label, stack},
 };
 use std::{
     cell::RefCell,
@@ -243,7 +244,7 @@ fn show(menu: Menu, position: Option<Point>, anchor: Option<ViewId>) {
                 }
                 (x.min((bounds.width-width).max(0.0)).max(0.0), y.min((bounds.height-height).max(0.0)).max(0.0))
             };
-            scroll(rows).ensure_visible(move ||{let selected=selections.with(|s|s.get(depth).copied().unwrap_or(0));floem::kurbo::Rect::new(0.0,selected as f64*26.0,1.0,(selected+1)as f64*26.0)})
+            sparrow_scroll(rows).ensure_visible(move ||{let selected=selections.with(|s|s.get(depth).copied().unwrap_or(0));floem::kurbo::Rect::new(0.0,selected as f64*26.0,1.0,(selected+1)as f64*26.0)})
                 .on_event_stop(EventListener::PointerDown,|_|{})
                 .style(move |s|s.absolute().inset_left(placement().0).inset_top(placement().1).width(width).max_height(height).padding(4.0).border(1.0).border_radius(5.0)
                     .border_color(config.get().color(SparrowColor::SPARROW_BORDER)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).box_shadow_blur(12.0)
@@ -263,7 +264,10 @@ fn show(menu: Menu, position: Option<Point>, anchor: Option<ViewId>) {
                 let selected = selections
                     .with_untracked(|s| s.get(depth).copied().unwrap_or(0));
                 match &key.key.logical_key {
-                    Key::Named(NamedKey::Escape) => {crate::widgets::modal_focus::note_popup_escape();dismiss(overlay, restore)},
+                    Key::Named(NamedKey::Escape) => {
+                        crate::widgets::modal_focus::note_popup_escape();
+                        dismiss(overlay, restore)
+                    }
                     Key::Named(NamedKey::Tab) => dismiss(overlay, restore),
                     Key::Named(NamedKey::ArrowLeft) if depth > 0 => {
                         levels.update(|menus| {

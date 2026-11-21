@@ -8,7 +8,7 @@ use floem::{
     reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal},
     style::CursorStyle,
     text::Style as FontStyle,
-    views::{Decorators, container, dyn_stack, label, scroll, stack, svg},
+    views::{Decorators, container, dyn_stack, label, stack, svg},
 };
 
 use crate::{
@@ -19,6 +19,7 @@ use crate::{
     widgets::clickable_icon,
     window_tab::WindowTabData,
 };
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View {
     let diff_editors = window_tab_data.main_split.diff_editors;
@@ -116,7 +117,7 @@ pub(super) fn open_editors_view(window_tab_data: Rc<WindowTabData>) -> impl View
         })
     };
 
-    scroll(
+    sparrow_scroll(
         dyn_stack(
             move || editor_tabs.get().into_iter().enumerate(),
             move |(index, (editor_tab_id, _))| (*index, *editor_tab_id),

@@ -11,10 +11,12 @@ use crate::{
 use floem::{
     View,
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
-    views::{Decorators, VirtualVector, label, scroll, stack, svg, virtual_stack},
+    views::{Decorators, VirtualVector, label, stack, svg, virtual_stack},
 };
 use lsp_types::{Diagnostic, DiagnosticSeverity};
 use std::{path::PathBuf, rc::Rc};
+use crate::widgets::sparrow_scroll;
+
 #[derive(Clone, PartialEq)]
 struct Row {
     path: PathBuf,
@@ -234,7 +236,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                         .min_height(0.0)
                         .apply_if(!visible.with(|rows| rows.is_empty()), |s| s.hide())
                 }),
-                scroll(
+                sparrow_scroll(
                     virtual_stack(
                         move || Rows(visible.get()),
                         |r| {

@@ -14,11 +14,12 @@ use floem::{
     style::{AlignItems, CursorStyle, JustifyContent, Position},
     text::Weight,
     views::{
-        Decorators, VirtualVector, container, label, scroll::scroll, stack, text,
+        Decorators, VirtualVector, container, label, stack, text,
         virtual_stack,
     },
 };
 use lsp_types::CompletionItemKind;
+use crate::widgets::sparrow_scroll;
 
 struct VectorItems<V>(im::Vector<V>);
 
@@ -64,7 +65,7 @@ pub(crate) fn completion(window_tab_data: Rc<WindowTabData>) -> impl View {
     let active = completion_data.with_untracked(|c| c.active);
     let request_id =
         move || completion_data.with_untracked(|c| (c.request_id, c.input_id));
-    scroll(
+    sparrow_scroll(
         virtual_stack(
             move || completion_data.with(|c| VectorItems(c.filtered_items.clone())),
             move |(i, _item)| (request_id(), *i),

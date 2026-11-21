@@ -13,9 +13,10 @@ use floem::{
     reactive::{SignalGet, SignalUpdate},
     views::{
         Decorators, container, dyn_stack, empty, rich_text,
-        scroll::{PropagatePointerWheel, scroll},
+        scroll::PropagatePointerWheel,
     },
 };
+use crate::widgets::sparrow_scroll;
 
 pub(crate) fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
     let hover_data = window_tab_data.common.hover.clone();
@@ -23,7 +24,7 @@ pub(crate) fn hover(window_tab_data: Rc<WindowTabData>) -> impl View {
     let id = AtomicU64::new(0);
     let layout_rect = window_tab_data.common.hover.layout_rect;
 
-    scroll(
+    sparrow_scroll(
         dyn_stack(
             move || hover_data.content.get(),
             move |_| id.fetch_add(1, std::sync::atomic::Ordering::Relaxed),

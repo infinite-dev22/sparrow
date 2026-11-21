@@ -20,7 +20,7 @@ use floem::{
     unit::PxPctAuto,
     views::{
         Decorators, VirtualVector, container,
-        scroll::{PropagatePointerWheel, scroll},
+        scroll::PropagatePointerWheel,
         stack, text, virtual_stack,
     },
 };
@@ -32,6 +32,7 @@ mod preview;
 use input::palette_input;
 use item::palette_item;
 use preview::palette_preview;
+use crate::widgets::sparrow_scroll;
 
 struct PaletteItems(im::Vector<PaletteItem>);
 
@@ -73,7 +74,7 @@ fn palette_content(
     let palette_item_height = 25.0;
     let workspace = window_tab_data.workspace.clone();
     stack((
-        scroll({
+        sparrow_scroll({
             let workspace = workspace.clone();
             virtual_stack(
                 move || PaletteItems(items.get()),

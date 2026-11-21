@@ -9,10 +9,10 @@ use crate::{
 use floem::{
     View,
     reactive::SignalGet,
-    views::{Decorators, dyn_stack, label, scroll, stack},
+    views::{Decorators, dyn_stack, label, stack},
 };
 use std::rc::Rc;
-
+use crate::widgets::sparrow_scroll;
 use super::{Issue, jump, rank};
 
 pub(super) fn details(window: Rc<WindowTabData>, issue: Issue) -> impl View {
@@ -50,7 +50,7 @@ pub(super) fn details(window: Rc<WindowTabData>, issue: Issue) -> impl View {
     let links = window.clone();
     let docs = window.clone();
     let target = issue.clone();
-    scroll(
+    sparrow_scroll(
         stack((
             label(move || metadata.clone()).style(move |s| {
                 s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))

@@ -6,7 +6,7 @@ use floem::{
     View,
     peniko::kurbo::Point,
     reactive::{ReadSignal, SignalGet, SignalWith, create_memo},
-    views::{Decorators, container, dyn_stack, label, scroll::scroll, stack},
+    views::{Decorators, container, dyn_stack, label, stack},
 };
 
 use crate::editor::EditorData;
@@ -15,6 +15,7 @@ use crate::{
     doc::DocContent,
     workspace::SparrowWorkspace,
 };
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn editor_breadcrumbs(
     workspace: Arc<SparrowWorkspace>,
@@ -32,7 +33,7 @@ pub(super) fn editor_breadcrumbs(
         }
     });
     container(
-        scroll(
+        sparrow_scroll(
             stack((
                 {
                     let workspace = workspace.clone();

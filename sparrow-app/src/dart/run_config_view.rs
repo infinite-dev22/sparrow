@@ -1,10 +1,10 @@
 use super::run_config::{self, Draft, TaskDraft};
 use crate::widgets::modal_focus::{ModalChoice, ModalFocus};
 use crate::{
-    widgets::clickable_icon,
     command::InternalCommand,
     config::{color::SparrowColor, icon::SparrowIcons},
     debug::RunDebugMode,
+    widgets::clickable_icon,
     window_tab::WindowTabData,
 };
 use floem::{
@@ -13,12 +13,13 @@ use floem::{
     file::{FileDialogOptions, FileSpec},
     keyboard::{Key, NamedKey},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
-    views::{Decorators, container, empty, label, scroll, stack},
+    views::{Decorators, container, empty, label, stack},
 };
 use std::rc::Rc;
 mod sidebar;
 mod task_list;
 
+use crate::widgets::sparrow_scroll;
 use sidebar::configuration_sidebar;
 use task_list::task_list;
 
@@ -681,7 +682,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let dialog = container(container(stack((
         stack((empty().style(|s|s.width(26.0)),label(||"Run/Debug Configurations").style(|s|s.flex_grow(1.0_f32).items_center().justify_center().font_bold()),clickable_icon(||SparrowIcons::CLOSE,move ||visible.set(false),||false,||false,||"Close",config)))
             .style(move |s|s.height(36.0).width_full().items_center().flex_shrink(0.0_f32).background(floem::peniko::Color::from_rgb8(40,40,40))),
-        stack((sidebar,label(||"Add a Dart or Flutter configuration to get started.").style(move |s|s.flex_grow(1.0_f32).items_center().justify_center().apply_if(has_selected.get(),|s|s.hide())),scroll(stack((
+        stack((sidebar,label(||"Add a Dart or Flutter configuration to get started.").style(move |s|s.flex_grow(1.0_f32).items_center().justify_center().apply_if(has_selected.get(),|s|s.hide())),sparrow_scroll(stack((
             stack((form_row("Name:",d.fields[0],"").style(move |s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).apply_if(templates_mode.get(),|s|s.hide())),label(||"Defaults for new configurations").style(move |s|s.flex_grow(1.0_f32).font_bold().apply_if(!templates_mode.get(),|s|s.hide())),checkbox(project,"Store as project file"))).style(|s|s.items_center().gap(16.0).margin_bottom(16.0)),
             stack((form_row("Dart entrypoint:",entry,"The entry-point for the application (e.g. lib/main.dart).").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),browse_entry)).style(|s|s.items_start()),
             stack((form_row("Working directory:", d.fields[8], "Leave empty to use the project directory. ${workspace} is supported.").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)), browse_cwd)).style(|s|s.items_start()),
@@ -705,7 +706,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     keyboard.icon(||SparrowIcons::FOLD_DOWN,move ||down_task.edit_task(2),||false,move ||selected_task.get()+1>=task_count.get(),||"Move task down",config),
                 )).style(move |s|s.height(26.0).width_full().items_center().border_bottom(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
                 label(||"There are no tasks to run before launch").style(move |s|s.width_full().flex_grow(1.0_f32).items_center().justify_center().color(config.get().color(SparrowColor::EDITOR_DIM)).apply_if(editing_task.get(),|s|s.hide())),
-                scroll(tasks).style(move |s|s.height(72.0).width_full().apply_if(!editing_task.get(),|s|s.hide())),
+                sparrow_scroll(tasks).style(move |s|s.height(72.0).width_full().apply_if(!editing_task.get(),|s|s.hide())),
                 stack((form_row("Program:",before,""),form_row("Arguments:",before_args,""))).style(move |s|s.flex_col().padding(8.0).width_full().apply_if(!editing_task.get(),|s|s.hide())),
             )).style(move |s|s.flex_col().min_height(134.0).margin_left(24.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
             stack((checkbox(activate,"Activate tool window"),checkbox(focus,"Focus tool window"))).style(|s|s.gap(12.0).margin_top(4.0)),

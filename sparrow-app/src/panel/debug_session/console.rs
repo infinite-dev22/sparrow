@@ -6,13 +6,14 @@ use std::rc::Rc;
 use floem::{
     IntoView, View,
     reactive::{SignalGet, SignalTrack, SignalUpdate, SignalWith},
-    views::{Decorators, dyn_container, empty, scroll, stack},
+    views::{Decorators, dyn_container, empty, stack},
 };
 
 use crate::panel::kind::PanelKind;
 use crate::{
     config::icon::SparrowIcons, widgets::clickable_icon, window_tab::WindowTabData,
 };
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn console_view(
     window: Rc<WindowTabData>,
@@ -103,7 +104,7 @@ pub(super) fn console_view(
             .style(move |s| s.flex_col().min_width_full()
                 .font_family(config.get().terminal_font_family().to_owned())
                 .font_size(config.get().terminal_font_size() as f32).line_height(1.6).padding(8.0));
-            let output = scroll(text)
+            let output = sparrow_scroll(text)
                 .scroll_to(move || {
                     if follow.get() {
                         logs.track();

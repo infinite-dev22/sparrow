@@ -12,7 +12,7 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
-    views::{Decorators, container, dyn_stack, empty, label, scroll, stack, svg},
+    views::{Decorators, container, dyn_stack, empty, label, stack, svg},
 };
 use std::{collections::BTreeMap, rc::Rc};
 mod navigation;
@@ -20,6 +20,7 @@ mod setting_row;
 
 use navigation::navigation_tree;
 use setting_row::setting_row;
+use crate::widgets::sparrow_scroll;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -465,7 +466,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     keyboard.icon(||SparrowIcons::LOCATION_FORWARD,move ||{index.update(|i|*i+=1);page.set(history.with_untracked(|h|h[index.get_untracked()]));query.set(String::new());},||false,move ||index.get()+1>=history.with(Vec::len),||"Forward",config),
                 )).style(|s|s.height(32.0).items_center().flex_shrink(0.0_f32)),
                 label(move ||error.get()).style(move |s|s.color(config.get().color(SparrowColor::SPARROW_ERROR)).text_ellipsis().apply_if(error.with(|e|e.is_empty()),|s|s.hide())),
-                scroll(stack((overview,external_button,
+                sparrow_scroll(stack((overview,external_button,
                     label(||"No settings match your search.").style(move |s|s.margin_top(12.0).color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM)).apply_if(query.with(|q|q.is_empty())||!filtered.with(|r|r.is_empty()),|s|s.hide())),
                     dyn_stack(move ||filtered.get(),move |item|(epoch.get(),item.kind.clone(),item.field.clone(),initial(&item.value).map(|v|v.0)),move |item|setting_row(item,pending,rows_keyboard.clone(),project_scope,query,config)).style(|s|s.flex_col().width_full()),
                 )).style(|s|s.flex_col().min_width_full())).style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full()),

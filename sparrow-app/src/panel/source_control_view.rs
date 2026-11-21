@@ -4,7 +4,7 @@ use floem::{
     View,
     event::{Event, EventListener},
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
-    views::{Decorators, container, label, scroll, stack},
+    views::{Decorators, container, label, stack},
 };
 use sparrow_core::buffer::rope_text::RopeText;
 
@@ -19,6 +19,7 @@ use crate::{
 mod file_list;
 
 use file_list::file_diffs_view;
+use crate::widgets::sparrow_scroll;
 
 pub fn source_control_panel(
     window: Rc<WindowTabData>,
@@ -219,7 +220,7 @@ pub fn source_control_panel(
                 }),
         ))
         .style(|s| s.height(28.0).gap(8.0).items_center().padding_horiz(6.0)),
-        scroll(
+        sparrow_scroll(
             stack((group(false, tracked_open), group(true, new_open)))
                 .style(|s| s.flex_col().width_full()),
         )
@@ -238,7 +239,7 @@ pub fn source_control_panel(
                 .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
         }),
         container(
-            scroll(message_view)
+            sparrow_scroll(message_view)
                 .on_move(move |point| origin.set(point + (8.0, 8.0)))
                 .on_scroll(move |rect| viewport.set(rect))
                 .style(|s| s.absolute().size_full()),

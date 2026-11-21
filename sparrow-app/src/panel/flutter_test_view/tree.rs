@@ -8,11 +8,12 @@ use crate::{
 use floem::{
     View,
     reactive::{SignalGet, SignalUpdate, SignalWith},
-    views::{Decorators, dyn_stack, label, scroll, stack},
+    views::{Decorators, dyn_stack, label, stack},
 };
 use std::collections::BTreeSet;
 
 use floem::reactive::RwSignal;
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn test_tree(
     data: &WindowTabData,
@@ -21,7 +22,7 @@ pub(super) fn test_tree(
     let run = data.flutter_test.run;
     let selected = data.flutter_test.selected;
     let config = data.common.config;
-    scroll(
+    sparrow_scroll(
         dyn_stack(
             move || run.with(|r| rows(r, &collapsed.get())),
             |r| (r.key.clone(), r.text.clone()),

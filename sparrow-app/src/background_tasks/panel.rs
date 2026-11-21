@@ -6,12 +6,13 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo},
-    views::{Decorators, dyn_stack, empty, label, scroll, stack},
+    views::{Decorators, dyn_stack, empty, label, stack},
 };
 use std::rc::Rc;
 
 use super::activity::activities;
 use crate::widgets::progress_bar;
+use crate::widgets::sparrow_scroll;
 
 pub fn panel(window: Rc<WindowTabData>) -> impl View {
     let config = window.common.config;
@@ -32,7 +33,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 label(|| "×").on_click_stop(move |_| open.set(false)),
             ))
             .style(|s| s.width_full().items_center()),
-            scroll(
+            sparrow_scroll(
                 dyn_stack(
                     move || items.get(),
                     |item| item.id.clone(),

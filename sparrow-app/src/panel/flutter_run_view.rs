@@ -20,6 +20,7 @@ use crate::{
     editor::location::{EditorLocation, EditorPosition},
     window_tab::WindowTabData,
 };
+use crate::widgets::sparrow_scroll;
 
 pub fn flutter_run_panel(
     window_tab_data: Rc<WindowTabData>,
@@ -52,7 +53,7 @@ pub fn flutter_run_panel(
                     focus.set(crate::window_tab::Focus::Panel(super::kind::PanelKind::FlutterRun));
                 }).style(|s| s.size_full()).into_any()
         } else if id.is_some() {
-            floem::views::scroll(floem::views::dyn_stack(
+            sparrow_scroll(floem::views::dyn_stack(
                 move || logs.get().into_iter().enumerate().collect::<Vec<_>>(),
                 |(index, line)| (*index, line.clone()),
                 move |(_, line)| label(move || line.clone()).style(move |s| {

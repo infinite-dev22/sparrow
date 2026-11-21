@@ -6,13 +6,14 @@ use std::{ops::Range, sync::Arc};
 use floem::{
     View,
     reactive::{ReadSignal, RwSignal, SignalGet},
-    views::{Decorators, VirtualVector, label, scroll, stack, virtual_stack},
+    views::{Decorators, VirtualVector, label, stack, virtual_stack},
 };
 
 use crate::{
     config::{SparrowConfig, color::SparrowColor},
     dart::vm_service::InspectorNodeData,
 };
+use crate::widgets::sparrow_scroll;
 
 pub(super) fn property_inspector_view(
     selected_node: RwSignal<Option<RwSignal<InspectorNodeData>>>,
@@ -33,7 +34,7 @@ pub(super) fn property_inspector_view(
                 .border_color(c.color(SparrowColor::SPARROW_BORDER))
         }),
         // Properties content
-        scroll(
+        sparrow_scroll(
             virtual_stack(
                 move || {
                     let props = selected_node.with(|sel| {
