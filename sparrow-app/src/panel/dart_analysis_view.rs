@@ -1,8 +1,8 @@
 //! Flat, navigable diagnostic table matching the Dart Analysis tool window.
 use super::kind::PanelKind;
-use crate::popup_menu::{Menu, MenuItem, PopupMenuExt};
+use crate::widgets::popup_menu::{Menu, MenuItem, PopupMenuExt};
 use crate::{
-    app::clickable_icon,
+    widgets::clickable_icon,
     command::InternalCommand,
     config::{color::SparrowColor, icon::SparrowIcons},
     editor::location::{EditorLocation, EditorPosition},
@@ -219,18 +219,20 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             config.get().color(SparrowColor::SPARROW_BORDER),
                         )
                 }),
-                label(move || match filter.get() {
-                    Some(0) => "No errors",
-                    Some(1) => "No warnings",
-                    Some(2) => "No hints or lints",
-                    _ => "No analysis issues",
-                })
+                crate::widgets::empty_state(
+                    move || match filter.get() {
+                        Some(0) => "No errors",
+                        Some(1) => "No warnings",
+                        Some(2) => "No hints or lints",
+                        _ => "No analysis issues",
+                    },
+                    config,
+                )
                 .style(move |s| {
-                    s.padding(24.0)
-                        .color(
-                            config.get().color(SparrowColor::PANEL_FOREGROUND_DIM),
-                        )
-                        .apply_if(!visible.with(|r| r.is_empty()), |s| s.hide())
+                    s.flex_grow(1.0_f32)
+                        .flex_basis(0.0)
+                        .min_height(0.0)
+                        .apply_if(!visible.with(|rows| rows.is_empty()), |s| s.hide())
                 }),
                 scroll(
                     virtual_stack(
@@ -322,11 +324,12 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     .item_size_fixed(move || f64::from(height))
                     .style(|s| s.absolute().width_full().flex_col()),
                 )
-                .style(|s| {
+                .style(move |s| {
                     s.flex_grow(1.0_f32)
                         .flex_basis(0.0)
                         .min_height(0.0)
                         .width_full()
+                        .apply_if(visible.with(|rows| rows.is_empty()), |s| s.hide())
                 }),
             ))
             .style(|s| {

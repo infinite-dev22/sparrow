@@ -1,6 +1,6 @@
 //! Project identity is a shared backdrop, not separately tinted chrome widgets.
 use std::path::Path;
-use crate::app::Color;
+use floem::peniko::Color;
 
 const PALETTE: [[u8; 3]; 9] = [
     [224, 130, 61],

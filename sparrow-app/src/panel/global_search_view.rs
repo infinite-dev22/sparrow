@@ -11,14 +11,14 @@ use lapce_xi_rope::find::CaseMatching;
 
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
-    app::clickable_icon,
+    widgets::clickable_icon,
     command::InternalCommand,
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     editor::location::{EditorLocation, EditorPosition},
-    focus_text::focus_text,
+    widgets::focus_text::focus_text,
     global_search::{GlobalSearchData, SearchMatchData},
     listener::Listener,
-    text_input::TextInputBuilder,
+    widgets::text_input::TextInputBuilder,
     window_tab::{Focus, WindowTabData},
     workspace::SparrowWorkspace,
 };

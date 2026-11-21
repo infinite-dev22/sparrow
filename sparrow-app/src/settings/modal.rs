@@ -1,20 +1,26 @@
 //! Reference-style modal settings with deferred, validated edits.
 use super::{SettingsData, SettingsItem, SettingsValue};
-use crate::modal_focus::{ModalFocus, list_destination};
+use crate::widgets::modal_focus::ModalFocus;
 use crate::{
-    app::{clickable_icon, tooltip_label},
+    widgets::{clickable_icon, tooltip_label},
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     panel::kind::PanelKind,
     window_tab::WindowTabData,
 };
 use floem::{
-    IntoView, View,
+    View,
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::{Decorators, container, dyn_stack, empty, label, scroll, stack, svg},
 };
 use std::{collections::BTreeMap, rc::Rc};
+mod navigation;
+mod setting_row;
+
+use navigation::navigation_tree;
+use setting_row::setting_row;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Overview,
@@ -189,172 +195,6 @@ fn navigate(
     }
     query.set(String::new());
 }
-fn setting_row(
-    item: SettingsItem,
-    pending: RwSignal<Pending>,
-    keyboard: ModalFocus,
-    project_scope: RwSignal<bool>,
-    query: RwSignal<String>,
-    config: floem::reactive::ReadSignal<std::sync::Arc<SparrowConfig>>,
-) -> impl View {
-    let (original, kind) = initial(&item.value).unwrap();
-    let key = (item.kind.clone(), item.field.clone());
-    let raw = pending
-        .with_untracked(|p| p.get(&key).map(|v| v.raw.clone()))
-        .unwrap_or_else(|| original.clone());
-    let reset_key = key.clone();
-    let reset_value = original.clone();
-    let reset_key_label = key.clone();
-    let value = floem::reactive::create_rw_signal(raw);
-    Scope::current().create_effect(move |last: Option<String>| {
-        let raw = value.get();
-        if last.is_some() {
-            pending.update(|p| {
-                if raw == original {
-                    p.remove(&key);
-                } else {
-                    p.insert(
-                        key.clone(),
-                        Edit {
-                            raw: raw.clone(),
-                            kind: kind.clone(),
-                        },
-                    );
-                }
-            });
-        }
-        raw
-    });
-    let needs_control = matches!(&item.value, SettingsValue::Bool(_));
-    let control = match item.value {
-        SettingsValue::Bool(_) => label(move || {
-            if value.get() == "true" {
-                "☑ Enabled"
-            } else {
-                "☐ Disabled"
-            }
-        })
-        .on_click_stop(move |_| {
-            value.update(|v| *v = if v == "true" { "false" } else { "true" }.into())
-        })
-        .into_any(),
-        SettingsValue::Dropdown(info) => keyboard
-            .control(crate::dropdown::dropdown(value, info.items.clone(), config)
-                .style(|s| s.width(220.0).max_width_full()))
-            .into_any(),
-        SettingsValue::String(_)
-            if item.kind == "core"
-                && ["flutter-sdk-path", "dart-sdk-path"]
-                    .contains(&item.field.as_str()) =>
-        {
-            let input = keyboard.input(value, config).style(move |s| {
-                s.width(400.0)
-                    .max_width_full()
-            });
-            let input_id = input.id();
-            let browser = keyboard.clone();
-            stack((
-                input,
-                keyboard.icon(
-                    || SparrowIcons::DIRECTORY,
-                    move || {
-                        let mut options = floem::file::FileDialogOptions::new()
-                            .title("Choose SDK directory")
-                            .select_directories();
-                        let current =
-                            std::path::PathBuf::from(value.get_untracked());
-                        if current.is_dir() {
-                            options = options.force_starting_directory(current);
-                        }
-                        browser.open_file(options, move |selection| {
-                            if let Some(path) = selection.and_then(|selection| {
-                                selection.path.first().cloned()
-                            }) {
-                                value.set(path.display().to_string());
-                            }
-                            if !input_id.is_hidden_recursive() {
-                                input_id.request_focus();
-                            }
-                        })
-                    },
-                    || false,
-                    || false,
-                    || "Choose SDK directory",
-                    config,
-                ),
-            ))
-            .style(|s| s.items_center().gap(6.0))
-            .into_any()
-        }
-        _ => keyboard
-            .input(value, config)
-            .style(move |s| {
-                s.width(320.0)
-                    .max_width_full()
-            })
-            .into_any(),
-    };
-    let control = if needs_control {
-        keyboard.control(control).into_any()
-    } else {
-        control
-    };
-    let reset = keyboard.control(
-        label(move || {
-            if pending.with(|pending| {
-                pending
-                    .get(&reset_key_label)
-                    .is_some_and(|edit| matches!(edit.kind, Type::Reset))
-            }) {
-                "Will inherit IDE value on Apply"
-            } else {
-                "Use IDE value"
-            }
-        })
-        .on_click_stop(move |_| {
-            pending.update(|pending| {
-                pending.insert(
-                    reset_key.clone(),
-                    Edit {
-                        raw: reset_value.clone(),
-                        kind: Type::Reset,
-                    },
-                );
-            })
-        })
-        .style(move |s| {
-            s.height(24.0)
-                .items_center()
-                .color(config.get().color(SparrowColor::EDITOR_LINK))
-                .apply_if(!project_scope.get(), |s| s.hide())
-        }),
-    );
-    let qualified_name = item.name.clone();
-    let name = item
-        .name
-        .split_once(": ")
-        .map(|(_, n)| n.to_string())
-        .unwrap_or(item.name);
-    stack((
-        label(move || {
-            if query.with(|query| query.is_empty()) {
-                name.clone()
-            } else {
-                qualified_name.clone()
-            }
-        })
-        .style(|s| s.font_bold().margin_bottom(6.0)),
-        control,
-        reset,
-        label(move || item.description.clone()).style(move |s| {
-            s.margin_top(6.0)
-                .font_size(12.0)
-                .max_width_full()
-                .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
-        }),
-    ))
-    .style(|s| s.flex_col().width_full().padding_bottom(20.0))
-}
 pub fn view(window: Rc<WindowTabData>) -> impl View {
     let cx = Scope::current();
     let config = window.common.config;
@@ -479,7 +319,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         vec!["Settings for: IDE".into()]
     };
     let scope_picker = keyboard.control(
-        crate::dropdown::dropdown(scope_label, scopes, config)
+        crate::widgets::dropdown(scope_label, scopes, config)
             .on_accept(move |selected| {
                 let project = selected == "Settings for: This project";
                 if project == project_scope.get_untracked() {
@@ -590,188 +430,24 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let button_keyboard = keyboard.clone();
     let button = move |text: &'static str| {
         button_keyboard.control_if(
-            label(move || text).style(move |s| {
-                s.width(72.0)
-                    .height(24.0)
-                    .items_center()
-                    .justify_center()
-                    .border(1.0)
-                    .border_radius(4.0)
-                    .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-                    .hover(|s| {
-                        s.cursor(floem::style::CursorStyle::Pointer).background(
-                            config
-                                .get()
-                                .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
-            }),
+            crate::widgets::button(
+                move || text,
+                if text == "OK" {
+                    crate::widgets::ButtonKind::Primary
+                } else {
+                    crate::widgets::ButtonKind::Outlined
+                },
+                config,
+            )
+            .style(|s| s.width(72.0).height(24.0)),
             move || text != "Apply" || dirty.get_untracked(),
         )
     };
     let rows_keyboard = keyboard.clone();
-    let tree_focus = cx.create_rw_signal(None::<floem::ViewId>);
-    let tree = dyn_stack(
-        || PAGES.to_vec(),
-        |(p, _, _)| *p as u8,
-        move |(p, title, depth)| {
-            stack((
-                label(move || {
-                    if p == Page::Overview {
-                        if appearance_expanded.get() {
-                            "⌄"
-                        } else {
-                            "›"
-                        }
-                    } else if p == Page::Languages {
-                        if languages_expanded.get() {
-                            "⌄"
-                        } else {
-                            "›"
-                        }
-                    } else {
-                        ""
-                    }
-                })
-                .on_click_stop(move |_| {
-                    if p == Page::Overview {
-                        let collapsing = appearance_expanded.get_untracked();
-                        if collapsing
-                            && matches!(
-                                page.get_untracked(),
-                                Page::Appearance | Page::System
-                            )
-                        {
-                            navigate(p, page, history, index, query);
-                        }
-                        appearance_expanded.set(!collapsing);
-                    } else if p == Page::Languages {
-                        let collapsing = languages_expanded.get_untracked();
-                        if collapsing
-                            && matches!(
-                                page.get_untracked(),
-                                Page::Flutter | Page::Dart
-                            )
-                        {
-                            navigate(p, page, history, index, query);
-                        }
-                        languages_expanded.set(!collapsing);
-                    }
-                    if let Some(id) = tree_focus.get_untracked() {
-                        id.request_focus();
-                    }
-                })
-                .style(|s| s.width(16.0)),
-                label(move || title).style(|s| s.flex_grow(1.0_f32)),
-            ))
-            .on_click_stop(move |_| {
-                navigate(p, page, history, index, query);
-                if let Some(id) = tree_focus.get_untracked() {
-                    id.request_focus();
-                }
-            })
-            .style(move |s| {
-                s.height(25.0)
-                    .width_full()
-                    .padding_left((18 + depth * 16) as f32)
-                    .items_center()
-                    .apply_if(
-                        depth > 0
-                            && !(if matches!(p, Page::Flutter | Page::Dart) {
-                                languages_expanded.get()
-                            } else {
-                                appearance_expanded.get()
-                            })
-                            && query.with(|q| q.is_empty()),
-                        |s| s.hide(),
-                    )
-                    .apply_if(page.get() == p, |s| {
-                        s.background(
-                            config
-                                .get()
-                                .color(SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND),
-                        )
-                    })
-                    .hover(|s| s.cursor(floem::style::CursorStyle::Pointer))
-            })
-        },
-    )
-    .style(|s| s.flex_col().width_full());
-    let tree_id = tree.id();
-    tree_focus.set(Some(tree_id));
-    let tree = keyboard
-        .control(tree)
-        .style(|s| s.focus(|s| s.background(floem::peniko::Color::TRANSPARENT)))
-        .on_event(EventListener::KeyDown, move |event| {
-            let Event::KeyDown(key) = event else {
-                return EventPropagation::Continue;
-            };
-            if !key.modifiers.is_empty() {
-                return EventPropagation::Continue;
-            }
-            let current = page.get_untracked();
-            let pages = visible_pages(
-                appearance_expanded.get_untracked(),
-                languages_expanded.get_untracked(),
-                !query.with_untracked(|q| q.is_empty()),
-            );
-            let position = pages.iter().position(|p| *p == current).unwrap_or(0);
-            let destination =
-                list_destination(&key.key.logical_key, position, pages.len())
-                    .map(|i| pages[i]);
-            let destination = match (&key.key.logical_key, current) {
-                (Key::Named(NamedKey::ArrowRight), Page::Overview) => {
-                    if appearance_expanded.get_untracked() {
-                        Some(Page::Appearance)
-                    } else {
-                        appearance_expanded.set(true);
-                        None
-                    }
-                }
-                (Key::Named(NamedKey::ArrowRight), Page::Languages) => {
-                    if languages_expanded.get_untracked() {
-                        Some(Page::Flutter)
-                    } else {
-                        languages_expanded.set(true);
-                        None
-                    }
-                }
-                (Key::Named(NamedKey::ArrowLeft), Page::Overview) => {
-                    appearance_expanded.set(false);
-                    None
-                }
-                (Key::Named(NamedKey::ArrowLeft), Page::Languages) => {
-                    languages_expanded.set(false);
-                    None
-                }
-                (
-                    Key::Named(NamedKey::ArrowLeft),
-                    Page::Appearance | Page::System,
-                ) => Some(Page::Overview),
-                (Key::Named(NamedKey::ArrowLeft), Page::Flutter | Page::Dart) => {
-                    Some(Page::Languages)
-                }
-                _ => destination,
-            };
-            if let Some(destination) = destination {
-                navigate(destination, page, history, index, query);
-            }
-            if matches!(
-                key.key.logical_key,
-                Key::Named(
-                    NamedKey::ArrowUp
-                        | NamedKey::ArrowDown
-                        | NamedKey::ArrowLeft
-                        | NamedKey::ArrowRight
-                        | NamedKey::Home
-                        | NamedKey::End
-                )
-            ) {
-                EventPropagation::Stop
-            } else {
-                EventPropagation::Continue
-            }
-        });
+    let tree = navigation_tree(
+        cx, &keyboard, config, page, history, index, query,
+        appearance_expanded, languages_expanded,
+    );
     let dialog = container(container(stack((
         stack((empty().style(|s|s.width(26.0)),label(move ||format!("Settings – {}",workspace.display().unwrap_or_else(||"Sparrow".into()))).style(|s|s.flex_grow(1.0_f32).items_center().justify_center().font_bold()),clickable_icon(||SparrowIcons::CLOSE,close,||false,||false,||"Close Settings",config)))
             .style(move |s|s.height(36.0).width_full().items_center().flex_shrink(0.0_f32).background(floem::peniko::Color::from_rgb8(40,40,40))),
@@ -795,7 +471,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 )).style(|s|s.flex_col().min_width_full())).style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full()),
             )).style(|s|s.flex_col().height_full().flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0).padding_horiz(16.0).padding_top(8.0)),
         )).style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full()),
-        stack((tooltip_label(config,label(||"?").style(move |s|s.size(22.0,22.0).border_radius(11.0).border(1.0).items_center().justify_center().border_color(config.get().color(SparrowColor::SPARROW_BORDER))),||"Search by setting name or description. Changes are saved only by Apply or OK."),empty().style(|s|s.flex_grow(1.0_f32)),button("OK").on_click_stop(move |_|{if okay(){close();}}).style(move |s|s.background(config.get().color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND))),button("Cancel").on_click_stop(move |_|close()),button("Apply").on_click_stop(move |_|{save();}).disabled(move ||!dirty.get())))
+        stack((tooltip_label(config,label(||"?").style(move |s|s.size(22.0,22.0).border_radius(11.0).border(1.0).items_center().justify_center().border_color(config.get().color(SparrowColor::SPARROW_BORDER))),||"Search by setting name or description. Changes are saved only by Apply or OK."),empty().style(|s|s.flex_grow(1.0_f32)),button("OK").on_click_stop(move |_|{if okay(){close();}}),button("Cancel").on_click_stop(move |_|close()),button("Apply").on_click_stop(move |_|{save();}).disabled(move ||!dirty.get())))
             .style(move |s|s.height(46.0).width_full().items_center().gap(12.0).padding_horiz(16.0).flex_shrink(0.0_f32).border_top(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
     )).style(|s|s.flex_col().size_full())).style(move |s|s.font_family(config.get().ui.font_family.clone()).font_size(13.0).width(900.0).height(700.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().border_radius(8.0).color(config.get().color(SparrowColor::EDITOR_FOREGROUND)).background(config.get().color(SparrowColor::PANEL_BACKGROUND))))
     .on_event_stop(EventListener::PointerDown,|_|{})

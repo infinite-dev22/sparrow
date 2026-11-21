@@ -2,6 +2,7 @@ use sparrow_core::buffer::rope_text::RopeText;
 use std::{path::PathBuf, rc::Rc};
 
 use floem::{
+    ViewId,
     keyboard::Modifiers,
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
 };
@@ -29,6 +30,7 @@ pub struct SourceControlData {
     pub branches: RwSignal<im::Vector<String>>,
     pub tags: RwSignal<im::Vector<String>>,
     pub editor: EditorData,
+    pub(crate) commit_action: RwSignal<Option<ViewId>>,
     pub common: Rc<CommonData>,
 }
 
@@ -77,6 +79,7 @@ impl SourceControlData {
             branches: cx.create_rw_signal(im::Vector::new()),
             tags: cx.create_rw_signal(im::Vector::new()),
             editor: editors.make_local(cx, common.clone()),
+            commit_action: cx.create_rw_signal(None),
             common,
         }
     }

@@ -1,6 +1,6 @@
 //! Project debugger preferences and the behavior controlled by their menu items.
 use crate::{
-    popup_menu::{Menu, MenuItem},
+    widgets::popup_menu::{Menu, MenuItem},
     terminal::panel::TerminalPanelData,
     window_tab::WindowTabData,
 };
@@ -272,7 +272,7 @@ impl WindowTabData {
                 }),
             );
         }
-        crate::popup_menu::show_context_menu(menu, None);
+        crate::widgets::popup_menu::show_context_menu(menu, None);
     }
 }
 

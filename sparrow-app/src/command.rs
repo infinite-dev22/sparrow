@@ -22,7 +22,7 @@ use strum::{EnumMessage, IntoEnumIterator};
 use strum_macros::{Display, EnumIter, EnumString, IntoStaticStr};
 
 use crate::{
-    alert::AlertButton,
+    widgets::alert::AlertButton,
     debug::RunDebugMode,
     doc::Doc,
     editor::location::EditorLocation,

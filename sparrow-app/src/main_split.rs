@@ -1,3 +1,5 @@
+pub(crate) mod view;
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -34,7 +36,7 @@ use sparrow_rpc::{
 use tracing::{Level, event};
 
 use crate::{
-    alert::AlertButton,
+    widgets::alert::AlertButton,
     code_lens::CodeLensData,
     command::InternalCommand,
     doc::{DiagnosticData, Doc, DocContent, DocHistory, EditorDiagnostic},

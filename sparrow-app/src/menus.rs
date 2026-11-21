@@ -1,5 +1,5 @@
 //! Shared context-menu behavior for file, editor and tab surfaces.
-use crate::popup_menu::{Menu, MenuItem};
+use crate::widgets::popup_menu::{Menu, MenuItem};
 use floem::{
     views::editor::{core::register::Clipboard, text::SystemClipboard},
 };

@@ -1,7 +1,7 @@
 //! Problems grouped by file, backed by the workspace's live analyzer results.
 use super::kind::PanelKind;
 use crate::{
-    app::clickable_icon,
+    widgets::clickable_icon,
     command::InternalCommand,
     config::{color::SparrowColor, icon::SparrowIcons},
     editor::location::{EditorLocation, EditorPosition},
@@ -20,6 +20,10 @@ use std::{
     path::PathBuf,
     rc::Rc,
 };
+
+mod details;
+
+use details::details;
 
 #[derive(Clone, PartialEq)]
 struct Issue {
@@ -75,137 +79,6 @@ fn jump(window: &WindowTabData, issue: &Issue) {
                 same_editor_tab: false,
             },
         });
-}
-fn details(window: Rc<WindowTabData>, issue: Issue) -> impl View {
-    let config = window.common.config;
-    let diagnostic = issue.diagnostic.clone();
-    let message = diagnostic.message.clone();
-    let severity = match rank(&diagnostic) {
-        0 => "Error",
-        1 => "Warning",
-        _ => "Information",
-    };
-    let code = diagnostic.code.as_ref().map(|code| match code {
-        lsp_types::NumberOrString::Number(n) => n.to_string(),
-        lsp_types::NumberOrString::String(s) => s.clone(),
-    });
-    let metadata = [Some(severity.to_string()), diagnostic.source.clone(), code]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ");
-    let position = diagnostic.range.start;
-    let location = format!(
-        "{}:{}:{}",
-        issue.path.display(),
-        position.line + 1,
-        position.character + 1
-    );
-    let related = diagnostic.related_information.unwrap_or_default();
-    let description = diagnostic
-        .code_description
-        .map(|d| d.href)
-        .filter(|url| matches!(url.scheme(), "http" | "https"));
-    let open = window.clone();
-    let fix = window.clone();
-    let links = window.clone();
-    let docs = window.clone();
-    let target = issue.clone();
-    scroll(
-        stack((
-            label(move || metadata.clone()).style(move |s| {
-                s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
-                    .width_full()
-            }),
-            label(move || message.clone())
-                .style(|s| s.width_full().selectable(true)),
-            label(move || location.clone())
-                .on_click_stop(move |_| jump(&open, &target))
-                .style(move |s| {
-                    s.width_full()
-                        .color(config.get().color(SparrowColor::EDITOR_LINK))
-                }),
-            label(|| "Show Quick Fixes  Alt+Enter")
-                .on_click_stop(move |_| {
-                    fix.common
-                        .internal_command
-                        .send(InternalCommand::QuickFixAt {
-                            location: EditorLocation {
-                                path: issue.path.clone(),
-                                position: Some(EditorPosition::Position(position)),
-                                scroll_offset: None,
-                                ignore_unconfirmed: false,
-                                same_editor_tab: false,
-                            },
-                        })
-                })
-                .style(move |s| {
-                    s.height(26.0)
-                        .items_center()
-                        .color(config.get().color(SparrowColor::EDITOR_LINK))
-                }),
-            dyn_stack(
-                move || description.clone().into_iter().collect::<Vec<_>>(),
-                |url| url.clone(),
-                move |url| {
-                    let docs = docs.clone();
-                    label(|| "Diagnostic documentation ↗")
-                        .on_click_stop(move |_| {
-                            docs.common.internal_command.send(
-                                InternalCommand::OpenWebUri {
-                                    uri: url.to_string(),
-                                },
-                            )
-                        })
-                        .style(move |s| {
-                            s.height(24.0)
-                                .color(config.get().color(SparrowColor::EDITOR_LINK))
-                        })
-                },
-            ),
-            dyn_stack(
-                move || related.clone().into_iter().enumerate().collect::<Vec<_>>(),
-                |(i, _)| *i,
-                move |(_, related)| {
-                    let links = links.clone();
-                    let text = format!(
-                        "{}  ({}:{})",
-                        related.message,
-                        related.location.uri.path(),
-                        related.location.range.start.line + 1
-                    );
-                    label(move || text.clone())
-                        .on_click_stop(move |_| {
-                            if let Ok(path) = related.location.uri.to_file_path() {
-                                links.common.internal_command.send(
-                                    InternalCommand::JumpToLocation {
-                                        location: EditorLocation {
-                                            path,
-                                            position: Some(
-                                                EditorPosition::Position(
-                                                    related.location.range.start,
-                                                ),
-                                            ),
-                                            scroll_offset: None,
-                                            ignore_unconfirmed: false,
-                                            same_editor_tab: false,
-                                        },
-                                    },
-                                );
-                            }
-                        })
-                        .style(move |s| {
-                            s.width_full()
-                                .padding_top(6.0)
-                                .color(config.get().color(SparrowColor::EDITOR_LINK))
-                        })
-                },
-            )
-            .style(|s| s.flex_col().width_full()),
-        ))
-        .style(|s| s.flex_col().gap(8.0).padding(12.0).width_full()),
-    )
-    .style(|s| s.size_full())
 }
 pub fn panel(window: Rc<WindowTabData>) -> impl View {
     let config = window.common.config;
@@ -264,43 +137,31 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             || vec![(false, "File"), (true, "Project Errors")],
             |(i, _)| *i,
             move |(i, title)| {
-                label(move || {
-                    if !i {
-                        let count = issues.with(|rows| {
-                            rows.iter()
-                                .filter(|r| Some(&r.path) == file.get().as_ref())
-                                .count()
-                        });
-                        if count > 0 {
-                            format!("File  {count}")
+                crate::widgets::tab_button(
+                    label(move || {
+                        if !i {
+                            let count = issues.with(|rows| {
+                                rows.iter()
+                                    .filter(|r| Some(&r.path) == file.get().as_ref())
+                                    .count()
+                            });
+                            if count > 0 {
+                                format!("File  {count}")
+                            } else {
+                                title.into()
+                            }
                         } else {
                             title.into()
                         }
-                    } else {
-                        title.into()
-                    }
-                })
-                .on_click_stop(move |_| {
-                    tab.set(i);
-                    selected.set(None);
-                })
-                .style(move |s| {
-                    s.height(24.0)
-                        .padding_horiz(12.0)
-                        .items_center()
-                        .border_radius(3.0)
-                        .apply_if(tab.get() == i, |s| {
-                            s.border(1.0)
-                                .border_color(
-                                    config.get().color(
-                                        SparrowColor::SPARROW_TAB_ACTIVE_BORDER,
-                                    ),
-                                )
-                                .background(config.get().color(
-                                    SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND,
-                                ))
-                        })
-                })
+                    }),
+                    move || tab.get() == i,
+                    move || {
+                        tab.set(i);
+                        selected.set(None);
+                    },
+                    config,
+                )
+                .style(|s| s.padding_horiz(12.0))
             },
         );
     floem::reactive::create_effect(move |_| {
@@ -345,8 +206,20 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             clickable_icon(||SparrowIcons::ITEM_CLOSED,move ||collapsed.set(grouped.get().into_iter().map(|(p,_)|p).collect()),||false,||false,||"Collapse All",config),
         )).style(|s|s.width(32.0).height_full().flex_col().items_center().padding_top(2.0).flex_shrink(0.0_f32)),
         stack((
-            label(move ||if tab.get(){"No project errors".into()}else {format!("No problems in {}",file.get().and_then(|p|p.file_name().map(|n|n.to_string_lossy().into_owned())).unwrap_or_else(||"the current file".into()))})
-                .style(move |s|s.absolute().size_full().items_center().justify_center().color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM)).apply_if(!grouped.with(|r|r.is_empty()),|s|s.hide())),
+            crate::widgets::empty_state(
+                move || {
+                    if tab.get() {
+                        "No project errors".into()
+                    } else {
+                        let name = file.get()
+                            .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()))
+                            .unwrap_or_else(|| "the current file".into());
+                        format!("No problems in {name}")
+                    }
+                },
+                config,
+            )
+            .style(move |s| s.absolute().apply_if(!grouped.with(|r| r.is_empty()), |s| s.hide())),
             scroll(dyn_stack(move ||grouped.get(), |(p, rows)|(p.clone(), rows.iter().map(|r|(r.diagnostic.range, rank(&r.diagnostic), r.diagnostic.message.clone(),r.offset)).collect::<Vec<_>>()),move |(path,rows)| {
                 let group_path=path.clone(); let style_path=path.clone(); let icon_path=path.clone();
                 let name=path.file_name().unwrap_or_default().to_string_lossy().into_owned();

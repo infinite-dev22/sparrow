@@ -63,7 +63,7 @@ use crate::outline::OutlineData;
 use crate::widget_tree::WidgetTreeData;
 use crate::{
     about::AboutData,
-    alert::{AlertBoxData, AlertButton},
+    widgets::alert::{AlertBoxData, AlertButton},
     code_action::{CodeActionData, CodeActionStatus},
     command::{
         CommandExecuted, CommandKind, InternalCommand, SparrowCommand,
@@ -476,7 +476,7 @@ impl WindowTabData {
             window_common: window_common.clone(),
         });
 
-        crate::popup_menu::register(common.clone());
+        crate::widgets::popup_menu::register(common.clone());
         let flutter_inspector = FlutterInspectorData::new(cx, common.clone());
         let main_split = MainSplitData::new(cx, common.clone());
         let code_action =
@@ -3455,6 +3455,14 @@ impl WindowTabData {
         // Toolbar selectors keep their anchor/search field focused. Handle
         // cancellation before dispatching Escape to the underlying editor.
         if let EventRef::Keyboard(key) = event.into() {
+            if key.key.logical_key == floem::keyboard::Key::Named(floem::keyboard::NamedKey::Tab)
+                && (key.modifiers.is_empty() || key.modifiers == floem::keyboard::Modifiers::SHIFT)
+                && crate::widgets::native_button_has_focus(
+                    self.common.window_common.app_view_id.get_untracked(),
+                )
+            {
+                return false;
+            }
             let menus = [
                 self.project_menu_visible,
                 self.branch_menu_visible,
@@ -3468,7 +3476,7 @@ impl WindowTabData {
                 for menu in menus {
                     menu.set(false);
                 }
-                crate::modal_focus::note_popup_escape();
+                crate::widgets::modal_focus::note_popup_escape();
                 return true;
             }
         }
@@ -3529,6 +3537,24 @@ impl WindowTabData {
                 Some(keypress.key_down(event, &self.plugin))
             }
             Focus::Panel(PanelKind::SourceControl) => {
+                if let EventRef::Keyboard(key) = event.into()
+                    && key.key.logical_key
+                        == floem::keyboard::Key::Named(floem::keyboard::NamedKey::Tab)
+                    && (key.modifiers.is_empty()
+                        || key.modifiers == floem::keyboard::Modifiers::SHIFT)
+                {
+                    // Commit message editing is routed here even when the
+                    // field loses native focus during a panel update.
+                    if key.modifiers.is_empty()
+                        && !self.source_control.busy.get_untracked()
+                        && let Some(commit) =
+                            self.source_control.commit_action.get_untracked()
+                    {
+                        commit.request_focus();
+                        return true;
+                    }
+                    return false;
+                }
                 Some(keypress.key_down(event, &self.source_control))
             }
             _ => None,

@@ -1,7 +1,7 @@
 //! Device Manager using live daemon devices and installed emulator metadata.
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
-    app::clickable_icon,
+    widgets::clickable_icon,
     config::{color::SparrowColor, icon::SparrowIcons},
     dart::hot_reload::device_platform_icon,
     window_tab::WindowTabData,

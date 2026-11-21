@@ -5,7 +5,7 @@ use std::{ops::Range, rc::Rc, sync::Arc};
 
 use super::position::PanelPosition;
 use crate::{
-    app::clickable_icon,
+    widgets::clickable_icon,
     command::InternalCommand,
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     editor::location::{EditorLocation, EditorPosition},

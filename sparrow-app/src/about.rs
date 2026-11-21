@@ -14,7 +14,7 @@ use crate::{
     command::{CommandExecuted, CommandKind},
     config::color::SparrowColor,
     keypress::KeyPressFocus,
-    web_link::web_link,
+    widgets::web_link::web_link,
     window_tab::{Focus, WindowTabData},
 };
 

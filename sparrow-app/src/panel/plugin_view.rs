@@ -1,5 +1,5 @@
 //! Appearance-only theme management; no language-extension marketplace.
-use crate::text_input::text_input;
+use crate::widgets::text_input;
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
     command::SparrowWorkbenchCommand, config::color::SparrowColor,

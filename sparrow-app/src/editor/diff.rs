@@ -24,7 +24,7 @@ use crate::{
     doc::{Doc, DocContent},
     id::{DiffEditorId, EditorTabId},
     main_split::{Editors, MainSplitData},
-    wave::wave_box,
+    widgets::wave::wave_box,
     window_tab::CommonData,
 };
 

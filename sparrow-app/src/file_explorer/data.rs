@@ -1,5 +1,5 @@
-use crate::popup_menu::show_context_menu;
-use crate::popup_menu::{Menu, MenuItem};
+use crate::widgets::popup_menu::show_context_menu;
+use crate::widgets::popup_menu::{Menu, MenuItem};
 use std::{
     borrow::Cow,
     collections::HashMap,

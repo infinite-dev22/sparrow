@@ -5,20 +5,25 @@ use std::rc::Rc;
 
 use floem::{
     View,
-    reactive::{create_rw_signal, SignalGet, SignalUpdate},
-    style::CursorStyle,
+    reactive::{create_rw_signal, SignalGet},
     views::{
-        Decorators, empty, label, scroll, stack, container,
+        Decorators, empty, label, scroll, stack,
     },
 };
 
 use super::position::PanelPosition;
 use crate::{
-    app::clickable_icon,
+    widgets::{clickable_icon, toggle_row},
     config::{color::SparrowColor, icon::SparrowIcons},
     dart::InspectorState,
     window_tab::WindowTabData,
 };
+
+mod devtools;
+mod metrics;
+
+use devtools::devtools_controls;
+use metrics::perf_metrics_section;
 
 pub fn flutter_performance_panel(
     window_tab_data: Rc<WindowTabData>,
@@ -85,7 +90,7 @@ pub fn flutter_performance_panel(
 
                 toggle_row(
                     "Toggle Debug Paint",
-                    "Draw visual layout and padding boundaries",
+                    Some("Draw visual layout and padding boundaries"),
                     debug_paint,
                     {
                         let c = client.clone();
@@ -95,7 +100,7 @@ pub fn flutter_performance_panel(
                 ),
                 toggle_row(
                     "Show Performance Overlay",
-                    "Display real-time GPU/Raster and UI frame graphs",
+                    Some("Display real-time GPU/Raster and UI frame graphs"),
                     perf_overlay,
                     {
                         let c = client.clone();
@@ -105,7 +110,7 @@ pub fn flutter_performance_panel(
                 ),
                 toggle_row(
                     "Slow Animations (5.0x)",
-                    "Dilate animation time to inspect UI transitions",
+                    Some("Dilate animation time to inspect UI transitions"),
                     slow_animations,
                     {
                         let c = client.clone();
@@ -115,7 +120,7 @@ pub fn flutter_performance_panel(
                 ),
                 toggle_row(
                     "Repaint Rainbow",
-                    "Rotate layer border colors when repainted",
+                    Some("Rotate layer border colors when repainted"),
                     repaint_rainbow,
                     {
                         let c = client.clone();
@@ -145,138 +150,4 @@ fn section_header(
             .padding_vert(8.0)
             .selectable(false)
     })
-}
-
-fn perf_metrics_section(
-    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
-) -> impl View {
-    stack((
-        section_header("FRAME RENDERING TIMES (TARGET: 16.6ms / 60fps)", config),
-        stack((
-            metric_card("UI Thread", "4.2 ms", "Average build time", config),
-            metric_card("Raster Thread", "3.8 ms", "Average GPU render time", config),
-        ))
-        .style(|s| s.padding_horiz(12.0).gap(8.0)),
-    ))
-    .style(|s| s.flex_col().margin_bottom(12.0))
-}
-
-fn metric_card(
-    title: &'static str,
-    value: &'static str,
-    desc: &'static str,
-    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
-) -> impl View {
-    container(
-        stack((
-            label(move || title.to_string()).style(move |s| {
-                let c = config.get();
-                s.font_size(11.0)
-                    .color(c.color(SparrowColor::EDITOR_DIM))
-                    .selectable(false)
-            }),
-            label(move || value.to_string()).style(move |s| {
-                let c = config.get();
-                s.font_size(16.0)
-                    .font_bold()
-                    .color(c.color(SparrowColor::SPARROW_WARN))
-                    .selectable(false)
-                    .margin_vert(2.0)
-            }),
-            label(move || desc.to_string()).style(move |s| {
-                let c = config.get();
-                s.font_size(10.0)
-                    .color(c.color(SparrowColor::PANEL_FOREGROUND_DIM))
-                    .selectable(false)
-            }),
-        ))
-        .style(|s| s.flex_col()),
-    )
-    .style(move |s| {
-        let c = config.get();
-        s.flex_grow(1.0_f32)
-            .padding(10.0)
-            .border(1.0)
-            .border_color(c.color(SparrowColor::SPARROW_BORDER))
-            .border_radius(4.0)
-            .background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-    })
-}
-
-fn toggle_row(
-    title: &'static str,
-    subtitle: &'static str,
-    flag: floem::reactive::RwSignal<bool>,
-    on_change: impl Fn(bool) + 'static,
-    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
-) -> impl View {
-    stack((
-        stack((
-            label(move || title.to_string()).style(|s| {
-                s.font_size(12.0)
-                    .selectable(false)
-                    .flex_grow(1.0_f32)
-            }),
-            label(move || subtitle.to_string()).style(move |s| {
-                let c = config.get();
-                s.font_size(10.0)
-                    .color(c.color(SparrowColor::EDITOR_DIM))
-                    .selectable(false)
-            }),
-        ))
-        .style(|s| s.flex_col().flex_grow(1.0_f32)),
-
-        // Switch indicator
-        container(
-            label(move || if flag.get() { "ON".to_string() } else { "OFF".to_string() }).style(move |s| {
-                let c = config.get();
-                s.font_size(10.0)
-                    .font_bold()
-                    .color(if flag.get() {
-                        c.color(SparrowColor::SPARROW_WARN)
-                    } else {
-                        c.color(SparrowColor::EDITOR_DIM)
-                    })
-                    .selectable(false)
-            })
-        )
-        .style(move |s| {
-            let c = config.get();
-            s.padding_horiz(8.0)
-                .padding_vert(3.0)
-                .border(1.0)
-                .border_radius(4.0)
-                .border_color(c.color(SparrowColor::SPARROW_BORDER))
-        }),
-    ))
-    .on_click_stop(move |_| {
-        flag.update(|v| {
-            *v = !*v;
-            on_change(*v);
-        });
-    })
-    .style(move |s| {
-        let c = config.get();
-        s.items_center()
-            .padding_horiz(12.0)
-            .padding_vert(8.0)
-            .cursor(CursorStyle::Pointer)
-            .hover(|s| {
-                s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-            })
-    })
-}
-
-fn devtools_controls(window: Rc<WindowTabData>) -> impl View {
-    let busy = window.devtools.busy;
-    let message = window.devtools.message;
-    let home = window.clone(); let memory = window.clone(); let network = window.clone();
-    stack((
-        section_header("DEVTOOLS", window.common.config),
-        label(|| "Open DevTools").on_click_stop(move |_| home.open_devtools(crate::dart::devtools::DevToolsPage::Home)).disabled(move || busy.get()),
-        label(|| "Profile Memory").on_click_stop(move |_| memory.open_devtools(crate::dart::devtools::DevToolsPage::Memory)).disabled(move || busy.get()),
-        label(|| "Profile Network").on_click_stop(move |_| network.open_devtools(crate::dart::devtools::DevToolsPage::Network)).disabled(move || busy.get()),
-        label(move || message.get()).style(|s| s.selectable(true).font_size(11.0)),
-        label(|| "Run in debug or profile mode to connect. Use profile mode for representative performance measurements.").style(|s| s.font_size(11.0)),
-    )).style(|s| s.flex_col().gap(8.0).padding(10.0))
 }

@@ -1,29 +1,24 @@
-use crate::popup_menu::show_context_menu;
-use crate::popup_menu::{Menu, MenuItem};
-use std::{path::PathBuf, rc::Rc};
+use std::rc::Rc;
 
 use floem::{
     View,
     event::{Event, EventListener},
-    peniko::kurbo::Rect,
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
-    style::{CursorStyle, Style},
-    views::{Decorators, container, dyn_stack, label, scroll, stack, svg},
+    views::{Decorators, container, label, scroll, stack},
 };
 use sparrow_core::buffer::rope_text::RopeText;
-use sparrow_rpc::source_control::FileDiff;
 
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
-    command::{
-        CommandKind, InternalCommand, SparrowCommand, SparrowWorkbenchCommand,
-    },
     config::{color::SparrowColor, icon::SparrowIcons},
     editor::view::editor_view,
-    settings::checkbox,
-    source_control::SourceControlData,
+    widgets::checkbox,
     window_tab::{Focus, WindowTabData},
 };
+
+mod file_list;
+
+use file_list::file_diffs_view;
 
 pub fn source_control_panel(
     window: Rc<WindowTabData>,
@@ -58,6 +53,7 @@ pub fn source_control_panel(
     let tracked_open = create_rw_signal(true);
     let new_open = create_rw_signal(true);
     let refresh_source = source.clone();
+    let commit_action = source.commit_action;
     let group = move |unversioned: bool, open: floem::reactive::RwSignal<bool>| {
         let count = move || {
             files.with(|items| {
@@ -89,20 +85,13 @@ pub fn source_control_panel(
                     },
                     config,
                 )
-                .on_click_stop(move |_| {
+                .on_update(move |selected| {
                     files.update(|items| {
-                        let all = items
-                            .values()
-                            .filter(|(diff, _)| {
-                                untracked.with(|set| set.contains(diff.path()))
-                                    == unversioned
-                            })
-                            .all(|(_, checked)| *checked);
                         for (diff, checked) in items.values_mut() {
                             if untracked.with(|set| set.contains(diff.path()))
                                 == unversioned
                             {
-                                *checked = !all;
+                                *checked = selected;
                             }
                         }
                     })
@@ -144,6 +133,32 @@ pub fn source_control_panel(
                 .apply_if(count() == 0, |s| s.hide())
         })
     };
+    let commit_button = crate::widgets::button(
+        move || {
+            if busy.get() {
+                "Committing…"
+            } else if amend.get() {
+                "Amend Commit"
+            } else {
+                "Commit"
+            }
+        },
+        crate::widgets::ButtonKind::Outlined,
+        config,
+    )
+    .on_click_stop(move |_| commit.commit())
+    .disabled(move || busy.get())
+    .style(|s| s.padding_horiz(12.0).height(26.0));
+    let commit_button_id = commit_button.id();
+    commit_action.set(Some(commit_button_id));
+    let push_button = crate::widgets::button(
+        || "Commit and Push…",
+        crate::widgets::ButtonKind::Outlined,
+        config,
+    )
+    .on_click_stop(move |_| push.commit_with_options(true))
+    .disabled(move || busy.get())
+    .style(|s| s.padding_horiz(12.0).height(26.0));
     let message_view = stack((
         editor_view(editor.get_untracked(), debug, active)
             .style(move |s| s.width(message_width.get().max(40.0) as f32)),
@@ -156,8 +171,13 @@ pub fn source_control_panel(
     .style(|s| s.absolute().min_size_pct(100.0, 100.0).padding(8.0));
     let message_id = message_view.id();
     let message_view = message_view
+        .keyboard_navigable()
+        .on_event_cont(EventListener::FocusGained, move |_| {
+            focus.set(Focus::Panel(PanelKind::SourceControl));
+        })
         .on_event_stop(EventListener::PointerDown, move |event| {
             focus.set(Focus::Panel(PanelKind::SourceControl));
+            message_id.request_focus();
             if let Event::PointerDown(pointer) = event.clone().offset((8.0, 8.0)) {
                 message_id.request_active();
                 editor.get_untracked().pointer_down(&pointer);
@@ -181,7 +201,7 @@ pub fn source_control_panel(
             floem::views::empty(),
         ),
         stack((
-            crate::app::clickable_icon(
+            crate::widgets::clickable_icon(
                 || SparrowIcons::IMAGE_LOADING,
                 {
                     let source = refresh_source.clone();
@@ -205,9 +225,8 @@ pub fn source_control_panel(
         )
         .style(|s| s.flex_grow(1.0_f32).min_height(40.0).width_full()),
         stack((
-            checkbox(move || amend.get(), config).on_click_stop(move |_| {
-                amend_source.set_amend(!amend.get_untracked())
-            }),
+            checkbox(move || amend.get(), config)
+                .on_update(move |value| amend_source.set_amend(value)),
             label(|| "Amend last commit"),
         ))
         .style(move |s| {
@@ -240,189 +259,13 @@ pub fn source_control_panel(
                 .font_size(11.0)
                 .apply_if(status.with(|s| s.is_empty()), |s| s.hide())
         }),
-        stack((
-            label(move || {
-                if busy.get() {
-                    "Committing…"
-                } else if amend.get() {
-                    "Amend Commit"
-                } else {
-                    "Commit"
-                }
-            })
-            .on_click_stop(move |_| commit.commit())
-            .disabled(move || busy.get())
-            .style(move |s| {
-                s.padding_horiz(12.0)
-                    .height(26.0)
-                    .items_center()
-                    .border(1.0)
-                    .border_radius(4.0)
-                    .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-            }),
-            label(|| "Commit and Push…")
-                .on_click_stop(move |_| push.commit_with_options(true))
-                .disabled(move || busy.get())
-                .style(move |s| {
-                    s.padding_horiz(12.0)
-                        .height(26.0)
-                        .items_center()
-                        .border(1.0)
-                        .border_radius(4.0)
-                        .border_color(
-                            config.get().color(SparrowColor::SPARROW_BORDER),
-                        )
-                }),
-        ))
-        .style(|s| s.height(36.0).gap(6.0).items_center().padding_horiz(6.0)),
+        stack((commit_button, push_button))
+            .style(|s| s.height(36.0).gap(6.0).items_center().padding_horiz(6.0)),
     ))
     .style(|s| s.absolute().size_full().flex_col().font_size(13.0))
-}
-
-fn file_diffs_view(
-    source_control: SourceControlData,
-    unversioned: bool,
-) -> impl View {
-    let file_diffs = source_control.file_diffs;
-    let untracked = source_control.untracked;
-    let config = source_control.common.config;
-    let workspace = source_control.common.workspace.clone();
-    let panel_rect = create_rw_signal(Rect::ZERO);
-    let panel_width = create_memo(move |_| panel_rect.get().width());
-    let sparrow_command = source_control.common.sparrow_command;
-    let internal_command = source_control.common.internal_command;
-
-    let view_fn = move |(path, (diff, checked)): (PathBuf, (FileDiff, bool))| {
-
-        let full_path = path.clone();
-        let diff_for_menu = diff.clone();
-        let path_for_click = full_path.clone();
-
-        let path = if let Some(workspace_path) = workspace.path.as_ref() {
-            path.strip_prefix(workspace_path)
-                .unwrap_or(&full_path)
-                .to_path_buf()
-        } else {
-            path
-        };
-        let file_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        let folder = path
-            .parent()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
-        let style_path = path.clone();
-        stack((
-            checkbox(move || checked, config).on_click_stop(move |_| {
-                file_diffs.update(|diffs| {
-                    if let Some((_, checked)) = diffs.get_mut(&full_path) {
-                        *checked = !*checked;
-                    }
-                });
-            }),
-            svg(move || config.get().file_svg(&path).0).style(move |s| {
-                let config = config.get();
-                let size = config.ui.icon_size() as f32;
-                let color = config.file_svg(&style_path).1;
-                s.min_width(size)
-                    .size(size, size)
-                    .margin(6.0)
-                    .apply_opt(color, Style::color)
-            }),
-            label(move || file_name.clone()).style(move |s| {
-                let config = config.get();
-                let size = config.ui.icon_size() as f32;
-                let max_width = panel_width.get() as f32
-                    - 10.0
-                    - size
-                    - 6.0
-                    - size
-                    - 6.0
-                    - 10.0
-                    - size
-                    - 6.0;
-                s.text_ellipsis()
-                    .margin_right(6.0)
-                    .max_width(max_width)
-                    .selectable(false)
-            }),
-            label(move || folder.clone()).style(move |s| {
-                s.text_ellipsis()
-                    .flex_grow(1.0f32)
-                    .flex_basis(0.0)
-                    .color(config.get().color(SparrowColor::EDITOR_DIM))
-                    .min_width(0.0)
-                    .selectable(false)
-            }),
-
-        ))
-        .on_click_stop(move |_| {
-            internal_command.send(InternalCommand::OpenFileChanges {
-                path: path_for_click.clone(),
-            });
-        })
-        .on_event_cont(EventListener::PointerDown, move |event| {
-            let diff_for_menu = diff_for_menu.clone();
-
-            let discard = move || {
-                sparrow_command.send(SparrowCommand {
-                    kind: CommandKind::Workbench(
-                        SparrowWorkbenchCommand::SourceControlDiscardTargetFileChanges,
-                    ),
-                    data: Some(serde_json::json!(diff_for_menu.clone())),
-                });
-            };
-
-            if let Event::PointerDown(pointer_event) = event {
-                if pointer_event.button.is_secondary() {
-                    let menu = Menu::new("")
-                        .entry(MenuItem::new("Discard Changes").action(discard));
-                    show_context_menu(menu, None);
-                }
-            }
-        })
-        .style(move |s| {
-            let config = config.get();
-            let size = config.ui.icon_size() as f32;
-            s.height(24.0).padding_left(28.0)
-                .padding_right(10.0 + size + 6.0)
-                .width_pct(100.0)
-                .items_center()
-                .cursor(CursorStyle::Pointer)
-                .hover(|s| {
-                    s.background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
-        })
-    };
-
-    container({
-        scroll({
-            dyn_stack(
-                move || {
-                    file_diffs
-                        .get()
-                        .into_iter()
-                        .filter(|(_, (diff, _))| {
-                            untracked.with(|set| set.contains(diff.path()))
-                                == unversioned
-                        })
-                        .collect::<Vec<_>>()
-                },
-                |(path, (diff, checked))| {
-                    (path.to_path_buf(), diff.clone(), *checked)
-                },
-                view_fn,
-            )
-            .style(|s| s.flex_col().width_pct(100.0))
-        })
-        .style(|s| s.absolute().size_pct(100.0, 100.0))
+    .on_cleanup(move || {
+        if commit_action.get_untracked() == Some(commit_button_id) {
+            commit_action.set(None);
+        }
     })
-    .on_resize(move |rect| {
-        panel_rect.set(rect);
-    })
-    .style(|s| s.size_pct(100.0, 100.0))
 }
