@@ -203,14 +203,12 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         stack((list, preview_view))
             .style(|s| s.height(360.0).min_height(0.0).width_full()),
         stack((
-            label(move || {
-                if show.get() {
-                    "☑ Preview"
-                } else {
-                    "☐ Preview"
-                }
-            })
-            .on_click_stop(move |_| show.update(|show| *show = !*show)),
+            crate::widgets::labeled_checkbox(
+                move || show.get(),
+                || "Preview",
+                move |checked| show.set(checked),
+                config,
+            ),
             empty().style(|s| s.flex_grow(1.0_f32)),
             label(|| "Retry")
                 .on_click_stop(move |_| {

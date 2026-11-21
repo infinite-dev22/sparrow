@@ -1,11 +1,11 @@
 //! New Dart and Flutter project form.
 
 use super::PLATFORMS;
-use crate::widgets::text_input;
+use crate::widgets::{labeled_checkbox, text_input};
 use crate::{config::color::SparrowColor, window_tab::WindowTabData};
 use floem::{
     View,
-    reactive::{SignalGet, SignalUpdate},
+    reactive::{SignalGet, SignalUpdate, SignalWith},
     views::{Decorators, container, dyn_stack, label, stack},
 };
 use std::rc::Rc;
@@ -50,37 +50,35 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         .on_click_stop(move |_| template.set(kind.into()))
                     },
                 ),
-                label(move || {
-                    format!(
-                        "{} Empty skeleton (apps); otherwise counter template",
-                        if empty.get() { "☑" } else { "☐" }
-                    )
-                })
-                .on_click_stop(move |_| empty.update(|x| *x = !*x)),
+                labeled_checkbox(
+                    move || empty.get(),
+                    || "Empty skeleton (apps); otherwise counter template",
+                    move |checked| empty.set(checked),
+                    config,
+                ),
                 label(|| "Platforms (apps and plugins; packages choose their native targets)"),
                 dyn_stack(
                     || PLATFORMS.to_vec(),
                     |s| *s,
                     move |platform| {
-                        label(move || {
-                            format!(
-                                "{} {platform}",
-                                if platforms.get().iter().any(|p| p == platform) {
-                                    "☑"
-                                } else {
-                                    "☐"
-                                }
-                            )
-                        })
-                        .on_click_stop(move |_| {
-                            platforms.update(|items| {
-                                if items.iter().any(|p| p == platform) {
-                                    items.retain(|p| p != platform);
-                                } else {
-                                    items.push(platform.into());
-                                }
-                            })
-                        })
+                        labeled_checkbox(
+                            move || {
+                                platforms.with(|items| items.iter().any(|p| p == platform))
+                            },
+                            move || platform,
+                            move |checked| {
+                                platforms.update(|items| {
+                                    if checked {
+                                        if !items.iter().any(|p| p == platform) {
+                                            items.push(platform.into());
+                                        }
+                                    } else {
+                                        items.retain(|p| p != platform);
+                                    }
+                                });
+                            },
+                            config,
+                        )
                     },
                 ),
                 label(move || message.get())

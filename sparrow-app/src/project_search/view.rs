@@ -6,7 +6,7 @@ use floem::{
     View,
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
-    reactive::{Scope, SignalGet, SignalUpdate, SignalWith},
+    reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::{Decorators, container, dyn_stack, label, scroll, stack},
 };
 use std::{path::PathBuf, rc::Rc};
@@ -341,9 +341,32 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .to_rect()
             .with_origin(floem::kurbo::Point::new(0.0, selected.get() as f64 * 26.0))
     });
+    let search_option = |value: RwSignal<bool>, label: &'static str| {
+        focus.control(crate::widgets::labeled_checkbox(
+            move || value.get(),
+            move || label,
+            move |checked| value.set(checked),
+            config,
+        ))
+    };
+    let options = stack((
+        search_option(case, "Match case"),
+        search_option(word, "Words"),
+        search_option(regex, "Regex"),
+        focus.control(label(|| "Symbols…").on_click_stop(move |_| {
+            active.set(false);
+            commands.send(crate::command::SparrowCommand {
+                kind: crate::command::CommandKind::Workbench(
+                    crate::command::SparrowWorkbenchCommand::PaletteWorkspaceSymbol,
+                ),
+                data: None,
+            });
+        })),
+    ))
+    .style(|s| s.items_center().gap(14.0));
     let body=stack((label(move ||if replacement.get(){"Replace in Files"}else{if mode.get()==0 {"Find in Files"}else{"Search Everywhere"}}).style(|s|s.font_bold()),floem::views::stack_from_iter(tabs).style(|s|s.gap(4.0)),input,
  stack((focus.input(replace, config),focus.control(label(||"Replace All").on_click_stop(move |_|run.apply(w.clone())).disabled(move ||busy.get())))).style(move |s|s.width_full().gap(8.0).apply_if(!replacement.get(),|s|s.hide())),
- stack((focus.control(label(move ||format!("{} Match case",if case.get(){"☑"}else{"☐"})).on_click_stop(move |_|case.update(|v|*v=!*v))),focus.control(label(move ||format!("{} Words",if word.get(){"☑"}else{"☐"})).on_click_stop(move |_|word.update(|v|*v=!*v))),focus.control(label(move ||format!("{} Regex",if regex.get(){"☑"}else{"☐"})).on_click_stop(move |_|regex.update(|v|*v=!*v))),focus.control(label(||"Symbols…").on_click_stop(move |_|{active.set(false);commands.send(crate::command::SparrowCommand{kind:crate::command::CommandKind::Workbench(crate::command::SparrowWorkbenchCommand::PaletteWorkspaceSymbol),data:None});})),)).style(|s|s.gap(14.0)),
+ options,
  stack((label(||"Directory (empty = project)"),focus.input(directory, config))).style(|s|s.width_full().gap(8.0)),stack((label(||"File mask"),focus.input(mask, config))).style(|s|s.width_full().gap(8.0)),
  label(move ||results.with(|r|if searching.get(){"Searching…".into()}else if !r.error.is_empty(){r.error.clone()}else{format!("{} results in {} files{}",r.hits.len(),r.hits.iter().filter(|h|!h.path.as_os_str().is_empty()).map(|h|&h.path).collect::<std::collections::HashSet<_>>().len(),if r.truncated{" · limit reached; narrow your search"}else{""})})),rows,label(move ||message.get()),stack((focus.control(label(||"Replace mode").on_click_stop(move |_|{replacement.update(|v|*v=!*v);mode.set(0);})),focus.control(label(||"Close").on_click_stop(move |_|{if !busy.get_untracked(){all.active.set(false);}})))).style(|s|s.gap(20.0)))).style(move |s| {
         crate::widgets::dialog_surface(

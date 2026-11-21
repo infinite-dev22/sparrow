@@ -46,19 +46,21 @@ pub(super) fn setting_row(
         }
         raw
     });
-    let needs_control = matches!(&item.value, SettingsValue::Bool(_));
     let control = match item.value {
-        SettingsValue::Bool(_) => label(move || {
-            if value.get() == "true" {
-                "☑ Enabled"
-            } else {
-                "☐ Disabled"
-            }
-        })
-        .on_click_stop(move |_| {
-            value.update(|v| *v = if v == "true" { "false" } else { "true" }.into())
-        })
-        .into_any(),
+        SettingsValue::Bool(_) => keyboard
+            .control(crate::widgets::labeled_checkbox(
+                move || value.with(|value| value == "true"),
+                move || {
+                    if value.with(|value| value == "true") {
+                        "Enabled"
+                    } else {
+                        "Disabled"
+                    }
+                },
+                move |checked| value.set(checked.to_string()),
+                config,
+            ))
+            .into_any(),
         SettingsValue::Dropdown(info) => keyboard
             .control(
                 crate::widgets::dropdown(value, info.items.clone(), config)
@@ -112,11 +114,6 @@ pub(super) fn setting_row(
             .input(value, config)
             .style(move |s| s.width(320.0).max_width_full())
             .into_any(),
-    };
-    let control = if needs_control {
-        keyboard.control(control).into_any()
-    } else {
-        control
     };
     let reset = keyboard.control(
         label(move || {

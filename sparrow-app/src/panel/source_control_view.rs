@@ -12,7 +12,7 @@ use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
     editor::view::editor_view,
-    widgets::checkbox,
+    widgets::{checkbox, labeled_checkbox},
     window_tab::{Focus, WindowTabData},
 };
 
@@ -224,14 +224,14 @@ pub fn source_control_panel(
                 .style(|s| s.flex_col().width_full()),
         )
         .style(|s| s.flex_grow(1.0_f32).min_height(40.0).width_full()),
-        stack((
-            checkbox(move || amend.get(), config)
-                .on_update(move |value| amend_source.set_amend(value)),
-            label(|| "Amend last commit"),
-        ))
+        labeled_checkbox(
+            move || amend.get(),
+            || "Amend last commit",
+            move |checked| amend_source.set_amend(checked),
+            config,
+        )
         .style(move |s| {
             s.height(30.0)
-                .gap(8.0)
                 .padding_horiz(8.0)
                 .items_center()
                 .border_top(1.0)
