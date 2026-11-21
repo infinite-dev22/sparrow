@@ -84,3 +84,4 @@ pub mod dropdown;
 pub mod background_tasks;
 
 mod ui_test_guard;
+pub mod divider;

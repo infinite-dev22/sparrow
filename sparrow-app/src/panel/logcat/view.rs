@@ -3,6 +3,7 @@ use super::{
     model::{self, Entry},
     query::Query,
 };
+use crate::divider::Divider;
 use crate::panel::kind::PanelKind;
 use crate::{
     app::clickable_icon,
@@ -1152,6 +1153,7 @@ fn logcat_toolbar(
     let mut actions = toolbar_actions(state, pane, shown, jump);
     let secondary = actions.split_off(primary_count);
     let expanded = create_rw_signal(false);
+    let divider = Divider::new().into_view();
     let chevron = clickable_icon(
         || SparrowIcons::ITEM_CLOSED,
         move || expanded.set(true),
@@ -1189,7 +1191,7 @@ fn logcat_toolbar(
                 .border_color(config.color(SparrowColor::SPARROW_BORDER))
                 .apply_if(!expanded.get(), |s| s.hide())
         });
-    let overflow = stack((chevron, flyout))
+    let overflow = stack((divider, chevron, flyout))
         .on_event_cont(EventListener::PointerLeave, move |_| expanded.set(false))
         .on_event(EventListener::KeyDown, move |event| {
             if expanded.get() && matches!(event, Event::KeyDown(key) if key.key.logical_key == Key::Named(NamedKey::Escape)) {
