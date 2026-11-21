@@ -1,3 +1,4 @@
+use crate::tooltip::TooltipExt;
 use super::{
     Buffer, Pane, State,
     model::{self, Entry},
@@ -18,7 +19,7 @@ use floem::{
     reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
     style::CursorStyle,
     views::{
-        Decorators, TooltipExt, dyn_container, dyn_stack, empty, label, scroll,
+        Decorators, dyn_container, dyn_stack, empty, label, scroll,
         stack, svg, virtual_stack,
     },
 };

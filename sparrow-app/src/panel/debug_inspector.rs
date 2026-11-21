@@ -1,4 +1,5 @@
 //! Compact frame sidebar and evaluation/variables workspace.
+use crate::tooltip::TooltipExt;
 use crate::{
     app::clickable_icon,
     command::InternalCommand,
@@ -14,7 +15,7 @@ use floem::{
     reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal},
     style::CursorStyle,
     views::{
-        Decorators, TooltipExt, container, dyn_container, dyn_stack, empty, label,
+        Decorators, container, dyn_container, dyn_stack, empty, label,
         scroll, stack, svg,
     },
 };

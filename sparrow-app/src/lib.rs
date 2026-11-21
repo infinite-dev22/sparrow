@@ -43,6 +43,7 @@ pub mod status;
 pub mod terminal;
 pub mod text_area;
 pub mod text_input;
+mod tooltip;
 pub mod title;
 pub mod tracing;
 pub mod update;

@@ -95,7 +95,7 @@ pub(crate) use floem::{
         editor::{core::register::Clipboard, text::SystemClipboard},
         empty, label, rich_text,
         scroll::{PropagatePointerWheel, VerticalScrollAsHorizontal, scroll},
-        stack, svg, tab, text, tooltip, virtual_stack,
+        stack, svg, tab, text, virtual_stack,
     },
     window::{ResizeDirection, WindowConfig, WindowId},
 };
@@ -827,7 +827,7 @@ fn editor_tab_header(
             })
             .style(|s| s.padding(4.));
 
-            let tab_content = tooltip(
+            let tab_content = crate::tooltip::tooltip(
                 label(move || info.with(|info| info.name.clone())).style(move |s| {
                     s.apply_if(
                         !info
@@ -2232,7 +2232,7 @@ pub fn tooltip_label<S: std::fmt::Display + 'static, V: View + 'static>(
     child: V,
     text: impl Fn() -> S + 'static + Clone,
 ) -> impl View {
-    tooltip(child, move || {
+    crate::tooltip::tooltip(child, move || {
         tooltip_tip(
             config,
             label(text.clone()).style(move |s| s.selectable(false)),
@@ -3727,9 +3727,13 @@ fn window_tab(
                 s.background(config.color(SparrowColor::SPARROW_SCROLL_BAR))
             })
     })
-    .on_event_cont(EventListener::WindowLostFocus, move |_| {
-        for menu in title_menus {
-            menu.set(false);
+    .on_event_cont(EventListener::WindowLostFocus, {
+        let view_id = window_tab_data.common.view_id;
+        move |_| {
+            crate::tooltip::dismiss_window(view_id.get_untracked());
+            for menu in title_menus {
+                menu.set(false);
+            }
         }
     })
     .debug_name("Window Tab");

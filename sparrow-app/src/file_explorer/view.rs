@@ -1,3 +1,4 @@
+use crate::tooltip::TooltipExt;
 use std::{path::Path, rc::Rc, sync::Arc};
 
 use floem::{
@@ -11,7 +12,7 @@ use floem::{
     style::{AlignItems, CursorStyle, Position, Style},
     text::Style as FontStyle,
     views::{
-        Container, Decorators, TooltipExt, container, dyn_stack, label, scroll,
+        Container, Decorators, container, dyn_stack, label, scroll,
         stack, svg, virtual_stack,
     },
 };
