@@ -1,7 +1,7 @@
 //! New Dart and Flutter project form.
 
-use super::PLATFORMS;
-use crate::widgets::{labeled_checkbox, text_input};
+use super::{PLATFORMS, TEMPLATES};
+use crate::widgets::{labeled_checkbox, radio_group, text_input};
 use crate::{config::color::SparrowColor, window_tab::WindowTabData};
 use floem::{
     View,
@@ -37,19 +37,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 label(|| "Parent directory (absolute path)"),
                 text_input(wizard.parent, config),
                 label(|| "Project type"),
-                dyn_stack(
-                    || vec!["app", "package", "plugin", "module", "package_ffi"],
-                    |s| *s,
-                    move |kind| {
-                        label(move || {
-                            format!(
-                                "{} {kind}",
-                                if template.get() == kind { "●" } else { "○" }
-                            )
-                        })
-                        .on_click_stop(move |_| template.set(kind.into()))
-                    },
-                ),
+                radio_group(template, TEMPLATES.map(str::to_owned), config),
                 labeled_checkbox(
                     move || empty.get(),
                     || "Empty skeleton (apps); otherwise counter template",

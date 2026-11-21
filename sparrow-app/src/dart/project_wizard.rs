@@ -6,6 +6,7 @@ use crate::window_tab::WindowTabData;
 use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate};
 use std::{path::PathBuf, rc::Rc};
 const PLATFORMS: [&str; 6] = ["android", "ios", "web", "linux", "macos", "windows"];
+const TEMPLATES: [&str; 5] = ["app", "package", "plugin", "module", "package_ffi"];
 #[derive(Clone)]
 pub struct ProjectWizard {
     pub active: RwSignal<bool>,
@@ -30,7 +31,7 @@ pub fn arguments(
     {
         return Err("Use a lowercase Dart package name, such as my_app.".into());
     }
-    if !["app", "package", "plugin", "module", "package_ffi"].contains(&template) {
+    if !TEMPLATES.contains(&template) {
         return Err("Choose a project type.".into());
     }
     let parent = PathBuf::from(parent);
