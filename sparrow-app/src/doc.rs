@@ -645,6 +645,11 @@ impl Doc {
         let deltas = self.syntax.with_untracked(|syntax| {
             self.buffer
                 .try_update(|buffer| {
+                    if *cmd == EditCommand::NormalizeLineEndings
+                        && !needs_line_ending_normalization(buffer)
+                    {
+                        return Vec::new();
+                    }
                     Action::do_edit(
                         cursor,
                         buffer,
@@ -2632,9 +2637,33 @@ fn saved_revision_result(
     }
 }
 
+fn needs_line_ending_normalization(buffer: &Buffer) -> bool {
+    // Floem can return an identity delta when all line endings already match.
+    // Applying it would create an undo group and discard pending redos.
+    buffer
+        .line_ending()
+        .normalize_delta(buffer.text())
+        .is_some_and(|delta| !delta.is_identity())
+}
+
 #[cfg(test)]
 mod save_result_tests {
     use super::*;
+
+    #[test]
+    fn normalizing_matching_line_endings_preserves_redo() {
+        let mut buffer = Buffer::new("original\n");
+        buffer.edit(&[(Selection::caret(0), "// suppression\n")], EditType::Other);
+        buffer.do_undo().unwrap();
+
+        assert!(!needs_line_ending_normalization(&buffer));
+        buffer.set_pristine();
+        assert!(buffer.do_redo().is_some());
+        assert_eq!(buffer.text().to_string(), "// suppression\noriginal\n");
+
+        buffer.set_line_ending(LineEnding::CrLf);
+        assert!(needs_line_ending_normalization(&buffer));
+    }
 
     #[test]
     fn workflow_save_requires_matching_revision_and_propagates_disk_errors() {
