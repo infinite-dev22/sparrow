@@ -27,6 +27,7 @@ const WORKSPACE_INFO: &str = "workspace_info";
 const WORKSPACE_FILES: &str = "workspace_files";
 const PANEL_ORDERS: &str = "panel_orders";
 const SETTINGS_SIDEBAR_PROPORTION: &str = "settings_sidebar_proportion";
+const SETTINGS_PAGE: &str = "settings_page";
 const DISABLED_VOLTS: &str = "disabled_volts";
 const RECENT_WORKSPACES: &str = "recent_workspaces";
 
@@ -39,6 +40,7 @@ pub enum SaveEvent {
     WorkspaceDisabledVolts(Arc<SparrowWorkspace>, Vec<VoltID>),
     PanelOrder(PanelOrder),
     SettingsSidebarProportion(f64),
+    SettingsPage(&'static str),
 }
 
 #[derive(Clone)]
@@ -108,10 +110,18 @@ impl SparrowDb {
                                 tracing::error!("{:?}", err);
                             }
                         }
-                        SaveEvent::SettingsSidebarProportion(proportion) => {
+                        SaveEvent::SettingsPage(page) => {
                             if let Err(err) =
-                                local_db.insert_settings_sidebar_proportion(proportion)
+                                local_db.write_settings_ui_value(SETTINGS_PAGE, page)
                             {
+                                tracing::error!("{err:?}");
+                            }
+                        }
+                        SaveEvent::SettingsSidebarProportion(proportion) => {
+                            if let Err(err) = local_db.write_settings_ui_value(
+                                SETTINGS_SIDEBAR_PROPORTION,
+                                &proportion.to_string(),
+                            ) {
                                 tracing::error!("{err:?}");
                             }
                         }
@@ -405,10 +415,20 @@ impl SparrowDb {
         Ok(proportion)
     }
 
-    fn insert_settings_sidebar_proportion(&self, proportion: f64) -> Result<()> {
+    pub(crate) fn settings_page(&self) -> Result<String> {
+        Ok(std::fs::read_to_string(self.folder.join(SETTINGS_PAGE))?)
+    }
+
+    pub(crate) fn save_settings_page(&self, page: &'static str) {
+        if let Err(err) = self.save_tx.send(SaveEvent::SettingsPage(page)) {
+            tracing::error!("{err:?}");
+        }
+    }
+
+    fn write_settings_ui_value(&self, name: &str, value: &str) -> Result<()> {
         let mut temp = tempfile::NamedTempFile::new_in(&self.folder)?;
-        write!(temp, "{proportion}")?;
-        temp.persist(self.folder.join(SETTINGS_SIDEBAR_PROPORTION))?;
+        temp.write_all(value.as_bytes())?;
+        temp.persist(self.folder.join(name))?;
         Ok(())
     }
 

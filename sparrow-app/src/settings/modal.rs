@@ -12,12 +12,13 @@ use crate::{
 };
 use floem::{
     View,
-    event::{Event, EventListener, EventPropagation},
-    keyboard::{Key, NamedKey},
-    reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
+    event::EventListener,
+    reactive::{
+        RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, batch, use_context,
+    },
     views::{Decorators, container, dyn_stack, empty, label, stack},
 };
-use std::{collections::BTreeMap, rc::Rc};
+use std::{collections::BTreeMap, rc::Rc, sync::Arc};
 mod layout;
 mod navigation;
 mod setting_row;
@@ -27,7 +28,7 @@ use crate::widgets::sparrow_scroll;
 use navigation::navigation_tree;
 use setting_row::setting_row;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Page {
     Overview,
     Appearance,
@@ -58,20 +59,51 @@ impl Page {
     fn title(self) -> &'static str {
         PAGES.iter().find(|(p, _, _)| *p == self).unwrap().1
     }
+
+    fn parent(self) -> Option<Self> {
+        match self {
+            Self::Appearance | Self::System => Some(Self::Overview),
+            Self::Flutter | Self::Dart => Some(Self::Languages),
+            _ => None,
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Overview => "appearance-and-behavior",
+            Self::Appearance => "appearance",
+            Self::System => "system",
+            Self::Editor => "editor",
+            Self::Plugins => "themes",
+            Self::Keymap => "keymap",
+            Self::Run => "run",
+            Self::Terminal => "terminal",
+            Self::Languages => "languages",
+            Self::Flutter => "flutter",
+            Self::Dart => "dart",
+        }
+    }
 }
-fn visible_pages(appearance: bool, languages: bool, searching: bool) -> Vec<Page> {
+
+fn visible_pages(
+    appearance: bool,
+    languages: bool,
+    matching: Option<&[Page]>,
+) -> Vec<Page> {
     PAGES
         .iter()
-        .filter(|(page, _, depth)| {
-            *depth == 0
-                || searching
-                || if matches!(page, Page::Flutter | Page::Dart) {
-                    languages
-                } else {
-                    appearance
-                }
-        })
         .map(|(page, _, _)| *page)
+        .filter(|page| {
+            if let Some(matching) = matching {
+                return matching.contains(page)
+                    || matching.iter().any(|item| item.parent() == Some(*page));
+            }
+            match page.parent() {
+                Some(Page::Overview) => appearance,
+                Some(Page::Languages) => languages,
+                _ => true,
+            }
+        })
         .collect()
 }
 #[derive(Clone)]
@@ -171,17 +203,80 @@ fn belongs(item: &SettingsItem, page: Page) -> bool {
         _ => false,
     }
 }
-fn matches_setting(item: &SettingsItem, query: &str) -> bool {
-    let haystack = format!(
-        "{} {} {} {}",
-        item.kind, item.field, item.name, item.description
-    )
-    .to_lowercase();
+struct HighlightMatcher(regex::Regex);
+
+impl PartialEq for HighlightMatcher {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_str() == other.0.as_str()
+    }
+}
+
+fn matches_query(text: &str, query: &str) -> bool {
+    let text = text.to_lowercase();
     query
-        .to_lowercase()
         .split(|character: char| !character.is_alphanumeric())
         .filter(|token| !token.is_empty())
-        .all(|token| haystack.contains(token))
+        .all(|token| text.contains(token))
+}
+
+fn matches_setting(item: &SettingsItem, query: &str) -> bool {
+    matches_query(
+        &format!(
+            "{} {} {} {}",
+            item.kind, item.field, item.name, item.description
+        ),
+        query,
+    )
+}
+
+fn matching_pages(items: &[SettingsItem], query: &str) -> Vec<Page> {
+    PAGES
+        .iter()
+        .map(|(page, _, _)| *page)
+        .filter(|&page| {
+            matches_query(page.title(), query)
+                || items
+                    .iter()
+                    .any(|item| belongs(item, page) && matches_setting(item, query))
+        })
+        .collect()
+}
+
+fn modified_pages(
+    items: &[SettingsItem],
+    active: &Pending,
+    inactive: &Pending,
+) -> Vec<Page> {
+    PAGES
+        .iter()
+        .map(|(page, _, _)| *page)
+        .filter(|&page| {
+            active.keys().chain(inactive.keys()).any(|(kind, field)| {
+                items.iter().any(|item| {
+                    &item.kind == kind && &item.field == field && belongs(item, page)
+                })
+            })
+        })
+        .collect()
+}
+
+fn select_page(
+    page: Page,
+    current: RwSignal<Page>,
+    history: RwSignal<Vec<Page>>,
+    index: RwSignal<usize>,
+) {
+    if current.get_untracked() == page {
+        return;
+    }
+    batch(|| {
+        history.update(|h| {
+            h.truncate(index.get_untracked() + 1);
+            h.push(page);
+        });
+        index.set(history.with_untracked(Vec::len) - 1);
+        current.set(page);
+    });
 }
 
 fn navigate(
@@ -191,14 +286,7 @@ fn navigate(
     index: RwSignal<usize>,
     query: RwSignal<String>,
 ) {
-    if current.get_untracked() != page {
-        history.update(|h| {
-            h.truncate(index.get_untracked() + 1);
-            h.push(page);
-        });
-        index.set(history.with_untracked(Vec::len) - 1);
-        current.set(page);
-    }
+    select_page(page, current, history, index);
     query.set(String::new());
 }
 pub fn view(window: Rc<WindowTabData>) -> impl View {
@@ -232,8 +320,24 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let items = data.items;
     let plugins = data.plugin_items;
     let pending = cx.create_rw_signal(Pending::new());
-    let query = cx.create_rw_signal(String::new());
-    let page = cx.create_rw_signal(Page::Appearance);
+    let query = window.settings_search_query;
+    let db = use_context::<Arc<crate::db::SparrowDb>>();
+    let initial_page = db
+        .as_ref()
+        .and_then(|db| db.settings_page().ok())
+        .and_then(|id| PAGES.iter().find(|(page, _, _)| page.id() == id))
+        .map(|(page, _, _)| *page)
+        .unwrap_or(Page::Appearance);
+    let page = cx.create_rw_signal(initial_page);
+    cx.create_effect(move |previous: Option<Page>| {
+        let selected = page.get();
+        if previous.is_some_and(|previous| previous != selected)
+            && let Some(db) = &db
+        {
+            db.save_settings_page(selected.id());
+        }
+        selected
+    });
     let appearance_expanded = cx.create_rw_signal(false);
     let languages_expanded = cx.create_rw_signal(false);
     cx.create_effect(move |_| {
@@ -246,27 +350,29 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             appearance_expanded.set(true);
         }
     });
-    let history = cx.create_rw_signal(vec![Page::Appearance]);
+    let history = cx.create_rw_signal(vec![initial_page]);
     let index = cx.create_rw_signal(0usize);
     let epoch = cx.create_rw_signal(0usize);
     let error = cx.create_rw_signal(String::new());
     let help_open = cx.create_rw_signal(false);
     let search = keyboard.input(query, config);
     let search_id = search.id();
+    window.settings_search_input.set(Some(search_id));
     let root_id = window.common.view_id;
     let close = move || {
         visible.set(false);
-        pending.set(Pending::new());
-        scope_drafts.set([Pending::new(), Pending::new()]);
         root_id.get_untracked().request_focus();
     };
     cx.create_effect(move |_| {
-        if visible.get() {
+        let is_open = visible.get();
+        batch(|| {
             pending.set(Pending::new());
             scope_drafts.set([Pending::new(), Pending::new()]);
             query.set(String::new());
             error.set(String::new());
             help_open.set(false);
+        });
+        if is_open {
             epoch.update(|n| *n += 1);
             floem::action::exec_after(
                 std::time::Duration::from_millis(30),
@@ -289,22 +395,90 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 .collect(),
         );
     });
+    let search_query = cx.create_memo(move |_| {
+        query.with(|query| {
+            query
+                .chars()
+                .any(char::is_alphanumeric)
+                .then(|| query.to_lowercase())
+        })
+    });
+    let highlight_matcher = cx.create_memo(move |_| {
+        search_query.with(|pattern| {
+            pattern.as_ref().and_then(|pattern| {
+                let terms = pattern
+                    .split(|character: char| !character.is_alphanumeric())
+                    .filter(|term| !term.is_empty())
+                    .map(regex::escape)
+                    .collect::<Vec<_>>()
+                    .join("|");
+                regex::RegexBuilder::new(&terms)
+                    .case_insensitive(true)
+                    .build()
+                    .ok()
+                    .map(HighlightMatcher)
+            })
+        })
+    });
+    let matching = cx.create_memo(move |_| {
+        search_query.with(|pattern| {
+            pattern
+                .as_ref()
+                .map(|pattern| all.with(|items| matching_pages(items, pattern)))
+        })
+    });
+    let shown_pages = cx.create_memo(move |_| {
+        matching.with(|matching| {
+            visible_pages(
+                appearance_expanded.get(),
+                languages_expanded.get(),
+                matching.as_deref(),
+            )
+        })
+    });
+    let modifications = cx.create_memo(move |_| {
+        all.with(|items| {
+            pending.with(|active| {
+                scope_drafts.with(|drafts| {
+                    modified_pages(
+                        items,
+                        active,
+                        &drafts[usize::from(!project_scope.get())],
+                    )
+                })
+            })
+        })
+    });
     let filtered = cx.create_rw_signal(Vec::<SettingsItem>::new());
     cx.create_effect(move |_| {
-        let pattern = query.get().to_lowercase();
-        filtered.set(all.with(|items| {
-            items
-                .iter()
-                .filter(|item| {
-                    if pattern.is_empty() {
-                        belongs(item, page.get())
-                    } else {
-                        matches_setting(item, &pattern)
-                    }
-                })
-                .cloned()
-                .collect()
-        }));
+        if !visible.get() {
+            filtered.set(Vec::new());
+            return;
+        }
+        let selected = page.get();
+        let items = search_query.with(|pattern| {
+            let only_current = matching.with(|pages| {
+                pages
+                    .as_ref()
+                    .is_some_and(|pages| pages.contains(&selected))
+            });
+            all.with(|items| {
+                items
+                    .iter()
+                    .filter(|item| match pattern {
+                        None => belongs(item, selected),
+                        Some(pattern) if only_current => {
+                            belongs(item, selected)
+                                && (matches_query(selected.title(), pattern)
+                                    || matches_setting(item, pattern))
+                        }
+                        Some(pattern) => matches_setting(item, pattern),
+                    })
+                    .cloned()
+                    .collect()
+            })
+        });
+        filtered.set(items);
     });
     let dirty = cx.create_memo(move |_| {
         !pending.with(|pending| pending.is_empty())
@@ -339,17 +513,18 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 if project == project_scope.get_untracked() {
                     return;
                 }
-                scope_drafts.update(|drafts| {
-                    drafts[project_scope.get_untracked() as usize] =
-                        pending.get_untracked();
+                batch(|| {
+                    scope_drafts.update(|drafts| {
+                        drafts[usize::from(project_scope.get_untracked())] =
+                            pending.get_untracked();
+                    });
+                    pending.set(scope_drafts.with_untracked(|drafts| {
+                        drafts[usize::from(project)].clone()
+                    }));
+                    project_scope.set(project);
+                    error.set(String::new());
+                    epoch.update(|epoch| *epoch += 1);
                 });
-                pending.set(
-                    scope_drafts
-                        .with_untracked(|drafts| drafts[project as usize].clone()),
-                );
-                project_scope.set(project);
-                error.set(String::new());
-                epoch.update(|epoch| *epoch += 1);
             },
         ),
     );
@@ -394,22 +569,29 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             }
         })
     };
-    keyboard.set_submit({
+    let accept = {
         let apply = apply.clone();
         move || {
             if apply() {
                 close();
             }
         }
-    });
-    let okay = apply.clone();
-    let save = apply.clone();
+    };
+    keyboard.set_submit(accept.clone());
+    let save = apply;
     let external = window.clone();
+    let show_page_actions = move || {
+        search_query.with(|query| {
+            query
+                .as_ref()
+                .is_none_or(|query| matches_query(page.get().title(), query))
+        })
+    };
     let overview_keyboard = keyboard.clone();
     let overview=stack((
         label(||"Customize IDE appearance and behavior: change themes and font size, tune the keymap, configure Dart/Flutter and system settings.").style(|s|s.width_full().margin_top(8.0).margin_bottom(10.0)),
         dyn_stack(move ||if page.get()==Page::Languages {vec![Page::Flutter,Page::Dart]}else{vec![Page::Appearance,Page::System,Page::Editor,Page::Terminal,Page::Keymap,Page::Plugins,Page::Flutter,Page::Dart]},|p|*p as u8,move |p|overview_keyboard.control(label(move ||p.title()).on_click_stop(move |_|navigate(p,page,history,index,query)).style(move |s|s.margin_left(24.0).height(22.0).color(config.get().color(SparrowColor::EDITOR_LINK)).hover(|s|s.cursor(floem::style::CursorStyle::Pointer))))).style(|s|s.flex_col().width_full()),
-    )).style(move |s|s.flex_col().width_full().apply_if(!matches!(page.get(),Page::Overview|Page::Languages)||!query.with(|q|q.is_empty()),|s|s.hide()));
+    )).style(move |s|s.flex_col().width_full().apply_if(!matches!(page.get(),Page::Overview|Page::Languages)||!show_page_actions(),|s|s.hide()));
     let launch_page = page;
     let external_button = label(move || match launch_page.get() {
         Page::Keymap => "Open Keymap Editor",
@@ -436,7 +618,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .items_center()
             .color(config.get().color(SparrowColor::EDITOR_LINK))
             .apply_if(
-                !query.with(|q| q.is_empty())
+                !show_page_actions()
                     || !matches!(
                         page.get(),
                         Page::Keymap | Page::Run | Page::Plugins
@@ -468,13 +650,19 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         cx,
         &keyboard,
         config,
-        page,
-        history,
-        index,
-        query,
-        appearance_expanded,
-        languages_expanded,
+        accept.clone(),
+        navigation::Navigation {
+            page,
+            history,
+            index,
+            appearance_expanded,
+            languages_expanded,
+            matching,
+            shown_pages,
+            modifications,
+        },
     );
+    let tree_id = tree.id();
     let search_clear = keyboard
         .icon(
             || SparrowIcons::SEARCH_CLEAR,
@@ -494,7 +682,16 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let focus_width = tokens::length("dark", "Component.focusWidth");
     let focus_color = tokens::color("dark", "Component.focusColor");
     let search = search_field_with_style(
-        search,
+        search.on_event(EventListener::KeyDown, move |event| {
+            navigation::search_navigation(
+                event,
+                tree_id,
+                shown_pages,
+                page,
+                history,
+                index,
+            )
+        }),
         search_clear,
         config,
         SparrowIcons::SEARCH,
@@ -533,7 +730,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     )
     .style(move |s| {
         s.apply_if(
-            !query.with(String::is_empty)
+            search_query.with(Option::is_some)
                 || !matches!(
                     page.get(),
                     Page::Appearance | Page::System | Page::Flutter | Page::Dart
@@ -544,7 +741,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let breadcrumb = dyn_stack(
         move || {
             vec![
-                query.with(String::is_empty)
+                search_query.with(Option::is_none)
                     && matches!(
                         page.get(),
                         Page::Appearance | Page::System | Page::Flutter | Page::Dart
@@ -556,7 +753,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             breadcrumb_item(
                 !nested,
                 label(move || {
-                    if query.with(String::is_empty) {
+                    if search_query.with(Option::is_none) {
                         page.get().title()
                     } else {
                         "Search results"
@@ -629,8 +826,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                             config.get().color(SparrowColor::PANEL_FOREGROUND_DIM),
                         )
                         .apply_if(
-                            query.with(String::is_empty)
-                                || !filtered.with(Vec::is_empty),
+                            matching.with(|pages| {
+                                pages.as_ref().is_none_or(|pages| !pages.is_empty())
+                            }),
                             |s| s.hide(),
                         )
                 }),
@@ -650,7 +848,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                             pending,
                             rows_keyboard.clone(),
                             project_scope,
-                            query,
+                            highlight_matcher,
                             config,
                         )
                     },
@@ -717,11 +915,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 .on_click_stop(move |_| help_open.update(|open| *open = !*open)),
             ),
             empty().style(|s| s.flex_grow(1.0_f32)),
-            button(tokens::text("footer", "ok_label")).on_click_stop(move |_| {
-                if okay() {
-                    close();
-                }
-            }),
+            button(tokens::text("footer", "ok_label")).on_click_stop(move |_| accept()),
             button(tokens::text("footer", "cancel_label")).on_click_stop(move |_| close()),
             button(tokens::text("footer", "apply_label"))
                 .on_click_stop(move |_| { save(); })
@@ -760,15 +954,6 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     });
     let dialog = container(card)
         .on_event_stop(EventListener::PointerDown, |_| {})
-        .on_event(EventListener::KeyDown, move |event| {
-            if let Event::KeyDown(key) = event
-                && key.key.logical_key == Key::Named(NamedKey::Escape)
-            {
-                close();
-                return EventPropagation::Stop;
-            }
-            EventPropagation::Continue
-        })
         .style(move |s| {
             s.absolute()
                 .size_full()
@@ -786,19 +971,84 @@ mod tests {
     use super::*;
     #[test]
     fn category_navigation_skips_collapsed_children_and_retains_search_results() {
-        let collapsed = visible_pages(false, false, false);
+        let collapsed = visible_pages(false, false, None);
         assert!(!collapsed.contains(&Page::Appearance));
         assert!(!collapsed.contains(&Page::Flutter));
-        let appearance = visible_pages(true, false, false);
+        let appearance = visible_pages(true, false, None);
         assert!(appearance.contains(&Page::Appearance));
         assert!(appearance.contains(&Page::System));
         assert!(!appearance.contains(&Page::Dart));
-        let languages = visible_pages(false, true, false);
+        let languages = visible_pages(false, true, None);
         assert!(languages.contains(&Page::Flutter));
         assert!(languages.contains(&Page::Dart));
         assert!(!languages.contains(&Page::Appearance));
-        assert_eq!(visible_pages(false, false, true).len(), PAGES.len());
+        assert_eq!(
+            visible_pages(false, false, Some(&[Page::Dart])),
+            vec![Page::Languages, Page::Dart]
+        );
+        assert!(visible_pages(false, false, Some(&[])).is_empty());
     }
+    fn setting(cx: Scope, field: &str, description: &str) -> SettingsItem {
+        SettingsItem {
+            kind: "core".into(),
+            name: String::new(),
+            field: field.into(),
+            description: description.into(),
+            filter_text: String::new(),
+            value: SettingsValue::String(String::new()),
+            serde_value: serde_json::Value::Null,
+            pos: cx.create_rw_signal(floem::kurbo::Point::ORIGIN),
+            size: cx.create_rw_signal(floem::kurbo::Size::ZERO),
+            header: false,
+        }
+    }
+
+    #[test]
+    fn searches_setting_keys_descriptions_and_page_titles() {
+        let cx = Scope::new();
+        let items = [
+            setting(cx, "flutter-sdk-path", "Local Flutter toolchain"),
+            setting(cx, "dart-sdk-path", "Standalone Dart toolchain"),
+        ];
+        assert_eq!(matching_pages(&items, "path flutter"), [Page::Flutter]);
+        assert_eq!(matching_pages(&items, "standalone toolchain"), [Page::Dart]);
+        assert_eq!(matching_pages(&items, "keymap"), [Page::Keymap]);
+        assert!(matching_pages(&items, "missing value").is_empty());
+        cx.dispose();
+    }
+
+    #[test]
+    fn marks_pending_changes_and_override_removals_in_both_scopes() {
+        let cx = Scope::new();
+        let items = [
+            setting(cx, "flutter-sdk-path", ""),
+            setting(cx, "dart-sdk-path", ""),
+        ];
+        let dart_key = ("core".into(), "dart-sdk-path".into());
+        let mut active = Pending::from([(
+            dart_key,
+            Edit {
+                raw: "/dart".into(),
+                kind: Type::String,
+            },
+        )]);
+        let inactive = Pending::from([(
+            ("core".into(), "flutter-sdk-path".into()),
+            Edit {
+                raw: String::new(),
+                kind: Type::Reset,
+            },
+        )]);
+        assert_eq!(
+            modified_pages(&items, &active, &inactive),
+            [Page::Flutter, Page::Dart]
+        );
+        active.clear();
+        assert_eq!(modified_pages(&items, &active, &inactive), [Page::Flutter]);
+        assert!(modified_pages(&items, &active, &Pending::new()).is_empty());
+        cx.dispose();
+    }
+
     #[test]
     fn validates_numbers_and_preserves_string_whitespace() {
         assert!(

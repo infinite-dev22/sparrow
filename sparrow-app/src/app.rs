@@ -607,6 +607,13 @@ impl AppData {
                                 Some(tab.log_viewer_visible)
                             } else if tab.settings_modal_visible.get_untracked()
                             {
+                                if !tab.settings_search_query.with_untracked(String::is_empty) {
+                                    tab.settings_search_query.set(String::new());
+                                    if let Some(input) = tab.settings_search_input.get_untracked() {
+                                        input.request_focus();
+                                    }
+                                    return EventPropagation::Stop;
+                                }
                                 Some(tab.settings_modal_visible)
                             } else if tab.run_config_modal_visible.get_untracked() {
                                 Some(tab.run_config_modal_visible)

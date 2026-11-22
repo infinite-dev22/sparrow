@@ -4,9 +4,9 @@ Open **File → Settings**, use **Ctrl+,** or **Ctrl+Alt+S** on Linux and Window
 
 The modal adapts to smaller windows with scrollable contents. Drag the divider to resize the category sidebar. The dialog saves the sidebar proportion and shows the current page path next to the history controls. [Platform measurements and unresolved values](settings-tokens.toml).
 
-The first visit opens Appearance. Appearance & Behavior retains links to its supported settings. Appearance includes UI and theme options; System Settings covers the remaining core options. Editor and Terminal settings are generated from Sparrow's existing configuration metadata. The Appearance & Behavior tree expands when you select a subpage.
+The first visit opens Appearance. Subsequent visits reopen the last selected page. Appearance & Behavior retains links to its supported settings. Appearance includes UI and theme options; System Settings covers the remaining core options. Editor and Terminal settings are generated from Sparrow's existing configuration metadata. The Appearance & Behavior tree expands when you select a subpage.
 
-Search matches setting names and descriptions across all categories. Native theme/enum choices use dropdown menus, booleans use toggles, and numeric/string settings use editable fields. Invalid numbers are reported before saving. Changes survive category navigation, but are not written until Apply or OK. Cancel, Close and Escape discard un-applied edits. Apply saves without closing.
+Search filters the category tree by page titles, setting names, keys and descriptions. Ancestor rows remain visible, and matching terms are highlighted in setting labels. Native theme/enum choices use dropdown menus, booleans use toggles, and numeric/string settings use editable fields. Invalid numbers are reported before saving. Changes survive category navigation, but are not written until Apply or OK. Cancel, Close and Escape with an empty search discard unapplied edits. Unselected pages with pending changes are marked in the tree, including changes in the other scope. Apply saves without closing.
 
 Saving validates the complete pending draft, preserves unrelated TOML values and comments, and atomically replaces the settings file. Malformed settings files and section conflicts are reported rather than overwritten. Platform-specific terminal profile settings retain their existing storage format.
 
@@ -19,9 +19,9 @@ Native rendering and interaction captures are recorded in [the dialog visual che
 
 The Languages & Frameworks section includes Flutter and Dart SDK directories with folder browsing and validation. An empty path keeps automatic SDK detection. Workspace `.sparrow/settings.toml` overrides user settings. Flutter projects use the selected Flutter SDK's bundled Dart; standalone Dart projects may select a separate Dart SDK. Reopen the project after changing SDK paths to restart its existing analysis process with the new SDK.
 
-Search accepts setting keys such as `font-size` as well as words, and result labels retain their category. Dialog fields accept Enter to validate and save with OK. Tab and Shift+Tab cycle among registered visible controls rather than reaching the editor behind the dialog. Cancel and Escape preserve the last applied settings.
+Search accepts setting keys such as `font-size` as well as words, and result labels retain their category. Dialog fields accept Enter to validate and save with OK. Tab and Shift+Tab cycle among registered visible controls rather than reaching the editor behind the dialog. Escape clears a nonempty search before it can dismiss Settings.
 
-The category tree is one Tab stop. Up/Down selects visible categories, Home/End selects the first/last category, Right expands a branch or enters it, and Left returns to its parent or collapses it. Collapsing a branch with the mouse selects its parent when necessary. Overview links, history buttons and SDK browse buttons also accept keyboard focus.
+The category tree is one Tab stop. Up/Down from the search field moves selection and focus to the tree. Up/Down in the tree selects visible categories, Home/End selects the first/last category, Right expands a branch or enters it, and Left returns to its parent or collapses it. Collapsing a branch with the mouse selects its parent when necessary. Overview links, history buttons and SDK browse buttons also accept keyboard focus.
 
 Current limitations and the native acceptance record are in [the dialog audit](visual-checks/dialogs.md).
 

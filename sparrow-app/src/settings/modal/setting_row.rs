@@ -1,12 +1,12 @@
 //! Settings dialog row with scoped overrides and reset actions.
 
-use super::{Edit, Pending, Type, initial};
+use super::{Edit, HighlightMatcher, Pending, Type, initial};
 use crate::config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons};
 use crate::settings::{SettingsItem, SettingsValue};
-use crate::widgets::modal_focus::ModalFocus;
+use crate::widgets::{focus_text::focus_text, modal_focus::ModalFocus};
 use floem::{
     IntoView, View,
-    reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
+    reactive::{Memo, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::{Decorators, label, stack},
 };
 
@@ -15,7 +15,7 @@ pub(super) fn setting_row(
     pending: RwSignal<Pending>,
     keyboard: ModalFocus,
     project_scope: RwSignal<bool>,
-    query: RwSignal<String>,
+    highlight: Memo<Option<HighlightMatcher>>,
     config: floem::reactive::ReadSignal<std::sync::Arc<SparrowConfig>>,
 ) -> impl View {
     let (original, kind) = initial(&item.value).unwrap();
@@ -152,14 +152,36 @@ pub(super) fn setting_row(
         .map(|(_, n)| n.to_string())
         .unwrap_or(item.name);
     stack((
-        label(move || {
-            if query.with(|query| query.is_empty()) {
-                name.clone()
-            } else {
-                qualified_name.clone()
-            }
-        })
-        .style(|s| s.font_bold().margin_bottom(6.0)),
+        focus_text(
+            {
+                let qualified_name = qualified_name.clone();
+                move || {
+                    if highlight.with(Option::is_some) {
+                        qualified_name.clone()
+                    } else {
+                        name.clone()
+                    }
+                }
+            },
+            move || {
+                highlight.with(|matcher| {
+                    matcher.as_ref().map_or_else(Vec::new, |matcher| {
+                        matcher
+                            .0
+                            .find_iter(&qualified_name)
+                            .flat_map(|matched| {
+                                matched
+                                    .as_str()
+                                    .char_indices()
+                                    .map(move |(index, _)| matched.start() + index)
+                            })
+                            .collect()
+                    })
+                })
+            },
+            move || config.get().color(SparrowColor::EDITOR_LINK),
+        )
+        .style(|s| s.font_bold().margin_bottom(6.0).width_full().min_width(0)),
         control,
         reset,
         label(move || item.description.clone()).style(move |s| {
