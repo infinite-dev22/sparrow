@@ -50,7 +50,7 @@ pub enum Preview {
 pub(crate) struct EditFile {
     pub(crate) path: PathBuf,
     pub(crate) edits: Vec<TextEdit>,
-    version: Option<i32>,
+    pub(crate) version: Option<i32>,
 }
 pub(crate) fn edit_files(edit: &WorkspaceEdit) -> Result<Vec<EditFile>, String> {
     let mut files = BTreeMap::<PathBuf, EditFile>::new();
@@ -369,11 +369,7 @@ pub fn apply(window: &WindowTabData, prepared: Prepared) -> Result<(), String> {
             return Err("A previewed document changed or became read-only. No changes were applied.".into());
         }
     }
-    let linked=matches!(&prepared.action,CodeActionOrCommand::CodeAction(action) if action.edit.is_some() && action.command.is_none());
-    let snapshots=if linked {prepared.files.iter().filter_map(|file|window.main_split.docs.with_untracked(|docs|docs.get(&file.path).cloned())).map(crate::workspace_undo::snapshot).collect()}else{Vec::new()};
-    let label=match &prepared.action {CodeActionOrCommand::CodeAction(action)=>action.title.clone(),CodeActionOrCommand::Command(action)=>action.title.clone()};
     window.main_split.run_code_action(prepared.plugin_id, prepared.action);
-    if linked {crate::workspace_undo::record(&window.common.workspace_undo,label,snapshots);}
     Ok(())
 }
 #[cfg(test)]

@@ -1,18 +1,19 @@
 pub(crate) mod view;
 
 use std::{
+    cell::Cell,
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 use floem::{
-    action::save_as,
+    action::{exec_after, save_as},
     ext_event::create_ext_action,
     file::{FileDialogOptions, FileInfo},
     keyboard::Modifiers,
     peniko::kurbo::{Point, Rect, Vec2},
-    reactive::{Memo, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
+    reactive::{Memo, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, batch},
     views::editor::id::EditorId,
 };
 use itertools::Itertools;
@@ -2257,7 +2258,7 @@ impl MainSplitData {
             }
             CodeActionOrCommand::CodeAction(action) => {
                 if let Some(edit) = action.edit.as_ref() {
-                    self.apply_workspace_edit(edit);
+                    self.apply_code_action_edit(edit, action.title);
                 } else if action.command.is_none() {
                     self.resolve_code_action(plugin_id, action.clone());
                 }
@@ -2287,6 +2288,7 @@ impl MainSplitData {
 
     /// Resolve a code action and apply its held workspace edit
     fn resolve_code_action(&self, plugin_id: PluginId, action: CodeAction) {
+        let title = action.title.clone();
         // ── Dart fast path ─────────────────────────────────────────
         if plugin_id == PluginId(0) && self.common.dart_lsp.is_available() {
             let main_split = self.clone();
@@ -2294,7 +2296,7 @@ impl MainSplitData {
                 self.scope,
                 move |edit: Option<WorkspaceEdit>| {
                     if let Some(edit) = edit {
-                        main_split.apply_workspace_edit(&edit);
+                        main_split.apply_code_action_edit(&edit, title);
                     }
                 },
             );
@@ -2307,7 +2309,7 @@ impl MainSplitData {
         // ── Existing proxy path ────────────────────────────────────
         let main_split = self.clone();
         let send = create_ext_action(self.scope, move |edit| {
-            main_split.apply_workspace_edit(&edit);
+            main_split.apply_code_action_edit(&edit, title);
         });
         self.common
             .proxy
@@ -2318,6 +2320,126 @@ impl MainSplitData {
                     }
                 }
             });
+    }
+
+    fn apply_code_action_edit(&self, edit: &WorkspaceEdit, title: String) {
+        let alert = self.common.internal_command;
+        let report = move |msg: String| {
+            alert.send(InternalCommand::ShowAlert {
+                title: "Quick Fix".into(),
+                msg,
+                buttons: Vec::new(),
+            });
+        };
+        let files = match crate::code_action_preview::edit_files(edit) {
+            Ok(files) => files,
+            Err(error) => {
+                report(error);
+                return;
+            }
+        };
+        if files.len() <= 1 {
+            self.apply_workspace_edit(edit);
+            return;
+        }
+        let targets: Vec<_> = files
+            .into_iter()
+            .map(|file| {
+                let (doc, _) = self.get_doc(file.path.clone(), None);
+                let revision = Cell::new(doc.loaded().then(|| doc.rev()));
+                (file, doc, revision)
+            })
+            .collect();
+        let targets = Rc::new(targets);
+        let apply = {
+            let split = self.clone();
+            let targets = targets.clone();
+            move || {
+                for (file, doc, revision) in targets.iter() {
+                    if doc.content.with_untracked(|c| c.read_only())
+                        || revision.get() != Some(doc.rev())
+                        || file
+                            .version
+                            .is_some_and(|rev| u64::try_from(rev) != Ok(doc.rev()))
+                    {
+                        report(format!(
+                            "{} changed or is read-only. No files were edited.",
+                            file.path.display()
+                        ));
+                        return;
+                    }
+                    let source = doc.buffer.with_untracked(|buffer| buffer.to_string());
+                    if let Err(error) =
+                        crate::code_action_preview::edited(&source, &file.edits)
+                    {
+                        report(format!("{}: {error}", file.path.display()));
+                        return;
+                    }
+                }
+                batch(|| {
+                    let snapshots = targets
+                        .iter()
+                        .map(|(_, doc, _)| crate::workspace_undo::snapshot(doc.clone()))
+                        .collect();
+                    for (file, doc, _) in targets.iter() {
+                        split.apply_document_edits(doc, &file.edits);
+                    }
+                    crate::workspace_undo::record(
+                        &split.common.workspace_undo,
+                        title.clone(),
+                        snapshots,
+                    );
+                });
+            }
+        };
+        // Wait for all targets before applying or linking any of their edits.
+        if targets.iter().all(|(_, doc, _)| doc.loaded()) {
+            apply();
+        } else {
+            let scope = self.scope.create_child();
+            let pending = scope.create_rw_signal(true);
+            scope.create_effect(move |_| {
+                let mut all_loaded = true;
+                for (_, doc, revision) in targets.iter() {
+                    if !doc.loaded.get() {
+                        all_loaded = false;
+                    } else if revision.get().is_none() {
+                        revision.set(Some(doc.rev()));
+                    }
+                }
+                if all_loaded {
+                    apply();
+                    scope.dispose();
+                }
+            });
+            exec_after(std::time::Duration::from_secs(5), move |_| {
+                if pending.try_get_untracked().is_some() {
+                    scope.dispose();
+                    report(
+                        "Could not load all Quick Fix targets. No files were edited.".into(),
+                    );
+                }
+            });
+        }
+    }
+
+    fn apply_document_edits(&self, doc: &Rc<Doc>, edits: &[TextEdit]) {
+        let editor = self.editors.with_editors_untracked(|editors| {
+            editors
+                .values()
+                .find(|editor| {
+                    editor
+                        .doc_signal()
+                        .try_get_untracked()
+                        .is_some_and(|current| Rc::ptr_eq(&current, doc))
+                })
+                .cloned()
+        });
+        if let Some(editor) = editor {
+            editor.do_text_edit(edits);
+        } else {
+            doc.do_text_edit(edits);
+        }
     }
 
     /// Perform a workspace edit, which are from the LSP (such as code actions, or symbol renaming)
@@ -2348,27 +2470,10 @@ impl MainSplitData {
             for (url, edits) in edits {
                 if let Ok(path) = url.to_file_path() {
                     let (doc, _) = self.get_doc(path, None);
-                    let editors = self.editors;
+                    let split = self.clone();
                     let target = doc.clone();
                     let apply = move || {
-                        let editor = editors.with_editors_untracked(|editors| {
-                            editors
-                                .values()
-                                .find(|editor| {
-                                    editor
-                                        .doc_signal()
-                                        .try_get_untracked()
-                                        .is_some_and(|current| {
-                                            Rc::ptr_eq(&current, &doc)
-                                        })
-                                })
-                                .cloned()
-                        });
-                        if let Some(editor) = editor {
-                            editor.do_text_edit(&edits);
-                        } else {
-                            doc.do_text_edit(&edits);
-                        }
+                        split.apply_document_edits(&doc, &edits);
                     };
                     // Previewed edits are already loaded. Other LSP edits may need
                     // a buffer first, without opening a tab or moving the caret.
