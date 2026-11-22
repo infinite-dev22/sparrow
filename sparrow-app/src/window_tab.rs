@@ -227,8 +227,10 @@ pub struct WindowTabData {
     pub set_config: WriteSignal<Arc<SparrowConfig>>,
     pub update_in_progress: RwSignal<bool>,
     pub progresses: RwSignal<IndexMap<ProgressToken, WorkProgress>>,
-    pub messages: RwSignal<Vec<(String, ShowMessageParams)>>,
+    pub messages: RwSignal<Vec<crate::panel::workflow_tools::PopupMessage>>,
     pub notifications: RwSignal<Vec<crate::panel::workflow_tools::Notice>>,
+    pub log_viewer_visible: RwSignal<bool>,
+    pub(crate) log_viewer_report: RwSignal<Option<crate::app::logging::CrashReport>>,
     pub common: Rc<CommonData>,
     pub widget_tree: WidgetTreeData,
     pub outline: OutlineData,
@@ -727,6 +729,8 @@ impl WindowTabData {
             progresses: cx.create_rw_signal(IndexMap::new()),
             messages: cx.create_rw_signal(Vec::new()),
             notifications: cx.create_rw_signal(Vec::new()),
+            log_viewer_visible: cx.create_rw_signal(false),
+            log_viewer_report: cx.create_rw_signal(None),
             common,
             project_menu_visible: cx.create_rw_signal(false),
             branch_menu_visible: cx.create_rw_signal(false),
@@ -735,6 +739,24 @@ impl WindowTabData {
             active_run_config_idx,
             run_config_modal_visible,
         };
+
+        if let Some(problem) = crate::app::logging::status() {
+            window_tab_data.show_message("IDE logging", &ShowMessageParams {
+                typ: lsp_types::MessageType::WARNING,
+                message: problem,
+            });
+        }
+        if let Some(report) = crate::app::logging::take_previous_crash_notice() {
+            use crate::panel::workflow_tools::{PopupMessage, announce_message};
+            announce_message(window_tab_data.notifications, window_tab_data.messages, PopupMessage {
+                title: "Previous Sparrow crash".into(),
+                message: ShowMessageParams {
+                    typ: lsp_types::MessageType::WARNING,
+                    message: report.notice(),
+                },
+                crash_report: Some(report),
+            });
+        }
 
         {
             let data = window_tab_data.clone();
@@ -790,13 +812,14 @@ impl WindowTabData {
 
         {
             let settings = window_tab_data.settings_modal_visible;
+            let logs = window_tab_data.log_viewer_visible;
             let run = window_tab_data.run_config_modal_visible;
             let wizard = window_tab_data.flutter_project.active;
             let focus = window_tab_data.common.focus;
             let root = window_tab_data.common.view_id;
             let previous_focus = cx.create_rw_signal(Focus::Workbench);
             cx.create_effect(move |_| {
-                if settings.get() || run.get() || wizard.get() {
+                if settings.get() || run.get() || wizard.get() || logs.get() {
                     let current = focus.get_untracked();
                     if current != Focus::Modal {
                         // Command palettes and other transient overlays close
@@ -1017,6 +1040,7 @@ impl WindowTabData {
             > = Default::default();
 
             let notices = window_tab_data.notifications;
+            let messages = window_tab_data.messages;
             let main_split_apply = main_split.clone();
             let notification = create_signal_from_channel(dart_lsp_rx);
 
@@ -1070,11 +1094,10 @@ impl WindowTabData {
                         }
                         DartNotification::Error(e) => {
                             tracing::warn!("dart lsp: {e}");
-                            crate::panel::workflow_tools::record(
-                                notices,
-                                "Dart analysis",
-                                e,
-                            );
+                            crate::panel::workflow_tools::announce(notices, messages, "Dart analysis", &ShowMessageParams {
+                                typ: lsp_types::MessageType::ERROR,
+                                message: e.clone(),
+                            });
                         }
                         DartNotification::ApplyEdit { id, edit } => {
                             let applied = edit.as_ref().is_some_and(|edit| main_split_apply.apply_dart_server_edit(edit));
@@ -1497,17 +1520,7 @@ impl WindowTabData {
                     );
                 }
             }
-            OpenLogFile => {
-                if let Some(dir) = Directory::logs_directory() {
-                    self.open_paths(&[PathObject::from_path(
-                        dir.join(format!(
-                            "sparrow.{}.log",
-                            chrono::prelude::Local::now().format("%Y-%m-%d")
-                        )),
-                        false,
-                    )])
-                }
-            }
+            OpenLogFile => self.open_logs(None),
             OpenLogsDirectory => {
                 if let Some(dir) = Directory::logs_directory() {
                     open_uri(&dir);
@@ -3319,6 +3332,11 @@ impl WindowTabData {
             }
             CoreNotification::TerminalLaunchFailed { term_id, error } => {
                 self.terminal.launch_failed(term_id, error);
+                tracing::error!("Terminal launch failed: {error}");
+                self.show_message("Terminal launch failed", &ShowMessageParams {
+                    typ: lsp_types::MessageType::ERROR,
+                    message: error.clone(),
+                });
             }
             CoreNotification::RunInTerminal { config } => {
                 if self
@@ -4377,15 +4395,15 @@ impl WindowTabData {
         }
     }
 
-    fn show_message(&self, title: &str, message: &ShowMessageParams) {
-        crate::panel::workflow_tools::record(
-            self.notifications,
-            title,
-            &message.message,
-        );
-        self.messages.update(|messages| {
-            messages.push((title.to_string(), message.clone()));
+    pub(crate) fn open_logs(&self, report: Option<crate::app::logging::CrashReport>) {
+        floem::reactive::batch(|| {
+            self.log_viewer_report.set(report);
+            self.log_viewer_visible.set(true);
         });
+    }
+
+    fn show_message(&self, title: &str, message: &ShowMessageParams) {
+        crate::panel::workflow_tools::announce(self.notifications, self.messages, title, message);
     }
 
     pub fn update_code_lens_id(&self, view_id: Option<ViewId>) {

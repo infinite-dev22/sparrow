@@ -1,6 +1,6 @@
 //! Grouped notification cards and dismissal controls.
 
-use super::record;
+use super::{crash_report_button, record};
 use crate::panel::kind::PanelKind;
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
@@ -21,6 +21,7 @@ use crate::widgets::sparrow_scroll;
 pub fn notifications(window: Rc<WindowTabData>) -> impl View {
     let config = window.common.config;
     let notices = window.notifications;
+    let report_window = window.clone();
     let expanded = create_rw_signal(std::collections::HashSet::<u64>::new());
     let open_groups = create_rw_signal(std::collections::HashSet::<String>::new());
     let message = window.flutter_hot_reload.message;
@@ -50,6 +51,7 @@ pub fn notifications(window: Rc<WindowTabData>) -> impl View {
         label(||"No notifications").style(move |s|s.padding(24.0).apply_if(!notices.with(|n|n.is_empty()),|s|s.hide())),
         sparrow_scroll(dyn_stack(move ||groups.get(),|title|title.clone(),move |title|{
             let count_title=title.clone();let toggle_title=title.clone();let dismiss_title=title.clone();let rows_title=title.clone();
+            let report_window=report_window.clone();
             stack((
                 stack((label(move ||{
                     let count=notices.with(|items|items.iter().filter(|n|n.title==count_title).count());
@@ -63,6 +65,9 @@ pub fn notifications(window: Rc<WindowTabData>) -> impl View {
                     notices.with(|items|items.iter().rev().filter(|n|n.title==rows_title).take(if all{usize::MAX}else{1}).cloned().collect::<Vec<_>>())
                 },|notice|notice.id,move |notice|{
                     let id=notice.id;let body=notice.body.clone();let long=body.chars().count()>360||body.lines().count()>5;
+                    let report=notice.crash_report.clone();
+                    let has_report=report.is_some();
+                    let open_window=report_window.clone();
                     stack((
                         stack((label(move ||notice.time.clone()).style(move |s|s.flex_grow(1.0_f32).font_size(11.0).color(config.get().color(SparrowColor::EDITOR_DIM))),
                             clickable_icon(||SparrowIcons::CLOSE,move ||notices.update(|items|items.retain(|n|n.id!=id)),||false,||false,||"Dismiss notification",config)
@@ -70,7 +75,15 @@ pub fn notifications(window: Rc<WindowTabData>) -> impl View {
                         label(move ||if long&&!expanded.with(|ids|ids.contains(&id)){
                             let text=body.lines().take(5).collect::<Vec<_>>().join("\n");
                             format!("{}…",text.chars().take(360).collect::<String>())
-                        }else{body.clone()}).style(|s|s.width_full().min_width(0.0).margin_top(4.0)),
+                        }else{body.clone()})
+                            .on_click_cont(move |_| {
+                                if let Some(report)=&report {
+                                    open_window.open_logs(Some(report.clone()));
+                                }
+                            })
+                            .style(move |s|s.width_full().min_width(0.0).margin_top(4.0)
+                                .apply_if(has_report,|s|s.cursor(floem::style::CursorStyle::Pointer))),
+                        crash_report_button(report_window.clone(), notice.crash_report),
                         label(move ||if expanded.with(|ids|ids.contains(&id)){"Show less"}else{"Show more"})
                             .on_click_stop(move |_|expanded.update(|ids|{if !ids.remove(&id){ids.insert(id);}}))
                             .style(move |s|s.margin_top(6.0).color(config.get().color(SparrowColor::EDITOR_LINK)).apply_if(!long,|s|s.hide()))

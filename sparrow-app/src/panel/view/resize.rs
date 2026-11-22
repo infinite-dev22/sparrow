@@ -67,11 +67,11 @@ impl Drag {
             if next != current {
                 panel.size.set(next);
             }
-            if position.is_bottom() {
-                let maximize = requested >= (available - 50.0).max(0.0);
-                if maximize != panel.panel_bottom_maximized(false) {
-                    panel.toggle_bottom_maximize();
-                }
+            if position.is_bottom()
+                && delta.y >= 12.0
+                && panel.panel_bottom_maximized(false)
+            {
+                panel.toggle_bottom_maximize();
             }
         });
     }

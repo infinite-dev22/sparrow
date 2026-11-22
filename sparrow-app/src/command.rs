@@ -270,7 +270,7 @@ pub enum SparrowWorkbenchCommand {
     OpenKeyboardShortcutsFile,
 
     #[strum(serialize = "open_log_file")]
-    #[strum(message = "Open Log File")]
+    #[strum(message = "Show IDE Logs")]
     OpenLogFile,
 
     #[strum(serialize = "open_logs_directory")]

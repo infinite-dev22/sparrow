@@ -62,7 +62,8 @@ use sparrow_rpc::{
 use tracing_subscriber::{filter::Targets, reload::Handle};
 
 mod grammars;
-mod logging;
+pub(crate) mod logging;
+mod log_viewer;
 mod window_messages;
 mod workbench;
 mod workspace_tabs;
@@ -602,7 +603,9 @@ impl AppData {
                             .window_tabs
                             .with_untracked(|tabs| tabs.get(active).cloned())
                         {
-                            let modal = if tab.settings_modal_visible.get_untracked()
+                            let modal = if tab.log_viewer_visible.get_untracked() {
+                                Some(tab.log_viewer_visible)
+                            } else if tab.settings_modal_visible.get_untracked()
                             {
                                 Some(tab.settings_modal_visible)
                             } else if tab.run_config_modal_visible.get_untracked() {
@@ -733,6 +736,7 @@ fn window_tab(
     let branch_chip_origin = create_rw_signal(Point::ZERO);
     let device_chip_origin = create_rw_signal(Point::ZERO);
     let settings_modal = window_tab_data.settings_modal_visible;
+    let log_viewer = window_tab_data.log_viewer_visible;
     let run_modal = window_tab_data.run_config_modal_visible;
     let project_modal = window_tab_data.flutter_project.active;
     let file_modal=window_tab_data.file_refactor.active;
@@ -743,7 +747,7 @@ fn window_tab(
     let symbol_modal=window_tab_data.rename.active;
     let interaction_layer_open=move ||symbol_modal.get()||file_modal.get()||scaffold_modal.get()||formatting_modal.get()||search_modal.get()||git_modal.get();
     let modal_open =
-        move || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || git_modal.get();
+        move || log_viewer.get() || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || git_modal.get();
 
     let project_color = window_tab_data.common.project_color;
     let background_tasks_open = window_tab_data.common.background_tasks.open;
@@ -799,6 +803,7 @@ fn window_tab(
         crate::dart::project_wizard::view(window_tab_data.clone()),
         run_config_modal(window_tab_data.clone()),
         crate::settings::modal::view(window_tab_data.clone()),
+        log_viewer::view(window_tab_data.clone()),
         debug_floating_toolbar(window_tab_data.clone()).disabled(modal_open),
         project_switcher(window_tab_data.clone(), window_tabs, project_chip_origin),
         branch_switcher(window_tab_data.clone(), branch_chip_origin),
@@ -914,12 +919,12 @@ pub fn launch() {
     let cli = Cli::parse();
     if let Some(json)=cli.run_config_task.as_deref(){let code=match crate::dart::run_config::execute_task_snapshot(json){Ok(code)=>code,Err(error)=>{eprintln!("{error}");1}};std::process::exit(code);}
 
+    let (reload_handle, _guard) = logging::logging();
     if !cli.wait {
         logging::panic_hook();
     }
 
-    let (reload_handle, _guard) = logging::logging();
-    trace!(TraceLevel::INFO, "Starting up Sparrow..");
+    tracing::info!(version = sparrow_core::meta::VERSION, process = std::process::id(), "Starting Sparrow");
 
     #[cfg(feature = "vendored-fonts")]
     {
@@ -1298,8 +1303,6 @@ pub fn launch() {
 pub fn load_shell_env() {
     use std::process::Command;
 
-    use tracing::warn;
-
     #[cfg(not(windows))]
     let shell = match std::env::var("SHELL") {
         Ok(s) => s,
@@ -1348,7 +1351,7 @@ pub fn load_shell_env() {
             let value = value.trim_matches('\r');
             if let Ok(v) = std::env::var(key) {
                 if v != value {
-                    warn!("Overwriting '{key}', previous value: '{v}', new value '{value}'");
+                    tracing::debug!(variable = key, "Shell environment overrides an existing variable");
                 }
             };
             std::env::set_var(key, value);
@@ -1918,6 +1921,9 @@ pub fn window_menu(
             .separator()
             .entry(MenuItem::new("Keyboard Shortcuts").action(move || {
                 workbench_command.send(OpenKeyboardShortcuts);
+            }))
+            .entry(MenuItem::new("Show IDE Logs").action(move || {
+                workbench_command.send(OpenLogFile);
             }))
             .entry(MenuItem::new("Open Logs Directory").action(move || {
                 workbench_command.send(OpenLogsDirectory);

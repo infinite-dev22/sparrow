@@ -103,19 +103,37 @@ pub struct PanelInfo {
     pub sections: im::HashMap<PanelSection, bool>,
 }
 
+const PANEL_LAYOUT_VERSION: u32 = 2;
+
 impl PanelInfo {
-    /// Migrate once, preserving user changes made after the reference defaults.
     pub fn upgrade_reference_layout(&mut self) -> bool {
-        if self.layout_version >= 1 { return false; }
-        self.layout_version = 1;
-        self.size.left = 420.0;
-        self.size.right = 466.0;
-        self.size.bottom = 342.0;
-        self.panels = default_panel_order();
-        self.styles.clear();
-        self.styles.insert(PanelPosition::LeftTop, PanelStyle {
-            active: 0, shown: true, maximized: false,
-        });
+        if self.layout_version >= PANEL_LAYOUT_VERSION {
+            return false;
+        }
+        if self.layout_version == 0 {
+            self.size.left = 420.0;
+            self.size.right = 466.0;
+            self.size.bottom = 342.0;
+            self.panels = default_panel_order();
+            self.styles.clear();
+            self.styles.insert(
+                PanelPosition::LeftTop,
+                PanelStyle {
+                    active: 0,
+                    shown: true,
+                    maximized: false,
+                },
+            );
+        } else {
+            // Old layouts cannot distinguish a drag-triggered maximize from an
+            // explicit one. Restore the editor once when upgrading them.
+            for position in [PanelPosition::BottomLeft, PanelPosition::BottomRight] {
+                if let Some(style) = self.styles.get_mut(&position) {
+                    style.maximized = false;
+                }
+            }
+        }
+        self.layout_version = PANEL_LAYOUT_VERSION;
         true
     }
 }
@@ -232,7 +250,7 @@ impl PanelData {
 
     pub fn panel_info(&self) -> PanelInfo {
         PanelInfo {
-            layout_version: 1,
+            layout_version: PANEL_LAYOUT_VERSION,
             panels: self.panels.get_untracked(),
             styles: self.styles.get_untracked(),
             size: self.size.get_untracked(),
@@ -809,6 +827,38 @@ mod tool_window_tests {
 #[cfg(test)]
 mod reference_layout_tests {
     use super::*;
+    #[test]
+    fn upgrading_a_saved_dock_restores_the_editor_once() {
+        let mut info = PanelInfo {
+            layout_version: 1,
+            panels: default_panel_order(),
+            styles: im::hashmap! {
+                PanelPosition::BottomLeft => PanelStyle {
+                    active: 1, shown: true, maximized: true,
+                },
+            },
+            size: PanelSize {
+                left: 220.0,
+                left_split: 0.5,
+                bottom: 350.0,
+                bottom_split: 0.5,
+                right: 180.0,
+                right_split: 0.5,
+            },
+            sections: im::HashMap::new(),
+        };
+        assert!(info.upgrade_reference_layout());
+        let bottom = info.styles.get_mut(&PanelPosition::BottomLeft).unwrap();
+        assert!(bottom.shown);
+        assert_eq!(bottom.active, 1);
+        assert!(!bottom.maximized);
+        assert_eq!(info.size.bottom, 350.0);
+
+        bottom.maximized = true;
+        assert!(!info.upgrade_reference_layout());
+        assert!(info.styles[&PanelPosition::BottomLeft].maximized);
+    }
+
     #[test]
     fn legacy_layout_migrates_once_then_preserves_resizing() {
         let legacy = serde_json::json!({

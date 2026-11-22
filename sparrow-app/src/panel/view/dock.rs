@@ -5,7 +5,7 @@ use std::rc::Rc;
 use floem::{
     IntoView, View,
     event::{EventListener, EventPropagation},
-    reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
+    reactive::{Memo, SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
     views::{Decorators, empty, stack, tab},
 };
 
@@ -35,6 +35,7 @@ use super::island::{ISLAND_RADIUS, island_corners};
 pub fn panel_container_view(
     window_tab_data: Rc<WindowTabData>,
     position: PanelContainerPosition,
+    dock_width_scale: Memo<f64>,
 ) -> impl View {
     let panel = window_tab_data.panel.clone();
     let config = window_tab_data.common.config;
@@ -89,11 +90,12 @@ pub fn panel_container_view(
     };
 
     let panel_size = panel.size;
+    let available = panel.available_size;
     let extent = create_memo(move |_| {
         panel_size.with(|size| match position {
-            PanelContainerPosition::Left => size.left,
-            PanelContainerPosition::Right => size.right,
-            PanelContainerPosition::Bottom => size.bottom,
+            PanelContainerPosition::Left => size.left.max(0.0) * dock_width_scale.get(),
+            PanelContainerPosition::Right => size.right.max(0.0) * dock_width_scale.get(),
+            PanelContainerPosition::Bottom => size.bottom.clamp(0.0, (available.get().height - 103.0).max(0.0)),
         })
     });
 
