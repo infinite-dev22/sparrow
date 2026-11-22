@@ -3,7 +3,7 @@ use std::{fmt::Display, sync::Arc};
 use floem::{
     IntoView, View,
     kurbo::Rect,
-    reactive::{ReadSignal, RwSignal, SignalGet, SignalUpdate},
+    reactive::{ReadSignal, SignalGet},
     style::CursorStyle,
     views::{Decorators, label, stack},
 };
@@ -16,11 +16,12 @@ pub(crate) fn search_result_row<T: Display + 'static>(
     content: impl IntoView + 'static,
     hint: impl Fn() -> T + 'static,
     hint_width_pct: f64,
-    index: usize,
-    selected: RwSignal<usize>,
+    is_selected: impl Fn() -> bool + 'static,
+    select: impl Fn() + Clone + 'static,
     open: impl Fn() + 'static,
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> impl View {
+    let click = select.clone();
     stack((
         content,
         label(hint).style(move |s| {
@@ -29,14 +30,14 @@ pub(crate) fn search_result_row<T: Display + 'static>(
                 .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
         }),
     ))
-    .on_click_stop(move |_| selected.set(index))
+    .on_click_stop(move |_| click())
     .on_double_click_stop(move |_| {
-        selected.set(index);
+        select();
         open();
     })
     .style(move |s| {
         let config = config.get();
-        let selected = index == selected.get();
+        let selected = is_selected();
         let selection = config.color(SparrowColor::PANEL_SELECTION_BACKGROUND);
         let hover = config.color(SparrowColor::PANEL_HOVERED_BACKGROUND);
         s.height(ROW_HEIGHT)

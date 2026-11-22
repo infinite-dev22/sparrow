@@ -8,9 +8,7 @@ use crate::{
         ButtonKind, Divider, button, empty_state,
         floating_search::{floating_search, search_field},
         labeled_checkbox,
-        modal_focus::{
-            ModalChoice, ModalFocus, list_destination, restore_workbench_on_close,
-        },
+        modal_focus::{ModalChoice, ModalFocus, restore_workbench_on_close},
         search_match_options::search_match_options,
         search_result_row::{search_result_bounds, search_result_row},
         sparrow_scroll, tab_button, tab_strip,
@@ -164,17 +162,9 @@ pub(crate) fn view(window: Rc<WindowTabData>) -> impl View {
     });
     let chosen =
         create_memo(move |_| results.with(|rows| rows.get(selected.get()).cloned()));
-    let input = focus.input_with_placeholder(query, config, "Search");
-    let input_id = input.id();
-    create_effect(move |_| {
-        if active.get() {
-            exec_after(Duration::from_millis(30), move |_| {
-                if active.get_untracked() {
-                    input_id.request_focus();
-                }
-            });
-        }
-    });
+    focus.set_list_navigation(selected, move || results.with_untracked(Vec::len));
+    let can_split =
+        move || chosen.with(|row| row.as_ref().and_then(Row::hit).is_some());
     let accept = {
         let window = window.clone();
         move |split| {
@@ -195,7 +185,34 @@ pub(crate) fn view(window: Rc<WindowTabData>) -> impl View {
         }
     };
     let submit = accept.clone();
-    focus.set_submit(move || submit(false));
+    // Floem's text input consumes Enter on key-down and its submit callback
+    // receives no modifiers. Handle both shortcuts on the focused field.
+    let input = focus
+        .input_with_placeholder(query, config, "Search")
+        .on_event(EventListener::KeyUp, move |event| {
+            let Event::KeyUp(key) = event else {
+                return EventPropagation::Continue;
+            };
+            if key.key.logical_key != Key::Named(NamedKey::Enter) {
+                return EventPropagation::Continue;
+            }
+            match key.modifiers {
+                modifiers if modifiers.is_empty() => submit(false),
+                Modifiers::SHIFT if can_split() => submit(true),
+                _ => {}
+            }
+            EventPropagation::Stop
+        });
+    let input_id = input.id();
+    create_effect(move |_| {
+        if active.get() {
+            exec_after(Duration::from_millis(30), move |_| {
+                if active.get_untracked() {
+                    input_id.request_focus();
+                }
+            });
+        }
+    });
     let tabs = tab_strip(stack_from_iter(Tab::ALL.map(|(mode, name)| {
         focus.control(tab_button(
             label(move || name),
@@ -291,8 +308,11 @@ pub(crate) fn view(window: Rc<WindowTabData>) -> impl View {
                         }),
                         move || row.hint.clone(),
                         40.0,
-                        index,
-                        selected,
+                        move || selected.get() == index,
+                        move || {
+                            selected.set(index);
+                            input_id.request_focus();
+                        },
                         move || accept(false),
                         config,
                     )
@@ -330,8 +350,6 @@ pub(crate) fn view(window: Rc<WindowTabData>) -> impl View {
                 |s| s.hide(),
             )
     });
-    let can_split =
-        move || chosen.with(|row| row.as_ref().and_then(Row::hit).is_some());
     let accept_split = accept.clone();
     let empty_query = move || {
         query.with(|text| text.trim().is_empty())
@@ -429,28 +447,6 @@ pub(crate) fn view(window: Rc<WindowTabData>) -> impl View {
         if let Event::KeyDown(key) = event {
             if key.key.logical_key == Key::Named(NamedKey::Escape) {
                 active.set(false);
-                return EventPropagation::Stop;
-            }
-            if key.modifiers.contains(Modifiers::SHIFT)
-                && key.key.logical_key == Key::Named(NamedKey::Enter)
-            {
-                if can_split() {
-                    accept(true);
-                }
-                return EventPropagation::Stop;
-            }
-            if key.modifiers.is_empty()
-                && matches!(
-                    key.key.logical_key,
-                    Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)
-                )
-                && let Some(index) = list_destination(
-                    &key.key.logical_key,
-                    selected.get_untracked(),
-                    results.with_untracked(Vec::len),
-                )
-            {
-                selected.set(index);
                 return EventPropagation::Stop;
             }
         }

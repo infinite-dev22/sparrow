@@ -18,6 +18,26 @@ use crate::widgets::sparrow_scroll;
 
 type Enabled = Rc<dyn Fn() -> bool>;
 type Submit = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
+
+struct ListNavigation {
+    selected: RwSignal<usize>,
+    len: Box<dyn Fn() -> usize>,
+}
+
+impl ListNavigation {
+    fn handle_key(&self, key: &Key) -> bool {
+        if !matches!(key, Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)) {
+            return false;
+        }
+        let Some(index) =
+            list_destination(key, self.selected.get_untracked(), (self.len)())
+        else {
+            return false;
+        };
+        self.selected.set(index);
+        true
+    }
+}
 thread_local! {
     static POPUP_ESCAPE: Cell<bool> = const { Cell::new(false) };
     static FILE_PICKERS: Cell<usize> = const { Cell::new(0) };
@@ -66,6 +86,7 @@ pub struct ModalFocus {
     root: Rc<Cell<Option<ViewId>>>,
     controls: Rc<RefCell<HashMap<ViewId, Enabled>>>,
     submit: Submit,
+    list_navigation: Rc<RefCell<Option<ListNavigation>>>,
     popup: RwSignal<Option<Rc<ModalPopup>>>,
     picker_open: RwSignal<bool>,
     popup_selection: RwSignal<usize>,
@@ -76,6 +97,7 @@ impl Default for ModalFocus {
             root: Default::default(),
             controls: Default::default(),
             submit: Default::default(),
+            list_navigation: Default::default(),
             popup: Scope::current().create_rw_signal(None),
             picker_open: Scope::current().create_rw_signal(false),
             popup_selection: Scope::current().create_rw_signal(0),
@@ -107,6 +129,19 @@ impl ModalFocus {
     pub fn set_submit(&self, submit: impl Fn() + 'static) {
         *self.submit.borrow_mut() = Some(Rc::new(submit));
     }
+    /// Route result navigation through focused controls. Floem delivers keys
+    /// directly to the focused view, without bubbling through the dialog.
+    pub(crate) fn set_list_navigation(
+        &self,
+        selected: RwSignal<usize>,
+        len: impl Fn() -> usize + 'static,
+    ) {
+        *self.list_navigation.borrow_mut() = Some(ListNavigation {
+            selected,
+            len: Box::new(len),
+        });
+    }
+
     pub fn focus_first(&self) {
         if let Some(root) = self.root.get() {
             self.advance(root, false);
@@ -411,6 +446,15 @@ impl ModalFocus {
                     {
                         navigation
                             .advance(id, key.modifiers.contains(Modifiers::SHIFT));
+                        return EventPropagation::Stop;
+                    }
+                    if key.modifiers.is_empty()
+                        && navigation
+                            .list_navigation
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|list| list.handle_key(&key.key.logical_key))
+                    {
                         return EventPropagation::Stop;
                     }
                 }

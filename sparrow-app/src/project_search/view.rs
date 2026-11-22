@@ -29,9 +29,7 @@ use crate::{
         ButtonKind, Divider, button, empty_state,
         floating_search::{floating_search, search_field},
         labeled_checkbox,
-        modal_focus::{
-            ModalChoice, ModalFocus, list_destination, restore_workbench_on_close,
-        },
+        modal_focus::{ModalChoice, ModalFocus, restore_workbench_on_close},
         search_match_options::search_match_options,
         search_result_row::{search_result_bounds, search_result_row},
         sparrow_scroll, tab_button,
@@ -137,6 +135,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         }
     });
 
+    focus.set_list_navigation(selected, move || {
+        results.with_untracked(|r| r.hits.len())
+    });
     let input = focus.input_with_placeholder(query, config, "Search");
     let input_id = input.id();
     create_effect(move |_| {
@@ -342,8 +343,11 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         }),
                         move || source.clone(),
                         48.0,
-                        index,
-                        selected,
+                        move || selected.get() == index,
+                        move || {
+                            selected.set(index);
+                            input_id.request_focus();
+                        },
                         open,
                         config,
                     )
@@ -526,20 +530,6 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 && !busy.get_untracked()
             {
                 active.set(false);
-                return EventPropagation::Stop;
-            }
-            if key.modifiers.is_empty()
-                && matches!(
-                    key.key.logical_key,
-                    Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)
-                )
-                && let Some(index) = list_destination(
-                    &key.key.logical_key,
-                    selected.get_untracked(),
-                    results.with_untracked(|r| r.hits.len()),
-                )
-            {
-                selected.set(index);
                 return EventPropagation::Stop;
             }
         }
