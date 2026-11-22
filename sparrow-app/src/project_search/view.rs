@@ -13,12 +13,10 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{
-        RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect,
-        create_rw_signal,
+        SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal,
     },
     views::{
-        Decorators, container, dyn_container, dyn_stack, label, stack,
-        stack_from_iter,
+        Decorators, dyn_container, dyn_stack, empty, label, stack, stack_from_iter,
     },
 };
 
@@ -28,10 +26,14 @@ use crate::{
     editor_tab::EditorTabChild,
     panel::kind::PanelKind,
     widgets::{
-        ButtonKind, Divider, button, dialog_surface, empty_state, labeled_checkbox,
+        ButtonKind, Divider, button, empty_state,
+        floating_search::{floating_search, search_field},
+        labeled_checkbox,
         modal_focus::{
             ModalChoice, ModalFocus, list_destination, restore_workbench_on_close,
         },
+        search_match_options::search_match_options,
+        search_result_row::{search_result_bounds, search_result_row},
         sparrow_scroll, tab_button,
         text_input::text_input,
     },
@@ -135,11 +137,15 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         }
     });
 
-    let input = focus.input(query, config);
+    let input = focus.input_with_placeholder(query, config, "Search");
     let input_id = input.id();
     create_effect(move |_| {
         if active.get() {
-            exec_after(Duration::from_millis(30), move |_| input_id.request_focus());
+            exec_after(Duration::from_millis(30), move |_| {
+                if active.get_untracked() {
+                    input_id.request_focus();
+                }
+            });
         }
     });
     let open = {
@@ -158,34 +164,19 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     };
     focus.set_submit(open.clone());
 
-    let option = |signal: RwSignal<bool>, icon, tooltip| {
-        focus.icon(
-            move || icon,
-            move || signal.update(|value| *value = !*value),
-            move || signal.get(),
-            || false,
-            move || tooltip,
-            config,
-        )
-    };
-    let search = stack((
-        input.style(|s| s.flex_grow(1.0_f32).flex_basis(0)),
-        option(
-            state.case,
-            SparrowIcons::SEARCH_CASE_SENSITIVE,
-            "Match case",
-        ),
-        option(state.word, SparrowIcons::SEARCH_WHOLE_WORD, "Whole words"),
-        option(
-            state.regex,
-            SparrowIcons::SEARCH_REGEX,
-            "Regular expression",
-        ),
-    ))
-    .style(|s| s.width_full().items_center().gap(5));
-    let replacements = focus
-        .control(text_input(state.replace, config).placeholder("Replace with"))
-        .style(move |s| s.apply_if(!replacement.get(), |s| s.hide()));
+    let search = search_field(
+        input,
+        search_match_options(&focus, state.case, state.word, state.regex, config),
+        config,
+        SparrowIcons::SEARCH,
+    );
+    let replacements = search_field(
+        focus.control(text_input(state.replace, config).placeholder("Replace with")),
+        empty(),
+        config,
+        SparrowIcons::SEARCH_REPLACE,
+    )
+    .style(move |s| s.apply_if(!replacement.get(), |s| s.hide()));
 
     let mask_options = stack((
         focus.control(labeled_checkbox(
@@ -336,7 +327,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     let source = format!("{}:{}", path.display(), hit.line);
                     let open = open.clone();
                     let (snippet, highlights) = hit.snippet();
-                    stack((
+                    search_result_row(
                         crate::widgets::focus_text::focus_text(
                             move || snippet.clone(),
                             move || highlights.clone(),
@@ -349,35 +340,19 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                                 .text_ellipsis()
                                 .selectable(false)
                         }),
-                        label(move || source.clone()).style(move |s| {
-                            s.max_width_pct(48.0).text_ellipsis().color(
-                                config
-                                    .get()
-                                    .color(SparrowColor::PANEL_FOREGROUND_DIM),
-                            )
-                        }),
-                    ))
-                    .on_click_stop(move |_| selected.set(index))
-                    .on_double_click_stop(move |_| {
-                        selected.set(index);
-                        open();
-                    })
-                    .style(move |s| {
-                        row_style(s, index == selected.get(), &config.get())
-                    })
+                        move || source.clone(),
+                        48.0,
+                        index,
+                        selected,
+                        open,
+                        config,
+                    )
                 }
             },
         )
         .style(|s| s.width_full().flex_col()),
     )
-    .ensure_visible(move || {
-        floem::kurbo::Rect::new(
-            0.0,
-            selected.get() as f64 * 26.0,
-            1.0,
-            (selected.get() + 1) as f64 * 26.0,
-        )
-    })
+    .ensure_visible(move || search_result_bounds(selected.get()))
     .style(move |s| {
         s.width_full()
             .min_height(0)
@@ -536,68 +511,43 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         Divider::new(config).into_view(),
         footer,
     ))
-    .style(move |s| {
-        dialog_surface(s, &config.get())
-            .width(715)
-            .max_width_pct(95.0)
-            .height(600)
-            .max_height_pct(94.0)
-            .padding(10)
-            .flex_col()
-            .gap(6)
-            .min_height(0)
-    });
-    let dialog = container(body)
-        .style(|s| s.absolute().size_full().items_center().justify_center())
-        .on_event_stop(EventListener::PointerDown, |_| {})
-        .on_event(EventListener::KeyDown, move |event| {
-            if let Event::KeyDown(key) = event {
-                if key.key.logical_key == Key::Named(NamedKey::Escape)
-                    && !busy.get_untracked()
-                {
-                    active.set(false);
-                    return EventPropagation::Stop;
-                }
-                if key.modifiers.is_empty()
-                    && matches!(
-                        key.key.logical_key,
-                        Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)
-                    )
-                    && let Some(index) = list_destination(
-                        &key.key.logical_key,
-                        selected.get_untracked(),
-                        results.with_untracked(|r| r.hits.len()),
-                    )
-                {
-                    selected.set(index);
-                    return EventPropagation::Stop;
-                }
+    .style(|s| s.padding(12).flex_col().gap(8));
+    let dialog = floating_search(
+        body,
+        active,
+        config,
+        None,
+        move || !busy.get_untracked(),
+        |s| s.width(728).height(590).max_height_pct(89.0),
+    )
+    .on_event(EventListener::KeyDown, move |event| {
+        if let Event::KeyDown(key) = event {
+            if key.key.logical_key == Key::Named(NamedKey::Escape)
+                && !busy.get_untracked()
+            {
+                active.set(false);
+                return EventPropagation::Stop;
             }
-            EventPropagation::Continue
-        });
+            if key.modifiers.is_empty()
+                && matches!(
+                    key.key.logical_key,
+                    Key::Named(NamedKey::ArrowUp | NamedKey::ArrowDown)
+                )
+                && let Some(index) = list_destination(
+                    &key.key.logical_key,
+                    selected.get_untracked(),
+                    results.with_untracked(|r| r.hits.len()),
+                )
+            {
+                selected.set(index);
+                return EventPropagation::Stop;
+            }
+        }
+        EventPropagation::Continue
+    });
     focus
         .bind_root(dialog, active, config)
         .style(|s| s.z_index(100))
-}
-
-pub(crate) fn row_style(
-    s: floem::style::Style,
-    selected: bool,
-    config: &crate::config::SparrowConfig,
-) -> floem::style::Style {
-    let selected_color = config.color(SparrowColor::PANEL_SELECTION_BACKGROUND);
-    let hovered = config.color(SparrowColor::PANEL_HOVERED_BACKGROUND);
-    s.height(26)
-        .width_full()
-        .padding_horiz(8)
-        .items_center()
-        .gap(8)
-        .border_radius(4)
-        .cursor(floem::style::CursorStyle::Pointer)
-        .apply_if(selected, |s| s.background(selected_color))
-        .hover(move |s| {
-            s.background(if selected { selected_color } else { hovered })
-        })
 }
 
 pub(crate) fn open_files(window: &WindowTabData) -> HashSet<PathBuf> {

@@ -355,9 +355,18 @@ impl ModalFocus {
         value: RwSignal<String>,
         config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
     ) -> impl View + use<> {
+        self.input_with_placeholder(value, config, "")
+    }
+
+    pub(crate) fn input_with_placeholder(
+        &self,
+        value: RwSignal<String>,
+        config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
+        placeholder: &str,
+    ) -> impl View + use<> {
         let submit = self.submit.clone();
         let picker_open = self.picker_open;
-        let input = text_input(value, config).on_enter(move || {
+        let input = text_input(value, config).placeholder(placeholder).on_enter(move || {
             if picker_open.get_untracked() {
                 return;
             }
