@@ -28,3 +28,17 @@ Current limitations and the native acceptance record are in [the dialog audit](v
 Dropdowns support arrow keys, Home/End, letter selection and Enter/Space. Escape dismisses the popup while retaining Settings and the previous value. Native directory choosers block the parent dialog until completion and restore field focus afterward.
 
 IDE and project scopes retain separate drafts when switching. Apply/OK validate and save pending changes from both scopes, then reload effective settings. Cancel discards both drafts. Use IDE value marks a project override for removal on Apply; it does not copy the IDE value into the project file. Project scope requires a local workspace. [Native scope acceptance](visual-checks/configuration-workflows.md).
+
+## Source-token regression tests
+
+Run `cargo test -p sparrow-app --lib --locked --offline settings_layout` to check the Settings styles without a display server.
+
+| Checked | Source values used by Sparrow |
+| --- | --- |
+| Dialog overlay | Preferred size uses the platform root minimum of 900 × 700. Sparrow also caps it to the available workbench. |
+| Sidebar | Default split is 20%. Clamping reserves the divider and button space and handles narrow and zero-width layouts. |
+| Search | Field height uses the declared 28 px minimum. Inner corner radius, icon gap, wrapper insets, and dark and light focus outline widths and colors are asserted. |
+| Navigation | Root and child indent, icon gap, square row corner, banner and history insets, and dark and light modified label colors are asserted. |
+| Footer | Compact padding, base button spacing, and button minimum dimensions are asserted. |
+
+Computed geometry and paint remain `UNVERIFIED`, including the effective Settings row heights, font metrics, wrapped footer height, outer window size and chrome, and native focus-ring path. The tests cover the declared style properties and split calculation. Remaining source questions are tracked in [the token audit](settings-tokens.toml).

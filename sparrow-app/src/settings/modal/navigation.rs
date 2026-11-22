@@ -10,6 +10,7 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{Memo, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
+    style::Style,
     views::{Decorators, dyn_stack, label, stack, svg},
 };
 
@@ -48,9 +49,6 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
     } = state;
     let [icon_width, icon_height] =
         tokens::size("navigation", "disclosure_icon_size");
-    let indent = tokens::length("navigation", "tree_depth_step");
-    let base = tokens::length("navigation", "tree_left_base");
-    let gap = tokens::length("navigation", "tree_icon_gap");
     let tree_focus = cx.create_rw_signal(None::<floem::ViewId>);
     let tree = dyn_stack(
         || PAGES.to_vec(),
@@ -118,20 +116,7 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
                         .text_ellipsis()
                         .flex_grow(1.0_f32)
                         .apply_if(depth == 0, |s| s.font_bold())
-                        .apply_if(modified, |s| {
-                            let color = match config.color.color_preference {
-                                ThemeColorPreference::Dark => tokens::color(
-                                    "dark",
-                                    "Tree.modifiedItemForeground",
-                                ),
-                                ThemeColorPreference::Light => tokens::color(
-                                    "light",
-                                    "Tree.modifiedItemForeground",
-                                ),
-                                _ => config.color(SparrowColor::EDITOR_LINK),
-                            };
-                            s.color(color)
-                        })
+                        .apply_if(modified, |s| modified_label(s, &config))
                 }),
             ))
             .on_click_stop(move |_| {
@@ -143,11 +128,7 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
             .style(move |s| {
                 let config = config.get();
                 let selected = page.get() == p;
-                s.height(25.0)
-                    .width_full()
-                    .padding_left(base + depth as f64 * indent)
-                    .gap(gap)
-                    .items_center()
+                tree_row_layout(s, depth)
                     .apply_if(!shown_pages.with(|pages| pages.contains(&p)), |s| {
                         s.hide()
                     })
@@ -257,6 +238,30 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
         })
 }
 
+fn tree_row_layout(style: Style, depth: usize) -> Style {
+    let indent = tokens::length("navigation", "tree_depth_step");
+    let base = tokens::length("navigation", "tree_left_base");
+    style
+        .height(25.0)
+        .width_full()
+        .padding_left(base + depth as f64 * indent)
+        .gap(tokens::length("navigation", "tree_icon_gap"))
+        .items_center()
+}
+
+fn modified_label(style: Style, config: &SparrowConfig) -> Style {
+    let color = match config.color.color_preference {
+        ThemeColorPreference::Dark => {
+            tokens::color("dark", "Tree.modifiedItemForeground")
+        }
+        ThemeColorPreference::Light => {
+            tokens::color("light", "Tree.modifiedItemForeground")
+        }
+        _ => config.color(SparrowColor::EDITOR_LINK),
+    };
+    style.color(color)
+}
+
 fn tree_destination(key: &Key, current: Page, pages: &[Page]) -> Option<Page> {
     let Some(index) = pages.iter().position(|&page| page == current) else {
         return match key {
@@ -302,6 +307,40 @@ pub(super) fn search_navigation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_layout_tree_uses_verified_indent_gap_and_square_corners() {
+        use floem::{
+            style::{BorderTopLeftRadius, ColGap, PaddingLeft, Width},
+            unit::{PxPct, PxPctAuto},
+        };
+
+        let root = tree_row_layout(Style::new(), 0);
+        let child = tree_row_layout(Style::new(), 1);
+        assert_eq!(root.get(PaddingLeft), PxPct::Px(3.0));
+        assert_eq!(child.get(PaddingLeft), PxPct::Px(19.0));
+        assert_eq!(child.get(ColGap), PxPct::Px(5.0));
+        assert_eq!(child.get(Width), PxPctAuto::Pct(100.0));
+        assert_eq!(child.get(BorderTopLeftRadius), PxPct::Px(0.0));
+    }
+
+    #[test]
+    fn settings_layout_modified_tree_label_uses_verified_theme_color() {
+        use floem::{peniko::Color, style::TextColor};
+
+        let mut config = SparrowConfig::default();
+        for (preference, rgb) in [
+            (ThemeColorPreference::Dark, [0x71, 0xA1, 0xFE]),
+            (ThemeColorPreference::Light, [0x2F, 0x5E, 0xB9]),
+        ] {
+            config.color.color_preference = preference.clone();
+            assert_eq!(
+                modified_label(Style::new(), &config).get(TextColor),
+                Some(Color::from_rgb8(rgb[0], rgb[1], rgb[2])),
+                "{preference:?}",
+            );
+        }
+    }
 
     #[test]
     fn keyboard_enters_filtered_results_when_current_page_is_hidden() {

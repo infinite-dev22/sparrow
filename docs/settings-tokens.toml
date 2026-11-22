@@ -1,5 +1,5 @@
 # Source audit of the IntelliJ Platform shipped with Android Studio 2026.2.2.
-# Reference data for comparison. Sparrow does not load this file at runtime.
+# Source audit and style tokens. Sparrow embeds this file and uses selected verified entries.
 # Insets are top, left, bottom, right. Dimensions use unscaled Swing logical pixels.
 # A value of "UNVERIFIED" is a sentinel. It is not a layout value.
 

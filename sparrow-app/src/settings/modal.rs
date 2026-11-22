@@ -4,10 +4,7 @@ use crate::widgets::modal_focus::ModalFocus;
 use crate::{
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     panel::kind::PanelKind,
-    widgets::{
-        Divider, breadcrumb_item, dialog_surface,
-        floating_search::search_field_with_style,
-    },
+    widgets::{Divider, breadcrumb_item, floating_search::search_field_with_style},
     window_tab::WindowTabData,
 };
 use floem::{
@@ -627,8 +624,6 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             )
     });
     let external_button = keyboard.control(external_button);
-    let [button_width, button_height] =
-        tokens::control_minimum_size("Button.minimumSize");
     let button_keyboard = keyboard.clone();
     let button = move |text: &'static str| {
         button_keyboard.control_if(
@@ -641,7 +636,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 },
                 config,
             )
-            .style(move |s| s.min_width(button_width).min_height(button_height)),
+            .style(layout::button_minimum),
             move || text != "Apply" || dirty.get_untracked(),
         )
     };
@@ -677,10 +672,6 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         )
         .style(move |s| s.apply_if(query.with(String::is_empty), |s| s.hide()));
     let icon_grid = tokens::size("search", "search_icon_grid");
-    let gap = tokens::length("search", "icon_gap");
-    let [_, search_height] = tokens::control_minimum_size("TextField.minimumSize");
-    let focus_width = tokens::length("dark", "Component.focusWidth");
-    let focus_color = tokens::color("dark", "Component.focusColor");
     let search = search_field_with_style(
         search.on_event(EventListener::KeyDown, move |event| {
             navigation::search_navigation(
@@ -696,16 +687,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         config,
         SparrowIcons::SEARCH,
         icon_grid,
-        move |s| {
-            s.height(search_height)
-                .padding_horiz(gap)
-                .gap(gap)
-                .border_radius(tokens::length(
-                    "search",
-                    "inner_outline_radius_at_1x",
-                ))
-        },
-        move |s| s.outline(focus_width).outline_color(focus_color),
+        layout::search_field,
+        move |s| layout::search_focus(s, &config.get()),
     );
     let sidebar = stack((
         container(search).style(|s| {
@@ -893,7 +876,6 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .background(config.get().color(SparrowColor::PANEL_CURRENT_BACKGROUND))
     });
 
-    let footer_gap = tokens::length("footer", "button_base_gap");
     let footer = stack((
         Divider::new(config)
             .thickness(tokens::length("footer", "divider_width") as f32)
@@ -921,37 +903,16 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 .on_click_stop(move |_| { save(); })
                 .disabled(move || !dirty.get()),
         ))
-        .style(move |s| {
-            tokens::padding(s, "footer", "compact_footer_insets")
-                .width_full()
-                .items_center()
-                .gap(footer_gap)
-                .flex_wrap(floem::style::FlexWrap::Wrap)
-        }),
+        .style(layout::footer_buttons),
     ))
     .style(|s| s.width_full().flex_col().flex_shrink(0.0_f32));
 
-    let [preferred_width, preferred_height] =
-        tokens::size("dialog", "root_minimum_size");
     let card = stack((
         title,
         layout::settings_split(sidebar, page_content, config),
         footer,
     ))
-    .style(move |s| {
-        let config = config.get();
-        // In a workbench overlay, clamp the requested size to the available viewport.
-        dialog_surface(s, &config)
-            .font_family(config.ui.font_family.clone())
-            .font_size(13.0)
-            .width(preferred_width)
-            .height(preferred_height)
-            .max_width_pct(96.0)
-            .max_height_pct(92.0)
-            .min_height(0.0)
-            .flex_col()
-            .border_radius(8.0)
-    });
+    .style(move |s| layout::dialog_card(s, &config.get()));
     let dialog = container(card)
         .on_event_stop(EventListener::PointerDown, |_| {})
         .style(move |s| {

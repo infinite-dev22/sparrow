@@ -4,14 +4,16 @@ use floem::{
     View,
     event::{Event, EventListener, EventPropagation},
     reactive::{ReadSignal, SignalGet, SignalUpdate, create_rw_signal, use_context},
-    style::CursorStyle,
+    style::{CursorStyle, FlexWrap, Style},
     views::{Decorators, empty, stack},
 };
 
 use crate::{
-    config::{SparrowConfig, color::SparrowColor},
+    config::{
+        SparrowConfig, color::SparrowColor, color_theme::ThemeColorPreference,
+    },
     db::SparrowDb,
-    widgets::{Divider, DividerVariant},
+    widgets::{Divider, DividerVariant, dialog_surface},
 };
 
 use super::tokens;
@@ -32,17 +34,7 @@ pub(super) fn settings_split(
     let available = create_rw_signal(0.0_f64);
     let anchor = create_rw_signal(None::<(f64, f64)>);
     let rule_width = tokens::length("navigation", "split_divider_width");
-    let [field_minimum, _] = tokens::control_minimum_size("TextField.minimumSize");
-    let [icon_width, _] = tokens::size("search", "search_icon_grid");
-    let [button_width, _] = tokens::control_minimum_size("Button.minimumSize");
-    let icon_gap = tokens::length("search", "icon_gap");
-    let sidebar_minimum = field_minimum + icon_width * 2.0 + icon_gap * 2.0;
-
-    let clamp_width = move |desired: f64, width: f64| {
-        let minimum = sidebar_minimum.min(width * default_proportion);
-        let maximum = (width - button_width - rule_width).max(minimum);
-        desired.clamp(minimum, maximum)
-    };
+    let clamp_width = sidebar_width_clamp(default_proportion, rule_width);
     let width = move || {
         let available = available.get();
         clamp_width(available * proportion.get(), available)
@@ -140,4 +132,194 @@ pub(super) fn settings_split(
 
 pub(super) fn sidebar_background(config: &SparrowConfig) -> floem::peniko::Color {
     config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND)
+}
+
+fn sidebar_width_clamp(
+    default_proportion: f64,
+    rule_width: f64,
+) -> impl Fn(f64, f64) -> f64 + Copy {
+    let [field_minimum, _] = tokens::control_minimum_size("TextField.minimumSize");
+    let [icon_width, _] = tokens::size("search", "search_icon_grid");
+    let [button_width, _] = tokens::control_minimum_size("Button.minimumSize");
+    let icon_gap = tokens::length("search", "icon_gap");
+    let sidebar_minimum = field_minimum + icon_width * 2.0 + icon_gap * 2.0;
+    move |desired, available| {
+        let minimum = sidebar_minimum.min(available * default_proportion);
+        let maximum = (available - button_width - rule_width).max(minimum);
+        desired.clamp(minimum, maximum)
+    }
+}
+
+pub(super) fn search_field(style: Style) -> Style {
+    let [_, height] = tokens::control_minimum_size("TextField.minimumSize");
+    let gap = tokens::length("search", "icon_gap");
+    style
+        .height(height)
+        .padding_horiz(gap)
+        .gap(gap)
+        .border_radius(tokens::length("search", "inner_outline_radius_at_1x"))
+}
+
+pub(super) fn search_focus(style: Style, config: &SparrowConfig) -> Style {
+    use ThemeColorPreference::*;
+    let (width, color) = match config.color.color_preference {
+        Dark => (
+            tokens::length("dark", "Component.focusWidth"),
+            tokens::color("dark", "Component.focusColor"),
+        ),
+        Light => (
+            tokens::length("light", "Component.focusWidth"),
+            tokens::color("light", "Component.focusColor"),
+        ),
+        HighContrastDark | HighContrastLight => (
+            tokens::length("search", "focus_width_fallback"),
+            config.color(SparrowColor::EDITOR_CARET),
+        ),
+    };
+    style.outline(width).outline_color(color)
+}
+
+pub(super) fn footer_buttons(style: Style) -> Style {
+    tokens::padding(style, "footer", "compact_footer_insets")
+        .width_full()
+        .items_center()
+        .gap(tokens::length("footer", "button_base_gap"))
+        .flex_wrap(FlexWrap::Wrap)
+}
+
+pub(super) fn button_minimum(style: Style) -> Style {
+    let [width, height] = tokens::control_minimum_size("Button.minimumSize");
+    style.min_width(width).min_height(height)
+}
+
+pub(super) fn dialog_card(style: Style, config: &SparrowConfig) -> Style {
+    let [width, height] = tokens::size("dialog", "root_minimum_size");
+    // Sparrow uses the source minimum as the preferred size of its overlay.
+    dialog_surface(style, config)
+        .font_family(config.ui.font_family.clone())
+        .font_size(13.0)
+        .width(width)
+        .height(height)
+        .max_width_pct(96.0)
+        .max_height_pct(92.0)
+        .min_height(0.0)
+        .flex_col()
+        .border_radius(8.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use floem::{
+        peniko::{Brush, Color},
+        style::{
+            BorderBottomLeftRadius, BorderBottomRightRadius, BorderTopLeftRadius,
+            BorderTopRightRadius, ColGap, Height, MaxHeight, MaxWidth, MinHeight,
+            MinWidth, Outline, OutlineColor, PaddingBottom, PaddingLeft,
+            PaddingRight, PaddingTop, RowGap, Width,
+        },
+        unit::{PxPct, PxPctAuto},
+    };
+
+    #[test]
+    fn settings_layout_card_uses_verified_size_as_preferred_overlay_size() {
+        let style = dialog_card(Style::new(), &SparrowConfig::default());
+        assert_eq!(style.get(Width), PxPctAuto::Px(900.0));
+        assert_eq!(style.get(Height), PxPctAuto::Px(700.0));
+        // Sparrow's workbench keeps the entire overlay inside smaller windows.
+        assert_eq!(style.get(MaxWidth), PxPctAuto::Pct(96.0));
+        assert_eq!(style.get(MaxHeight), PxPctAuto::Pct(92.0));
+    }
+
+    #[test]
+    fn settings_layout_search_uses_declared_minimum_height_insets_gap_and_radius() {
+        let field = search_field(Style::new());
+        assert_eq!(field.get(Height), PxPctAuto::Px(28.0));
+        assert_eq!(field.get(ColGap), PxPct::Px(2.0));
+        assert_eq!(field.get(PaddingLeft), PxPct::Px(2.0));
+        assert_eq!(field.get(PaddingRight), PxPct::Px(2.0));
+        assert_eq!(field.get(BorderTopLeftRadius), PxPct::Px(4.0));
+        assert_eq!(field.get(BorderTopRightRadius), PxPct::Px(4.0));
+        assert_eq!(field.get(BorderBottomLeftRadius), PxPct::Px(4.0));
+        assert_eq!(field.get(BorderBottomRightRadius), PxPct::Px(4.0));
+        assert_eq!(field.get(Outline).0.width, 0.0);
+
+        for (inset, expected) in [
+            ("search_container_insets", [7.0, 5.0, 6.0, 5.0]),
+            ("banner_insets", [11.0, 6.0, 0.0, 10.0]),
+            ("history_toolbar_insets", [8.0, 2.0, 0.0, 0.0]),
+        ] {
+            assert_eq!(
+                padding_edges(&tokens::padding(Style::new(), "navigation", inset)),
+                expected.map(PxPct::Px),
+                "{inset}",
+            );
+        }
+    }
+
+    #[test]
+    fn settings_layout_search_focus_uses_the_active_theme() {
+        let mut config = SparrowConfig::default();
+        for preference in [ThemeColorPreference::Dark, ThemeColorPreference::Light] {
+            config.color.color_preference = preference.clone();
+            let focused = search_focus(search_field(Style::new()), &config);
+            assert_eq!(focused.get(Outline).0.width, 2.0, "{preference:?}");
+            assert_eq!(
+                focused.get(OutlineColor),
+                Brush::Solid(Color::from_rgb8(0x38, 0x71, 0xE1)),
+                "{preference:?}",
+            );
+            assert_eq!(focused.get(Height), PxPctAuto::Px(28.0));
+        }
+
+        config.color.color_preference = ThemeColorPreference::HighContrastDark;
+        let caret = Color::from_rgb8(0xFF, 0xFF, 0xFF);
+        config
+            .color
+            .ui
+            .insert(SparrowColor::EDITOR_CARET.into(), caret);
+        let focused = search_focus(Style::new(), &config);
+        assert_eq!(focused.get(Outline).0.width, 2.0);
+        assert_eq!(focused.get(OutlineColor), Brush::Solid(caret));
+    }
+
+    #[test]
+    fn settings_layout_footer_uses_verified_insets_gap_and_button_minimum() {
+        let footer = footer_buttons(Style::new());
+        assert_eq!(
+            padding_edges(&footer),
+            [8.0, 12.0, 8.0, 12.0].map(PxPct::Px)
+        );
+        assert_eq!(footer.get(ColGap), PxPct::Px(12.0));
+        assert_eq!(footer.get(RowGap), PxPct::Px(12.0));
+
+        let button = button_minimum(Style::new());
+        assert_eq!(button.get(MinWidth), PxPctAuto::Px(72.0));
+        assert_eq!(button.get(MinHeight), PxPctAuto::Px(28.0));
+        assert_eq!(tokens::text("light", "Button.minimumSize"), "72,28");
+        assert_eq!(tokens::text("light", "TextField.minimumSize"), "49,28");
+    }
+
+    #[test]
+    fn settings_layout_split_preserves_default_and_clamps_dragging() {
+        let proportion =
+            tokens::proportion("navigation", "split_default_proportion");
+        let rule_width = tokens::length("navigation", "split_divider_width");
+        let clamp = sidebar_width_clamp(proportion, rule_width);
+
+        assert_eq!(clamp(900.0 * proportion, 900.0), 180.0);
+        assert_eq!(clamp(0.0, 900.0), 85.0);
+        assert_eq!(clamp(900.0, 900.0), 827.0);
+        assert_eq!(clamp(18.0, 90.0), 18.0);
+        assert_eq!(clamp(0.0, 0.0), 0.0);
+    }
+
+    fn padding_edges(style: &Style) -> [PxPct; 4] {
+        [
+            style.get(PaddingTop),
+            style.get(PaddingLeft),
+            style.get(PaddingBottom),
+            style.get(PaddingRight),
+        ]
+    }
 }
