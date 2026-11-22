@@ -263,7 +263,11 @@ command = "toggle_file_explorer_focus"
 
 [[keymaps]]
 key = "meta+shift+f"
-command = "toggle_search_focus"
+command = "find_in_files"
+
+[[keymaps]]
+key = "meta+shift+r"
+command = "replace_in_files"
 
 [[keymaps]]
 key = "meta+shift+x"

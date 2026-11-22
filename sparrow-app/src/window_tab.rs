@@ -214,6 +214,7 @@ pub struct WindowTabData {
     pub scaffold: crate::scaffold::State,
     pub formatting: crate::formatting::State,
     pub project_search: crate::project_search::State,
+    pub search_everywhere: crate::search_everywhere::State,
     pub git_actions: crate::git_actions::State,
     pub global_search: GlobalSearchData,
     pub call_hierarchy_data: CallHierarchyData,
@@ -710,6 +711,7 @@ impl WindowTabData {
             scaffold: crate::scaffold::State::new(cx),
             formatting: crate::formatting::State::new(cx),
             project_search: crate::project_search::State::new(cx),
+            search_everywhere: crate::search_everywhere::State::new(cx),
             git_actions: crate::git_actions::State::new(cx),
             global_search,
             call_hierarchy_data: CallHierarchyData {
@@ -1701,7 +1703,22 @@ impl WindowTabData {
                     }
                 }
             }
-            SearchEverywhere | FindInFiles | ReplaceInFiles => {self.project_search.open(cmd==ReplaceInFiles,cmd==SearchEverywhere,data.and_then(|d|serde_json::from_value(d).ok()));}
+            SearchEverywhere => {
+                if !self.project_search.is_busy() {
+                    floem::reactive::batch(|| {
+                        self.project_search.active.set(false);
+                        self.search_everywhere.open();
+                    });
+                }
+            }
+            FindInFiles | ReplaceInFiles => {
+                if !self.project_search.is_busy() {
+                    floem::reactive::batch(|| {
+                        self.search_everywhere.active.set(false);
+                        self.project_search.open(cmd == ReplaceInFiles, data.and_then(|d| serde_json::from_value(d).ok()));
+                    });
+                }
+            }
             ReformatCodeOptions => {
                 let target=data.and_then(|d|serde_json::from_value::<PathBuf>(d.clone()).ok()).or_else(||self.main_split.active_editor.get_untracked().and_then(|editor|editor.doc().content.with_untracked(|c|c.path().cloned()))).or_else(||self.workspace.path.clone());
                 if let Some(target)=target {self.formatting.open(target);}
@@ -3550,6 +3567,7 @@ impl WindowTabData {
             || self.scaffold.active.get_untracked()
             || self.formatting.active.get_untracked()
             || self.project_search.active.get_untracked()
+            || self.search_everywhere.active.get_untracked()
             || self.git_actions.active.get_untracked()
         {
             return false;

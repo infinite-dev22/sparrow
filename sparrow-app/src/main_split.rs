@@ -1464,6 +1464,31 @@ impl MainSplitData {
         direction: SplitDirection,
         editor_tab_id: EditorTabId,
     ) -> Option<()> {
+        self.split_tab(direction, editor_tab_id).map(|_| ())
+    }
+
+    pub(crate) fn jump_in_right_split(&self, mut location: EditorLocation) {
+        if let Some(current) = self.active_editor_tab.get_untracked() {
+            self.save_current_jump_location();
+            let right = self.split_move(SplitMoveDirection::Right, current)
+                .and_then(|_| self.active_editor_tab.get_untracked())
+                .filter(|right| *right != current)
+                .or_else(|| self.split_tab(SplitDirection::Vertical, current));
+            if let Some(right) = right {
+                self.active_editor_tab.set(Some(right));
+                location.same_editor_tab = true;
+                self.go_to_location(location, None);
+                return;
+            }
+        }
+        self.jump_to_location(location, None);
+    }
+
+    fn split_tab(
+        &self,
+        direction: SplitDirection,
+        editor_tab_id: EditorTabId,
+    ) -> Option<EditorTabId> {
         let editor_tabs = self.editor_tabs.get_untracked();
         let editor_tab = editor_tabs.get(&editor_tab_id).copied()?;
 
@@ -1480,7 +1505,7 @@ impl MainSplitData {
                 .map(|index| (index, split.children.len()))
         })?;
 
-        if split_direction == direction {
+        let created = if split_direction == direction {
             let new_editor_tab = editor_tab.with_untracked(|editor_tab| {
                 self.split_editor_tab(self.scope, split_id, editor_tab)
             })?;
@@ -1498,6 +1523,7 @@ impl MainSplitData {
                     ),
                 );
             });
+            new_editor_tab_id
         } else if children_len == 1 {
             let new_editor_tab = editor_tab.with_untracked(|editor_tab| {
                 self.split_editor_tab(self.scope, split_id, editor_tab)
@@ -1514,6 +1540,7 @@ impl MainSplitData {
                     SplitContent::EditorTab(new_editor_tab_id),
                 ));
             });
+            new_editor_tab_id
         } else {
             let new_split_id = SplitId::next();
 
@@ -1558,9 +1585,10 @@ impl MainSplitData {
                     SplitContent::Split(new_split_id),
                 );
             });
-        }
+            new_editor_tab_id
+        };
 
-        Some(())
+        Some(created)
     }
 
     fn split_editor_tab(

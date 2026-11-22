@@ -617,6 +617,8 @@ impl AppData {
                             } else if tab.file_refactor.active.get_untracked()&&!tab.file_refactor.is_busy(){Some(tab.file_refactor.active)
                             } else if tab.scaffold.active.get_untracked(){Some(tab.scaffold.active)
                             } else if tab.formatting.active.get_untracked()&&!tab.formatting.is_busy(){Some(tab.formatting.active)
+                            } else if tab.search_everywhere.active.get_untracked() {
+                                Some(tab.search_everywhere.active)
                             } else if tab.project_search.active.get_untracked()&&!tab.project_search.is_busy(){Some(tab.project_search.active)
                             } else if tab.git_actions.active.get_untracked()&&!tab.git_actions.is_busy(){Some(tab.git_actions.active)
                             } else {
@@ -743,11 +745,12 @@ fn window_tab(
     let scaffold_modal=window_tab_data.scaffold.active;
     let formatting_modal=window_tab_data.formatting.active;
     let search_modal=window_tab_data.project_search.active;
+    let everywhere_modal = window_tab_data.search_everywhere.active;
     let git_modal=window_tab_data.git_actions.active;
     let symbol_modal=window_tab_data.rename.active;
-    let interaction_layer_open=move ||symbol_modal.get()||file_modal.get()||scaffold_modal.get()||formatting_modal.get()||search_modal.get()||git_modal.get();
+    let interaction_layer_open=move ||symbol_modal.get()||file_modal.get()||scaffold_modal.get()||formatting_modal.get()||search_modal.get()||everywhere_modal.get()||git_modal.get();
     let modal_open =
-        move || log_viewer.get() || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || git_modal.get();
+        move || log_viewer.get() || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || everywhere_modal.get() || git_modal.get();
 
     let project_color = window_tab_data.common.project_color;
     let background_tasks_open = window_tab_data.common.background_tasks.open;
@@ -789,7 +792,7 @@ fn window_tab(
         signature_help(window_tab_data.clone()).disabled(modal_open),
         hover(window_tab_data.clone()).disabled(modal_open),
         crate::code_action_preview::view(window_tab_data.clone()).disabled(modal_open),
-        stack((rename(window_tab_data.clone()).disabled(modal_open),crate::file_refactor::view(window_tab_data.clone()),crate::scaffold::view(window_tab_data.clone()),crate::formatting::view(window_tab_data.clone()),crate::project_search::view(window_tab_data.clone()),crate::git_actions::view(window_tab_data.clone()))).style(move |s|s.absolute().size_full().apply_if(!interaction_layer_open(),|s|s.hide())),
+        stack((rename(window_tab_data.clone()).disabled(modal_open),crate::file_refactor::view(window_tab_data.clone()),crate::scaffold::view(window_tab_data.clone()),crate::formatting::view(window_tab_data.clone()),crate::project_search::view(window_tab_data.clone()),crate::search_everywhere::view(window_tab_data.clone()),crate::git_actions::view(window_tab_data.clone()))).style(move |s|s.absolute().size_full().apply_if(!interaction_layer_open(),|s|s.hide())),
 
         palette(window_tab_data.clone()).disabled(modal_open),
         stack((
@@ -1517,6 +1520,8 @@ pub fn window_menu(
                     data: None,
                 });
             }))
+            .entry(MenuItem::new("Find in Files…").action(move || workbench_command.send(FindInFiles)))
+            .entry(MenuItem::new("Replace in Files…").action(move || workbench_command.send(ReplaceInFiles)))
             .entry(MenuItem::new("Find Usages").action(move || {
                 workbench_command.send(FindReferences);
             }))

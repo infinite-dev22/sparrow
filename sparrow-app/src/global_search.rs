@@ -44,6 +44,8 @@ pub struct GlobalSearchData {
     pub search_result: RwSignal<IndexMap<PathBuf, SearchMatchData>>,
     pub main_split: MainSplitData,
     pub common: Rc<CommonData>,
+    published_query: RwSignal<Option<(String, bool, bool, bool)>>,
+    request_id: RwSignal<u64>,
 }
 
 impl KeyPressFocus for GlobalSearchData {
@@ -115,6 +117,8 @@ impl GlobalSearchData {
             search_result,
             main_split,
             common,
+            published_query: cx.create_rw_signal(None),
+            request_id: cx.create_rw_signal(0),
         };
 
         {
@@ -122,18 +126,36 @@ impl GlobalSearchData {
             let buffer = global_search.editor.doc().buffer;
             cx.create_effect(move |_| {
                 let pattern = buffer.with(|buffer| buffer.to_string());
+                let case_sensitive = global_search.common.find.case_sensitive(true);
+                let whole_word = global_search.common.find.whole_words.get();
+                let is_regex = global_search.common.find.is_regex.get();
+                global_search.request_id.update(|id| *id += 1);
+                let request = global_search.request_id.get_untracked();
+                if global_search.published_query.with_untracked(|published| {
+                    published
+                        .as_ref()
+                        .is_some_and(|(query, case, words, regex)| {
+                            query == &pattern
+                                && *case == case_sensitive
+                                && *words == whole_word
+                                && *regex == is_regex
+                        })
+                }) {
+                    return;
+                }
+                global_search.published_query.set(None);
                 if pattern.is_empty() {
                     global_search.search_result.update(|r| r.clear());
                     return;
                 }
-                let case_sensitive = global_search.common.find.case_sensitive(true);
-                let whole_word = global_search.common.find.whole_words.get();
-                let is_regex = global_search.common.find.is_regex.get();
                 let send = {
                     let global_search = global_search.clone();
                     create_ext_action(cx, move |result| {
-                        if let Ok(ProxyResponse::GlobalSearchResponse { matches }) =
-                            result
+                        if global_search.request_id.try_get_untracked()
+                            == Some(request)
+                            && let Ok(ProxyResponse::GlobalSearchResponse {
+                                matches,
+                            }) = result
                         {
                             global_search.update_matches(matches);
                         }
@@ -191,10 +213,51 @@ impl GlobalSearchData {
     }
 
     pub fn set_pattern(&self, pattern: String) {
+        self.published_query.set(None);
+        self.write_pattern(pattern);
+    }
+
+    fn write_pattern(&self, pattern: String) {
         let pattern_len = pattern.len();
         self.editor.doc().reload(Rope::from(pattern), true);
         self.editor
             .cursor()
             .update(|cursor| cursor.set_insert(Selection::region(0, pattern_len)));
+    }
+
+    pub(crate) fn publish_results(
+        &self,
+        pattern: String,
+        hits: &[crate::project_search::Hit],
+        case_sensitive: bool,
+        whole_words: bool,
+        regex: bool,
+    ) {
+        let mut matches = IndexMap::<PathBuf, Vec<SearchMatch>>::new();
+        for hit in hits {
+            matches
+                .entry(hit.path.clone())
+                .or_default()
+                .push(SearchMatch {
+                    line: hit.line,
+                    start: hit.span.start,
+                    end: hit.span.end,
+                    line_content: hit.text.to_string(),
+                });
+        }
+        floem::reactive::batch(|| {
+            self.request_id.update(|id| *id += 1);
+            self.published_query.set(Some((
+                pattern.clone(),
+                case_sensitive,
+                whole_words,
+                regex,
+            )));
+            self.common.find.set_case_sensitive(case_sensitive);
+            self.common.find.whole_words.set(whole_words);
+            self.common.find.is_regex.set(regex);
+            self.write_pattern(pattern);
+            self.update_matches(matches);
+        });
     }
 }
