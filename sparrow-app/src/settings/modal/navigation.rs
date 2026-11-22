@@ -1,16 +1,16 @@
 //! Keyboard and pointer navigation for the Settings page tree.
 
-use crate::config::{SparrowConfig, color::SparrowColor};
+use crate::config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons};
 use crate::widgets::modal_focus::{ModalFocus, list_destination};
 use floem::{
     View,
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
-    views::{Decorators, dyn_stack, label, stack},
+    views::{Decorators, dyn_stack, label, stack, svg},
 };
 
-use super::{PAGES, Page, navigate, visible_pages};
+use super::{PAGES, Page, navigate, tokens, visible_pages};
 use floem::reactive::ReadSignal;
 use std::sync::Arc;
 
@@ -25,28 +25,28 @@ pub(super) fn navigation_tree(
     appearance_expanded: RwSignal<bool>,
     languages_expanded: RwSignal<bool>,
 ) -> impl View + use<> {
+    let [icon_width, icon_height] =
+        tokens::size("navigation", "disclosure_icon_size");
+    let indent = tokens::length("navigation", "tree_depth_step");
+    let base = tokens::length("navigation", "tree_left_base");
+    let gap = tokens::length("navigation", "tree_icon_gap");
     let tree_focus = cx.create_rw_signal(None::<floem::ViewId>);
     let tree = dyn_stack(
         || PAGES.to_vec(),
         |(p, _, _)| *p as u8,
         move |(p, title, depth)| {
             stack((
-                label(move || {
-                    if p == Page::Overview {
-                        if appearance_expanded.get() {
-                            "⌄"
-                        } else {
-                            "›"
-                        }
-                    } else if p == Page::Languages {
-                        if languages_expanded.get() {
-                            "⌄"
-                        } else {
-                            "›"
-                        }
+                svg(move || {
+                    let expanded = match p {
+                        Page::Overview => appearance_expanded.get(),
+                        Page::Languages => languages_expanded.get(),
+                        _ => false,
+                    };
+                    config.get().ui_svg(if expanded {
+                        SparrowIcons::ITEM_OPENED
                     } else {
-                        ""
-                    }
+                        SparrowIcons::ITEM_CLOSED
+                    })
                 })
                 .on_click_stop(move |_| {
                     if p == Page::Overview {
@@ -76,8 +76,22 @@ pub(super) fn navigation_tree(
                         id.request_focus();
                     }
                 })
-                .style(|s| s.width(16.0)),
-                label(move || title).style(|s| s.flex_grow(1.0_f32)),
+                .style(move |s| {
+                    let color = if matches!(p, Page::Overview | Page::Languages) {
+                        config.get().color(SparrowColor::EDITOR_FOREGROUND)
+                    } else {
+                        floem::peniko::Color::TRANSPARENT
+                    };
+                    s.size(icon_width, icon_height)
+                        .color(color)
+                        .flex_shrink(0.0_f32)
+                }),
+                label(move || title).style(move |s| {
+                    s.min_width(0)
+                        .text_ellipsis()
+                        .flex_grow(1.0_f32)
+                        .apply_if(depth == 0, |s| s.font_bold())
+                }),
             ))
             .on_click_stop(move |_| {
                 navigate(p, page, history, index, query);
@@ -86,9 +100,12 @@ pub(super) fn navigation_tree(
                 }
             })
             .style(move |s| {
+                let config = config.get();
+                let selected = page.get() == p;
                 s.height(25.0)
                     .width_full()
-                    .padding_left((18 + depth * 16) as f32)
+                    .padding_left(base + depth as f64 * indent)
+                    .gap(gap)
                     .items_center()
                     .apply_if(
                         depth > 0
@@ -100,14 +117,23 @@ pub(super) fn navigation_tree(
                             && query.with(|q| q.is_empty()),
                         |s| s.hide(),
                     )
-                    .apply_if(page.get() == p, |s| {
+                    .apply_if(selected, |s| {
                         s.background(
-                            config
-                                .get()
-                                .color(SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND),
+                            config.color(SparrowColor::PANEL_SELECTION_BACKGROUND),
                         )
                     })
-                    .hover(|s| s.cursor(floem::style::CursorStyle::Pointer))
+                    .hover(|s| {
+                        s.cursor(floem::style::CursorStyle::Pointer).apply_if(
+                            !selected,
+                            |s| {
+                                s.background(
+                                    config.color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
+                                )
+                            },
+                        )
+                    })
             })
         },
     )

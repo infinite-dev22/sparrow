@@ -85,6 +85,34 @@ pub(crate) fn search_field(
     config: ReadSignal<Arc<SparrowConfig>>,
     icon: &'static str,
 ) -> impl View {
+    search_field_with_style(
+        input,
+        options,
+        config,
+        icon,
+        [15.0, 15.0],
+        |s| {
+            s.height(36)
+                .padding_left(10)
+                .padding_right(5)
+                .gap(8)
+                .border_radius(6)
+        },
+        move |s| s.border_color(config.get().color(SparrowColor::EDITOR_CARET)),
+    )
+}
+
+/// Shares the field structure while letting callers opt into their own dimensions
+/// and focus indicator.
+pub(crate) fn search_field_with_style(
+    input: impl View + 'static,
+    options: impl IntoView + 'static,
+    config: ReadSignal<Arc<SparrowConfig>>,
+    icon: &'static str,
+    icon_size: [f64; 2],
+    layout: impl Fn(Style) -> Style + 'static,
+    focus_style: impl Fn(Style) -> Style + 'static,
+) -> impl View {
     let focused = RwSignal::new(false);
     let input = input
         .on_event_cont(EventListener::FocusGained, move |_| focused.set(true))
@@ -93,13 +121,14 @@ pub(crate) fn search_field(
             s.flex_grow(1.0_f32)
                 .flex_basis(0)
                 .min_width(0)
+                .max_height_pct(100.0)
                 .height(30)
                 .padding_horiz(0)
                 .border(0)
         });
     stack((
         svg(move || config.get().ui_svg(icon)).style(move |s| {
-            s.size(15, 15)
+            s.size(icon_size[0], icon_size[1])
                 .flex_shrink(0.0_f32)
                 .pointer_events_none()
                 .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
@@ -109,20 +138,15 @@ pub(crate) fn search_field(
     ))
     .style(move |s| {
         let config = config.get();
-        s.width_full()
-            .height(36)
-            .flex_shrink(0.0_f32)
-            .items_center()
-            .padding_left(10)
-            .padding_right(5)
-            .gap(8)
-            .border_radius(6)
-            .background(config.color(SparrowColor::EDITOR_BACKGROUND))
-            .border(1)
-            .border_color(config.color(if focused.get() {
-                SparrowColor::EDITOR_CARET
-            } else {
-                SparrowColor::SPARROW_BORDER
-            }))
+        layout(
+            s.width_full()
+                .min_width(0)
+                .flex_shrink(0.0_f32)
+                .items_center()
+                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+                .border(1)
+                .border_color(config.color(SparrowColor::SPARROW_BORDER)),
+        )
+        .apply_if(focused.get(), &focus_style)
     })
 }

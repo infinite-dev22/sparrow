@@ -1,4 +1,5 @@
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -25,6 +26,7 @@ const WINDOW: &str = "window";
 const WORKSPACE_INFO: &str = "workspace_info";
 const WORKSPACE_FILES: &str = "workspace_files";
 const PANEL_ORDERS: &str = "panel_orders";
+const SETTINGS_SIDEBAR_PROPORTION: &str = "settings_sidebar_proportion";
 const DISABLED_VOLTS: &str = "disabled_volts";
 const RECENT_WORKSPACES: &str = "recent_workspaces";
 
@@ -36,6 +38,7 @@ pub enum SaveEvent {
     DisabledVolts(Vec<VoltID>),
     WorkspaceDisabledVolts(Arc<SparrowWorkspace>, Vec<VoltID>),
     PanelOrder(PanelOrder),
+    SettingsSidebarProportion(f64),
 }
 
 #[derive(Clone)]
@@ -103,6 +106,13 @@ impl SparrowDb {
                                 .insert_workspace_disabled_volts(workspace, volts)
                             {
                                 tracing::error!("{:?}", err);
+                            }
+                        }
+                        SaveEvent::SettingsSidebarProportion(proportion) => {
+                            if let Err(err) =
+                                local_db.insert_settings_sidebar_proportion(proportion)
+                            {
+                                tracing::error!("{err:?}");
                             }
                         }
                         SaveEvent::PanelOrder(order) => {
@@ -383,6 +393,32 @@ impl SparrowDb {
         // self.insert_unsaved_buffer(main_split)?;
 
         Ok(())
+    }
+
+    pub(crate) fn settings_sidebar_proportion(&self) -> Result<f64> {
+        let value =
+            std::fs::read_to_string(self.folder.join(SETTINGS_SIDEBAR_PROPORTION))?;
+        let proportion = value.trim().parse::<f64>()?;
+        if !proportion.is_finite() || proportion <= 0.0 || proportion >= 1.0 {
+            return Err(anyhow!("invalid Settings sidebar proportion"));
+        }
+        Ok(proportion)
+    }
+
+    fn insert_settings_sidebar_proportion(&self, proportion: f64) -> Result<()> {
+        let mut temp = tempfile::NamedTempFile::new_in(&self.folder)?;
+        write!(temp, "{proportion}")?;
+        temp.persist(self.folder.join(SETTINGS_SIDEBAR_PROPORTION))?;
+        Ok(())
+    }
+
+    pub(crate) fn save_settings_sidebar_proportion(&self, proportion: f64) {
+        if let Err(err) = self
+            .save_tx
+            .send(SaveEvent::SettingsSidebarProportion(proportion))
+        {
+            tracing::error!("{err:?}");
+        }
     }
 
     pub fn get_panel_orders(&self) -> Result<PanelOrder> {

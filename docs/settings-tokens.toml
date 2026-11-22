@@ -62,6 +62,7 @@ release_build = 16730706
 "general_page_content_insets" = { value = "UNVERIFIED", source = "platform/platform-impl/src/com/intellij/openapi/options/newEditor/ConfigurableEditor.java:myCardPanel", status = "UNVERIFIED", note = "Each configurable owns its page layout. The group overview does not establish a universal value." }
 
 [search]
+"clear_action_label" = { value = "Clear", source = "platform/platform-api/resources/messages/IdeBundle.properties:action.AnAction.text.clear", status = "verified", note = "Generic platform action label used by Sparrow's clear affordance." }
 "icon_gap" = { value = 2, source = "platform/platform-impl/src/com/intellij/ide/ui/laf/darcula/ui/TextFieldWithPopupHandlerUI.java:122", status = "verified", note = "getSearchIconGap and getClearIconGap both return this value." }
 "unscaled_border_insets" = { value = [3, 3, 3, 3], source = "platform/platform-impl/src/com/intellij/ide/ui/laf/darcula/ui/DarculaTextBorder.java:49", status = "verified" }
 "compact_border_insets" = { value = [2, 3, 2, 3], source = "platform/platform-impl/src/com/intellij/ide/ui/laf/darcula/ui/DarculaTextBorder.java:49", status = "verified" }
