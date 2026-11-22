@@ -414,8 +414,8 @@ impl SparrowConfig {
 
         let fg = self.color(SparrowColor::EDITOR_FOREGROUND).to_rgba8();
         let bg = self.color(SparrowColor::EDITOR_BACKGROUND).to_rgba8();
-        let is_light = fg.r as u32 + fg.g as u32 + fg.b as u32
-            > bg.r as u32 + bg.g as u32 + bg.b as u32;
+        let is_light = bg.r as u32 + bg.g as u32 + bg.b as u32
+            > fg.r as u32 + fg.g as u32 + fg.b as u32;
         let high_contrast = self.color_theme.high_contrast.unwrap_or(false);
         self.color.color_preference = match (is_light, high_contrast) {
             (true, true) => ThemeColorPreference::HighContrastLight,
@@ -1190,6 +1190,42 @@ fn settings_transaction(
         table.insert(&key, toml_edit::Item::Value(value));
     }
     Ok(document.to_string())
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+
+    #[test]
+    fn settings_theme_preference_matches_the_resolved_palette() {
+        use ThemeColorPreference::*;
+
+        for (source, light) in [
+            (DEFAULT_LIGHT_THEME, true),
+            (DEFAULT_DARK_THEME, false),
+            (DEFAULT_ISLANDS_DARK_THEME, false),
+        ] {
+            let (name, theme) =
+                SparrowConfig::load_color_theme_from_str(source).unwrap();
+            let mut config = DEFAULT_SPARROW_CONFIG.clone();
+            config.color_theme = theme.get("color-theme").unwrap();
+            for high_contrast in [false, true] {
+                config.color_theme.high_contrast = Some(high_contrast);
+                config.resolve_colors(Some(&DEFAULT_SPARROW_CONFIG));
+                assert!(
+                    matches!(
+                        (light, high_contrast, &config.color.color_preference),
+                        (true, false, Light)
+                            | (false, false, Dark)
+                            | (true, true, HighContrastLight)
+                            | (false, true, HighContrastDark)
+                    ),
+                    "{name}, high contrast {high_contrast}: {:?}",
+                    config.color.color_preference,
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
