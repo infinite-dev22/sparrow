@@ -1,5 +1,6 @@
 use sparrow_core::rope_text_pos::RopeTextPosition;
 use std::{
+    cell::Cell,
     collections::{BTreeMap, HashSet},
     env,
     path::{Path, PathBuf},
@@ -554,6 +555,7 @@ impl WindowTabData {
                     panels: cx.create_rw_signal(panel_order),
                     styles: cx.create_rw_signal(styles),
                     size: cx.create_rw_signal(i.panel.size.clone()),
+                    resizing: cx.create_rw_signal(false),
                     hidden_styles: cx.create_rw_signal(None),
                     last_opened: cx.create_rw_signal(Some(PanelKind::FileExplorer)),
                     available_size: panel_available_size,
@@ -735,24 +737,54 @@ impl WindowTabData {
         };
 
         {
-            let data=window_tab_data.clone();let database=db.clone();
-            let revision=Rc::new(std::cell::Cell::new(0u64));
-            cx.create_effect(move |_|{
-                if let Some(editor)=data.main_split.active_editor.get() {editor.cursor().get();editor.viewport().get();}
-                data.main_split.editor_tabs.with(|tabs|{for tab in tabs.values(){tab.get();}});
-                data.main_split.docs.with(|docs|{for doc in docs.values(){doc.buffer.with(|buffer|buffer.rev());}});
-                data.panel.styles.get();data.panel.size.get();data.common.breakpoints.get();data.common.bookmarks.get();data.common.document_views.get();
-                data.source_control.editor.doc().buffer.with(|buffer|buffer.rev());data.source_control.amend.get();data.active_run_config_idx.get();data.run_configs.get();
-                let next=revision.get()+1;revision.set(next);
-                let revision=revision.clone();let database=database.clone();let workspace=(*data.workspace).clone();
-                let data=data.clone();
-                floem::action::exec_after(std::time::Duration::from_millis(800),move |_|{
-                    // Editor/tab removal updates several signals in sequence. Take
-                    // the snapshot after the transition, never inside its effects.
-                    if revision.get()==next && data.main_split.splits.try_get_untracked().is_some() {
-                        if let Some(info) = data.workspace_info() { database.save_workspace_info(workspace,info); }
+            let data = window_tab_data.clone();
+            let database = db.clone();
+            let timer = Cell::new(None::<TimerToken>);
+            cx.create_effect(move |_| {
+                if let Some(pending) = timer.take() {
+                    pending.cancel();
+                }
+                // Layout and viewport signals can change every frame during a drag.
+                if data.panel.resizing.get() {
+                    return;
+                }
+                if let Some(editor) = data.main_split.active_editor.get() {
+                    editor.cursor().track();
+                    editor.viewport().track();
+                }
+                data.main_split.editor_tabs.with(|tabs| {
+                    for tab in tabs.values() {
+                        tab.track();
                     }
                 });
+                data.main_split.docs.with(|docs| {
+                    for doc in docs.values() {
+                        doc.buffer.track();
+                    }
+                });
+                data.panel.styles.track();
+                data.panel.size.track();
+                data.common.breakpoints.track();
+                data.common.bookmarks.track();
+                data.common.document_views.track();
+                data.source_control.editor.doc().buffer.track();
+                data.source_control.amend.track();
+                data.active_run_config_idx.track();
+                data.run_configs.track();
+
+                let database = database.clone();
+                let data = data.clone();
+                timer.set(Some(floem::action::exec_after(
+                    std::time::Duration::from_millis(800),
+                    move |_| {
+                        // Snapshot editor and panel state after their transitions settle.
+                        if data.main_split.splits.try_get_untracked().is_some()
+                            && let Some(info) = data.workspace_info()
+                        {
+                            database.save_workspace_info((*data.workspace).clone(), info);
+                        }
+                    },
+                )));
             });
         }
 

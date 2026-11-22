@@ -21,6 +21,7 @@ use crate::main_split::view::main_split;
 pub(super) fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
     let workbench_size = window_tab_data.common.workbench_size;
     let main_split_width = window_tab_data.main_split.width;
+    let panel = window_tab_data.panel.clone();
     stack((
         tool_window_stripe(window_tab_data.clone(), true),
         stack((
@@ -40,12 +41,15 @@ pub(super) fn workbench(window_tab_data: Rc<WindowTabData>) -> impl View {
                     PanelContainerPosition::Right,
                 ),
             ))
-            .style(|s| {
+            .style(move |s| {
+                let bottom_maximized = panel.panel_bottom_maximized(true)
+                    && panel.is_container_shown(&PanelContainerPosition::Bottom, true);
                 s.width_full()
                     .flex_grow(1.0_f32)
                     .flex_basis(0.0)
                     .min_height(0.0)
                     .gap(3.0)
+                    .apply_if(bottom_maximized, |s| s.hide())
             }),
             panel_container_view(
                 window_tab_data.clone(),

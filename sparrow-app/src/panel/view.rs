@@ -14,6 +14,7 @@ use crate::config::{SparrowConfig, color::SparrowColor};
 
 mod dock;
 mod island;
+mod resize;
 mod sections;
 mod stripe;
 

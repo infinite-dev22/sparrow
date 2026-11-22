@@ -83,7 +83,7 @@ pub enum PanelSection {
     ProblemsSidebar,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct PanelSize {
     pub left: f64,
     pub left_split: f64,
@@ -125,6 +125,7 @@ pub struct PanelData {
     pub panels: RwSignal<PanelOrder>,
     pub styles: RwSignal<im::HashMap<PanelPosition, PanelStyle>>,
     pub size: RwSignal<PanelSize>,
+    pub(crate) resizing: RwSignal<bool>,
     pub(crate) hidden_styles:
         RwSignal<Option<im::HashMap<PanelPosition, PanelStyle>>>,
     pub last_opened: RwSignal<Option<PanelKind>>,
@@ -212,6 +213,7 @@ impl PanelData {
             panels,
             styles,
             size,
+            resizing: cx.create_rw_signal(false),
             hidden_styles: cx.create_rw_signal(None),
             last_opened: cx.create_rw_signal(Some(PanelKind::FileExplorer)),
             available_size,

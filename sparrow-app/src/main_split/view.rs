@@ -7,10 +7,7 @@ use crate::{
     editor_tab::EditorTabData,
     id::{EditorTabId, SplitId},
     main_split::{SplitContent, SplitData, SplitDirection},
-    panel::{
-        position::PanelContainerPosition,
-        view::{ISLAND_RADIUS, island_corners},
-    },
+    panel::view::{ISLAND_RADIUS, island_corners},
     plugin::PluginData,
     window_tab::WindowTabData,
 };
@@ -21,7 +18,7 @@ use floem::{
     reactive::{
         ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal,
     },
-    style::{CursorStyle, Display, FlexDirection, JustifyContent, Position},
+    style::{CursorStyle, FlexDirection, JustifyContent, Position},
     unit::PxPctAuto,
     views::{Decorators, container, dyn_stack, empty, stack, text},
 };
@@ -429,11 +426,9 @@ pub(crate) fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
         .unwrap()
         .read_only();
     let config = window_tab_data.main_split.common.config;
-    let panel = window_tab_data.panel.clone();
     let plugin = window_tab_data.plugin.clone();
     let dragging: RwSignal<Option<(RwSignal<usize>, EditorTabId)>> =
         create_rw_signal(None);
-    let hidden_panel = panel.clone();
     let split = split_list(
         root_split,
         window_tab_data.clone(),
@@ -452,12 +447,8 @@ pub(crate) fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
     stack((split, island_corners(config, window_tab_data.common.project_color)))
         .style(move |s| {
             let config = config.get();
-            let is_hidden = hidden_panel.panel_bottom_maximized(true)
-                && hidden_panel
-                    .is_container_shown(&PanelContainerPosition::Bottom, true);
             s.background(config.color(SparrowColor::EDITOR_BACKGROUND))
                 .border_radius(ISLAND_RADIUS)
-                .apply_if(is_hidden, |s| s.display(Display::None))
                 .width_full()
                 .flex_grow(1.0f32)
                 .flex_basis(0.0)
