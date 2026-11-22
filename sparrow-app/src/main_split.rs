@@ -2379,7 +2379,9 @@ impl MainSplitData {
                 batch(|| {
                     let snapshots = targets
                         .iter()
-                        .map(|(_, doc, _)| crate::workspace_undo::snapshot(doc.clone()))
+                        .map(|(file, doc, _)| {
+                            crate::workspace_undo::snapshot(doc.clone(), &file.edits)
+                        })
                         .collect();
                     for (file, doc, _) in targets.iter() {
                         split.apply_document_edits(doc, &file.edits);
