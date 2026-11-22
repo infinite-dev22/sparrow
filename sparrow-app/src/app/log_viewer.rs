@@ -1,27 +1,30 @@
 //! Read-only viewer for Sparrow's rolling logs and crash reports.
 
 use std::{
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use floem::{
     View,
     event::EventListener,
-    ext_event::create_ext_action,
+    ext_event::{create_ext_action, create_trigger, register_ext_trigger},
     reactive::{
         SignalGet, SignalUpdate, SignalWith, batch, create_effect, create_memo,
         create_rw_signal,
     },
-    views::{
-        Decorators, container,
-        editor::{core::register::Clipboard, text::SystemClipboard},
-        label, stack, virtual_stack,
-    },
+    views::{Decorators, container, label, stack, virtual_stack},
 };
+use notify::{PollWatcher, RecursiveMode, Watcher};
 use sparrow_core::directory::Directory;
 
 use super::logging::{CrashEntry, CrashReport};
@@ -30,7 +33,8 @@ use crate::{
     config::color::SparrowColor,
     popup_menu::{Menu, MenuItem, PopupMenuExt},
     widgets::{
-        ButtonKind, button, dialog_surface, sparrow_scroll, text_input::text_input,
+        ButtonKind, Divider, button, dialog_surface, sparrow_scroll,
+        text_input::text_input,
     },
     window_tab::WindowTabData,
 };
@@ -38,37 +42,11 @@ use crate::{
 const MAX_BYTES: u64 = 512 * 1024;
 const MAX_ENTRIES: usize = 2500;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Level {
-    Other,
-    Trace,
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
+mod details;
+mod entry;
 
-impl Level {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Other => "All levels",
-            Self::Trace => "TRACE",
-            Self::Debug => "DEBUG",
-            Self::Info => "INFO",
-            Self::Warn => "WARN",
-            Self::Error => "ERROR",
-        }
-    }
-}
-
-#[derive(PartialEq)]
-struct Entry {
-    time: String,
-    level: Level,
-    summary: String,
-    raw: String,
-    searchable: String,
-}
+use details::DetailTab;
+use entry::{Entry, Level, parse_entries};
 
 #[derive(Default)]
 struct Snapshot {
@@ -76,74 +54,6 @@ struct Snapshot {
     file: Option<String>,
     entries: Vec<Arc<Entry>>,
     limited: bool,
-}
-
-fn parse_header(
-    line: &str,
-) -> Option<(chrono::DateTime<chrono::FixedOffset>, Level, &str)> {
-    let (timestamp, rest) = line.split_once(' ')?;
-    let timestamp = chrono::DateTime::parse_from_rfc3339(timestamp).ok()?;
-    let (level, message) = rest.trim_start().split_once(' ')?;
-    let level = match level {
-        "TRACE" => Level::Trace,
-        "DEBUG" => Level::Debug,
-        "INFO" => Level::Info,
-        "WARN" => Level::Warn,
-        "ERROR" => Level::Error,
-        _ => return None,
-    };
-    let message = message.trim_start();
-    let summary = message.split_once(": ").map_or(message, |(_, body)| {
-        match body.split_once(": ") {
-            Some((location, text))
-                if location.rsplit_once(':').is_some_and(|(file, line)| {
-                    (file.contains('/')
-                        || file.contains('\\')
-                        || file.ends_with(".rs"))
-                        && line.parse::<u32>().is_ok()
-                }) =>
-            {
-                text
-            }
-            _ => body,
-        }
-    });
-    Some((timestamp, level, summary))
-}
-
-fn parse_entries(input: &str) -> Vec<Entry> {
-    let mut entries: Vec<Entry> = Vec::new();
-    for line in input.lines() {
-        // Keep the viewer and clipboard usable when a tool emitted control codes.
-        let line: String = line
-            .chars()
-            .filter(|c| !c.is_control() || *c == '\t')
-            .collect();
-        if let Some((time, level, summary)) = parse_header(&line) {
-            entries.push(Entry {
-                time: time.format("%H:%M:%S%.3f").to_string(),
-                level,
-                summary: summary.into(),
-                raw: line,
-                searchable: String::new(),
-            });
-        } else if let Some(entry) = entries.last_mut() {
-            entry.raw.push('\n');
-            entry.raw.push_str(&line);
-        } else {
-            entries.push(Entry {
-                time: String::new(),
-                level: Level::Other,
-                summary: line.clone(),
-                raw: line,
-                searchable: String::new(),
-            });
-        }
-    }
-    for entry in &mut entries {
-        entry.searchable = entry.raw.to_lowercase();
-    }
-    entries
 }
 
 fn file_stamp(name: &str) -> Option<(chrono::NaiveDate, bool)> {
@@ -274,15 +184,77 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     let minimum_level = create_rw_signal(Level::Other);
     let query = create_rw_signal(String::new());
     let refresh = create_rw_signal(0_u64);
+    let live = create_rw_signal(false);
     let generation = create_rw_signal(0_u64);
     let loading = create_rw_signal(false);
     let error = create_rw_signal(None::<String>);
     let selection = create_rw_signal(None::<Arc<Entry>>);
+    let detail_tab = create_rw_signal(DetailTab::Overview);
+    let body_width = create_rw_signal(0.0);
     let target_row = create_rw_signal(None::<usize>);
     let search = text_input(query, config)
         .placeholder("Search log messages")
         .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0));
     let search_id = search.id();
+
+    let watcher = Rc::new(RefCell::new(None::<PollWatcher>));
+    let change = create_trigger();
+    let dirty = Arc::new(AtomicBool::new(false));
+    let dirty_on_ui = dirty.clone();
+    create_effect(move |_| {
+        change.track();
+        if dirty_on_ui.swap(false, Ordering::Relaxed)
+            && visible.get_untracked()
+            && live.get_untracked()
+        {
+            refresh.update(|count| *count += 1);
+        }
+    });
+    let active_watcher = watcher.clone();
+    create_effect(move |_| {
+        active_watcher.borrow_mut().take();
+        if !visible.get() || !live.get() {
+            return;
+        }
+        let result = (|| {
+            let dir = Directory::logs_directory().ok_or_else(|| {
+                "Sparrow's log directory is unavailable.".to_owned()
+            })?;
+            let dirty = dirty.clone();
+            let mut watcher = PollWatcher::new(
+                move |event: notify::Result<notify::Event>| {
+                    if event.is_ok_and(|event| {
+                        event.paths.iter().any(|path| {
+                            path.file_name()
+                                .and_then(|name| name.to_str())
+                                .and_then(file_stamp)
+                                .is_some()
+                        })
+                    }) && !dirty.swap(true, Ordering::Relaxed)
+                    {
+                        // Floem delivers this trigger on the UI thread.
+                        register_ext_trigger(change);
+                    }
+                },
+                notify::Config::default().with_poll_interval(Duration::from_secs(2)),
+            )
+            .map_err(|error| error.to_string())?;
+            watcher
+                .watch(&dir, RecursiveMode::NonRecursive)
+                .map_err(|error| error.to_string())?;
+            Ok::<_, String>(watcher)
+        })();
+        match result {
+            Ok(watcher) => {
+                active_watcher.replace(Some(watcher));
+                refresh.update(|count| *count += 1);
+            }
+            Err(problem) => {
+                live.set(false);
+                error.set(Some(format!("Could not start live updates. {problem}")));
+            }
+        }
+    });
 
     create_effect(move |_| {
         if !visible.get() {
@@ -304,9 +276,44 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                 }
                 loading.set(false);
                 match result {
-                    Ok((data, index)) => batch(|| {
-                        selection
-                            .set(index.map(|index| data.entries[index].clone()));
+                    Ok((mut data, index)) => batch(|| {
+                        // Keep the active row and its view when a live refresh
+                        // returns records already in the current snapshot.
+                        snapshot.with_untracked(|previous| {
+                            if previous.file == data.file {
+                                let mut cached = HashMap::<_, VecDeque<_>>::new();
+                                for row in &previous.entries {
+                                    cached
+                                        .entry(row.raw.as_str())
+                                        .or_default()
+                                        .push_back(row);
+                                }
+                                for row in &mut data.entries {
+                                    if let Some(old) = cached
+                                        .get_mut(row.raw.as_str())
+                                        .and_then(VecDeque::pop_front)
+                                    {
+                                        *row = old.clone();
+                                    }
+                                }
+                            }
+                        });
+                        let selected = index
+                            .map(|index| data.entries[index].clone())
+                            .or_else(|| {
+                                selection.get_untracked().filter(|selected| {
+                                    data.entries
+                                        .iter()
+                                        .any(|entry| Arc::ptr_eq(entry, selected))
+                                })
+                            });
+                        if selection.with_untracked(|old| match (old, &selected) {
+                            (Some(old), Some(new)) => !Arc::ptr_eq(old, new),
+                            (None, None) => false,
+                            _ => true,
+                        }) {
+                            selection.set(selected);
+                        }
                         error.set(None);
                         snapshot.set(data);
                         target_row.set(index);
@@ -340,6 +347,10 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             if crash_report.with(Option::is_some) {
                 query.set(String::new());
                 minimum_level.set(Level::Other);
+                detail_tab.set(DetailTab::Technical);
+                live.set(false);
+            } else {
+                detail_tab.set(DetailTab::Overview);
             }
             search_id.request_focus();
         }
@@ -359,6 +370,20 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                 .collect::<im::Vector<_>>()
         })
     });
+    let reveal = move |entry: Arc<Entry>| {
+        batch(|| {
+            if !filtered.with_untracked(|rows| {
+                rows.iter().any(|(_, row)| Arc::ptr_eq(row, &entry))
+            }) {
+                query.set(String::new());
+                minimum_level.set(Level::Other);
+            }
+            selection.set(Some(entry.clone()));
+        });
+        target_row.set(filtered.with_untracked(|rows| {
+            rows.iter().position(|(_, row)| Arc::ptr_eq(row, &entry))
+        }));
+    };
     let rows = virtual_stack(
         move || filtered.get(),
         |(index, entry)| (*index, Arc::as_ptr(entry) as usize),
@@ -382,21 +407,22 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                     }
                 })
                 .style(move |s| {
-                    let accent = match level {
-                        Level::Error => SparrowColor::SPARROW_ERROR,
-                        Level::Warn => SparrowColor::SPARROW_WARN,
-                        Level::Info => SparrowColor::EDITOR_LINK,
-                        _ => SparrowColor::PANEL_FOREGROUND_DIM,
-                    };
                     s.width(58.0)
                         .flex_shrink(0.0_f32)
                         .font_bold()
-                        .color(config.get().color(accent))
+                        .color(config.get().color(level.color()))
                 }),
                 label(move || summary.clone())
                     .style(|s| s.min_width(0.0).text_ellipsis()),
             ))
-            .on_click_stop(move |_| selection.set(Some(selected.clone())))
+            .on_click_stop(move |_| {
+                batch(|| {
+                    if selection.with_untracked(Option::is_none) {
+                        detail_tab.set(DetailTab::Overview);
+                    }
+                    selection.set(Some(selected.clone()));
+                });
+            })
             .style(move |s| {
                 let cfg = config.get();
                 s.height(24.0)
@@ -439,6 +465,55 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                 .background(config.get().color(SparrowColor::EDITOR_BACKGROUND))
         });
 
+    let list = stack((
+        stack((
+            label(|| "Time UTC").style(|s| s.width(94.0).flex_shrink(0.0_f32)),
+            label(|| "Level").style(|s| s.width(58.0).flex_shrink(0.0_f32)),
+            label(|| "Message").style(|s| s.min_width(0.0)),
+        ))
+        .style(move |s| {
+            s.width_full()
+                .height(26.0)
+                .items_center()
+                .padding_horiz(8.0)
+                .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+        }),
+        Divider::new(config).into_view(),
+        row_list,
+    ))
+    .style(|s| {
+        s.flex_col()
+            .flex_grow(1.0_f32)
+            .flex_basis(0.0)
+            .min_height(0.0)
+            .min_width(0.0)
+    });
+    let inspection = stack((
+        list,
+        details::pane(
+            selection,
+            create_memo(move |_| snapshot.with(|data| data.entries.clone())),
+            create_memo(move |_| snapshot.with(|data| data.file.clone())),
+            detail_tab,
+            query,
+            reveal,
+            config,
+        )
+        .style(move |s| {
+            s.flex_grow(1.0_f32)
+                .flex_basis(0.0)
+                .apply_if(selection.with(Option::is_none), |s| s.hide())
+        }),
+    ))
+    .on_resize(move |rect| body_width.set(rect.width()))
+    .style(move |s| {
+        s.width_full()
+            .flex_grow(1.0_f32)
+            .flex_basis(0.0)
+            .min_height(0.0)
+            .gap(10.0)
+            .apply_if(body_width.get() < 680.0, |s| s.flex_col())
+    });
     let body = stack((
         stack((
             label(|| "IDE Logs")
@@ -466,9 +541,16 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             )
             .ide_popout_menu(move || {
                 snapshot.with(|data| {
-                    data.files
-                        .iter()
-                        .fold(Menu::new("Log files"), |menu, file| {
+                    data.files.iter().fold(
+                        Menu::new("Log files").entry(
+                            MenuItem::new("Latest IDE log").action(move || {
+                                batch(|| {
+                                    crash_report.set(None);
+                                    chosen_file.set(None);
+                                });
+                            }),
+                        ),
+                        |menu, file| {
                             let file = file.clone();
                             menu.entry(MenuItem::new(file.clone()).action(
                                 move || {
@@ -478,25 +560,46 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                                     })
                                 },
                             ))
-                        })
+                        },
+                    )
                 })
             }),
             button(
-                move || minimum_level.get().label(),
+                move || match minimum_level.get() {
+                    Level::Other => "All levels".to_owned(),
+                    level => format!("{} and above", level.label()),
+                },
                 ButtonKind::Outlined,
                 config,
             )
             .ide_popout_menu(move || {
-                [Level::Other, Level::Info, Level::Warn, Level::Error]
-                    .into_iter()
-                    .fold(Menu::new("Minimum level"), |menu, level| {
+                Level::ALL.into_iter().fold(
+                    Menu::new("Minimum level"),
+                    |menu, level| {
                         menu.entry(
-                            MenuItem::new(level.label())
-                                .action(move || minimum_level.set(level)),
+                            MenuItem::new(if level == Level::Other {
+                                "All levels"
+                            } else {
+                                level.label()
+                            })
+                            .action(move || minimum_level.set(level)),
                         )
-                    })
+                    },
+                )
             }),
             search,
+            button(
+                move || {
+                    if live.get() {
+                        "Pause live"
+                    } else {
+                        "Start live"
+                    }
+                },
+                ButtonKind::Outlined,
+                config,
+            )
+            .on_click_stop(move |_| live.update(|active| *active = !*active)),
             button(|| "Refresh", ButtonKind::Outlined, config)
                 .on_click_stop(move |_| refresh.update(|count| *count += 1)),
         ))
@@ -510,7 +613,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
             if let Some(error) = error.get() {
                 return error;
             }
-            if loading.get() {
+            if loading.get() && snapshot.with(|data| data.file.is_none()) {
                 return "Reading logs…".into();
             }
             if let Some(problem) = super::logging::status() {
@@ -534,39 +637,14 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
         .style(move |s| {
             s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
         }),
-        row_list,
-        stack((
-            button(|| "Copy entry", ButtonKind::Plain, config)
-                .on_click_stop(move |_| {
-                    if let Some(entry) = selection.get_untracked() {
-                        SystemClipboard::new().put_string(&entry.raw);
-                    }
-                })
-                .style(|s| s.align_self(Some(floem::style::AlignItems::FlexEnd))),
-            sparrow_scroll(
-                label(move || {
-                    selection.with(|entry| {
-                        entry
-                            .as_ref()
-                            .map_or_else(String::new, |entry| entry.raw.clone())
-                    })
-                })
-                .style(|s| s.width_full().selectable(true)),
-            )
-            .style(|s| s.width_full().min_height(0.0).max_height(126.0)),
-        ))
-        .style(move |s| {
-            s.flex_col()
-                .width_full()
-                .apply_if(selection.with(Option::is_none), |s| s.hide())
-        }),
+        inspection,
     ))
     .on_event_stop(EventListener::PointerDown, |_| {})
     .style(move |s| {
         dialog_surface(s, &config.get())
-            .width(920.0)
+            .width(1120.0)
             .max_width_pct(94.0)
-            .height_pct(82.0)
+            .height_pct(88.0)
             .min_height(0.0)
             .flex_col()
             .padding(14.0)
@@ -574,6 +652,7 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     });
 
     container(body)
+        .on_cleanup(move || drop(watcher.borrow_mut().take()))
         .on_event_stop(EventListener::PointerDown, move |_| visible.set(false))
         .style(move |s| {
             s.absolute()
