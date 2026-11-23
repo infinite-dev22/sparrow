@@ -66,6 +66,10 @@ pub struct VmServiceClient {
     generation: Arc<AtomicU64>,
 }
 
+use super::performance::{
+    Frame, PerformanceData, PerformanceUpdate, Sample, SampleReply,
+};
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RuntimeFlags {
     pub debug_paint: bool,
@@ -108,6 +112,7 @@ pub enum Notification {
     /// WS upgraded + handshake complete.
     Connected(u64, RuntimeFlags),
     Restarting(u64),
+    Performance(u64, PerformanceUpdate),
     /// Connection closed (server exit, network error, or explicit
     /// disconnect).
     Disconnected(u64),
@@ -201,6 +206,15 @@ impl VmServiceClient {
         });
     }
 
+    pub(crate) fn sample_performance(&self, sample: Sample) -> bool {
+        let generation = self.generation.load(Ordering::SeqCst);
+        self.is_connected()
+            && self
+                .tx
+                .send(Command::SamplePerformance { generation, sample })
+                .is_ok()
+    }
+
     /// Toggle Flutter debug paint visual bounds.
     pub fn set_debug_paint(&self, isolate_id: Option<&str>, enabled: bool) {
         let mut params =
@@ -268,6 +282,10 @@ impl VmServiceClient {
 enum Command {
     Connect(Connection),
     Disconnect,
+    SamplePerformance {
+        generation: u64,
+        sample: Sample,
+    },
     CallServiceExtension {
         generation: u64,
         method: String,
@@ -303,7 +321,9 @@ impl ConnectionWorker {
                 None => match self.rx.recv() {
                     Ok(Command::Connect(url)) => url,
                     Ok(
-                        Command::Disconnect | Command::CallServiceExtension { .. },
+                        Command::Disconnect
+                        | Command::CallServiceExtension { .. }
+                        | Command::SamplePerformance { .. },
                     ) => continue,
                     Err(_) => return,
                 },
@@ -353,6 +373,10 @@ impl ConnectionWorker {
         // Initial tree fetch, before any frame arrives.
         self.send_widget_tree_request(&mut socket, 10, &isolate_id)?;
 
+        let mut frames = Vec::new();
+        let mut last_frame_batch = Instant::now();
+        let mut sample_in_flight: Option<(i64, Sample, Instant)> = None;
+        let mut last_network_timestamp = None;
         let mut last_refresh = Instant::now();
         let mut pending_extensions = VecDeque::new();
         let mut in_flight: Option<(i64, String, Instant)> = None;
@@ -365,6 +389,28 @@ impl ConnectionWorker {
                         return Ok(None);
                     }
                     Err(TryRecvError::Empty) => break,
+                    Ok(Command::SamplePerformance { generation, sample }) => {
+                        if generation != connection.generation
+                            || generation != self.generation.load(Ordering::SeqCst)
+                        {
+                            continue;
+                        }
+                        let manual = matches!(
+                            sample,
+                            Sample::Recording(_) | Sample::ClearNetwork
+                        );
+                        if manual || sample_in_flight.is_none() {
+                            let id = next_request_id();
+                            let (method, params) =
+                                sample.rpc(&isolate_id, last_network_timestamp);
+                            self.send_nonblocking(&mut socket, id, method, params)?;
+                            sample_in_flight = Some((
+                                id,
+                                sample,
+                                Instant::now() + SERVICE_EXTENSION_TIMEOUT,
+                            ));
+                        }
+                    }
                     Ok(Command::CallServiceExtension {
                         generation,
                         method,
@@ -381,6 +427,28 @@ impl ConnectionWorker {
 
             if connection.generation != self.generation.load(Ordering::SeqCst) {
                 return Ok(None);
+            }
+
+            if let Some((_, sample, deadline)) = sample_in_flight
+                && Instant::now() >= deadline
+            {
+                sample_in_flight = None;
+                let _ = self.notif_tx.send(Notification::Performance(
+                    connection.generation,
+                    PerformanceUpdate::Reply(SampleReply {
+                        sample,
+                        result: Err("The VM service did not respond.".into()),
+                    }),
+                ));
+            }
+            if !frames.is_empty()
+                && last_frame_batch.elapsed() >= Duration::from_millis(100)
+            {
+                let _ = self.notif_tx.send(Notification::Performance(
+                    connection.generation,
+                    PerformanceUpdate::Frames(std::mem::take(&mut frames)),
+                ));
+                last_frame_batch = Instant::now();
             }
 
             if let Some((_, method, deadline)) = &in_flight {
@@ -441,6 +509,43 @@ impl ConnectionWorker {
                                 tracing::warn!(%method, %error, "Flutter service extension failed");
                             }
                             in_flight = None;
+                            continue;
+                        }
+                        if let Some((id, sample, _)) = sample_in_flight
+                            && v["id"].as_i64() == Some(id)
+                        {
+                            sample_in_flight = None;
+                            let result = match v.get("result") {
+                                Some(value) => Ok(value.clone()),
+                                None => Err(v["error"]["message"]
+                                    .as_str()
+                                    .unwrap_or("Invalid VM service response.")
+                                    .to_owned()),
+                            };
+                            if let Ok(value) = &result {
+                                match sample {
+                                    Sample::Network => {
+                                        last_network_timestamp =
+                                            value["timestamp"].as_u64()
+                                    }
+                                    Sample::ClearNetwork
+                                    | Sample::Recording(true) => {
+                                        last_network_timestamp = None
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            let _ = self.notif_tx.send(Notification::Performance(
+                                connection.generation,
+                                PerformanceUpdate::Reply(SampleReply {
+                                    sample,
+                                    result,
+                                }),
+                            ));
+                            continue;
+                        }
+                        if let Some(frame) = Frame::from_event(&v, &isolate_id) {
+                            frames.push(frame);
                             continue;
                         }
                         self.dispatch_message(
@@ -858,6 +963,7 @@ pub struct FlutterInspectorData {
     pub selected_node: RwSignal<Option<RwSignal<InspectorNodeData>>>,
     pub updates: ReadSignal<Option<Notification>>,
     pub(crate) runtime_switches: RuntimeSwitches,
+    pub(crate) performance: PerformanceData,
     pub common: std::rc::Rc<CommonData>,
     cx: Scope,
 }
@@ -874,6 +980,7 @@ impl FlutterInspectorData {
             selected_node: cx.create_rw_signal(None),
             updates,
             runtime_switches: RuntimeSwitches::new(cx),
+            performance: PerformanceData::new(cx),
             common,
             cx,
         }
@@ -891,11 +998,13 @@ impl FlutterInspectorData {
         self.vm_url.set(Some((term_id, url.clone())));
         self.state.set(InspectorState::Connecting);
         self.runtime_switches.set(RuntimeFlags::default());
+        self.performance.reset();
         self.client.connect(url);
     }
 
     pub fn disconnect(&self) {
         self.client.disconnect();
+        self.performance.end_session();
         self.vm_url.set(None);
         self.root.set(None);
         self.selected_node.set(None);
@@ -906,6 +1015,11 @@ impl FlutterInspectorData {
     /// Apply a notification received from the connection thread.
     pub fn apply(&self, notif: &Notification) {
         match notif {
+            Notification::Performance(generation, update)
+                if self.is_current(*generation) =>
+            {
+                self.performance.apply(update);
+            }
             Notification::Connected(generation, flags)
                 if self.is_current(*generation) =>
             {
@@ -913,6 +1027,7 @@ impl FlutterInspectorData {
                 self.state.set(InspectorState::Connected);
             }
             Notification::Restarting(generation) if self.is_current(*generation) => {
+                self.performance.reset();
                 self.state.set(InspectorState::Connecting);
                 self.runtime_switches.set(RuntimeFlags::default());
                 self.root.set(None);
@@ -921,6 +1036,7 @@ impl FlutterInspectorData {
             Notification::Disconnected(generation)
                 if self.is_current(*generation) =>
             {
+                self.performance.end_session();
                 self.state.set(InspectorState::Disconnected);
                 self.runtime_switches.set(RuntimeFlags::default());
                 self.root.set(None);
