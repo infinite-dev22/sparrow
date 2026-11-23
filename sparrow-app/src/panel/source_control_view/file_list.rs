@@ -62,7 +62,7 @@ pub(super) fn file_diffs_view(
             .to_string();
         let style_path = path.clone();
         stack((
-            super::probe::watch(checkbox(move || file_diffs.with(|diffs| {
+            checkbox(move || file_diffs.with(|diffs| {
                 diffs.get(&selection_path).is_some_and(|(_, checked)| *checked)
             }), config).on_update(move |selected| {
                 file_diffs.update(|diffs| {
@@ -70,7 +70,7 @@ pub(super) fn file_diffs_view(
                         *checked = selected;
                     }
                 });
-            }), format!("file:{file_name}")),
+            }),
             svg(move || config.get().file_svg(&path).0).style(move |s| {
                 let config = config.get();
                 let size = config.ui.icon_size() as f32;

@@ -17,8 +17,6 @@ use crate::{
 };
 
 mod file_list;
-#[path = "/tmp/sparrow-commit-portal.aYRa5i/checkbox_probe.rs"]
-mod probe;
 
 use crate::widgets::sparrow_scroll;
 use file_list::file_diffs_view;
@@ -28,7 +26,6 @@ pub fn source_control_panel(
     _position: PanelPosition,
 ) -> impl View {
     let source = window.source_control.clone();
-    probe::run(source.clone());
     let config = window.common.config;
     let focus = source.common.focus;
     let editor = create_rw_signal(source.editor.clone());
@@ -76,10 +73,10 @@ pub fn source_control_panel(
         let count = move || selection.with(|(total, _)| *total);
         stack((
             stack((
-                probe::watch(label(move || if open.get() { "⌄" } else { "›" })
+                label(move || if open.get() { "⌄" } else { "›" })
                     .on_click_stop(move |_| open.update(|v| *v = !*v))
-                    .style(|s| s.width(18.0)), if unversioned { "fold:untracked" } else { "fold:tracked" }),
-                probe::watch(group_checkbox(
+                    .style(|s| s.width(18.0)),
+                group_checkbox(
                     move || {
                         selection.with(|&(total, selected)| {
                             CheckboxState::from_selection(total, selected)
@@ -98,7 +95,7 @@ pub fn source_control_panel(
                         });
                     },
                     config,
-                ), if unversioned { "untracked" } else { "tracked" }),
+                ),
                 label(move || {
                     format!(
                         "{}  {} files",
