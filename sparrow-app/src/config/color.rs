@@ -66,6 +66,10 @@ impl SparrowColor {
     pub const SPARROW_REMOTE_DISCONNECTED: &'static str =
         "sparrow.remote.disconnected";
 
+    pub const FILE_PICKER_SIDEBAR: &'static str = "file-picker.sidebar";
+    pub const FILE_PICKER_CANVAS: &'static str = "file-picker.canvas";
+    pub const FILE_PICKER_FOLDER_ICON: &'static str = "file-picker.folder-icon";
+
     pub const EDITOR_BACKGROUND: &'static str = "editor.background";
     pub const EDITOR_FOREGROUND: &'static str = "editor.foreground";
     pub const EDITOR_DIM: &'static str = "editor.dim";

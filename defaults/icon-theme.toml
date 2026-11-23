@@ -66,6 +66,9 @@ name = "sparrow Modern"
 # ── Files / Explorer ─────────────────────────────────────────────────────
 "file"            = "file.svg"                   # Lucide: file
 "file_explorer"   = "files.svg"                  # Lucide: files
+"file_picker_home" = "home.svg"
+"file_picker_hidden" = "eye.svg"
+"file_picker_list" = "list-tree.svg"
 "file_picker_up"  = "arrow-up.svg"               # Lucide: arrow-up
 "image_loading"   = "refresh-cw.svg"             # Lucide: refresh-cw
 "image_error"     = "circle-alert.svg"           # Lucide: circle-alert

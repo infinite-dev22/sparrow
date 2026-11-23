@@ -288,8 +288,7 @@ pub(super) fn view(browser: Browser, config: Config) -> impl View {
                 let row = stack((
                     label(move || if is_dir { "›" } else { "" })
                         .style(|s| s.width(11)),
-                    svg(move || config.get().file_svg(&path).0)
-                        .style(|s| s.size(14, 14)),
+                    tree::entry_icon(path, is_dir, config),
                     label(move || name.clone())
                         .style(|s| s.min_width(0).text_ellipsis()),
                 ))

@@ -46,6 +46,9 @@ impl SparrowIcons {
 
     pub const FILE: &'static str = "file";
     pub const FILE_EXPLORER: &'static str = "file_explorer";
+    pub const FILE_PICKER_HOME: &'static str = "file_picker_home";
+    pub const FILE_PICKER_HIDDEN: &'static str = "file_picker_hidden";
+    pub const FILE_PICKER_LIST: &'static str = "file_picker_list";
     pub const FILE_PICKER_UP: &'static str = "file_picker_up";
 
     pub const IMAGE_LOADING: &'static str = "image_loading";

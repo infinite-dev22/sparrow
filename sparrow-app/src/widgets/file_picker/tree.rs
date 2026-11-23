@@ -1,9 +1,14 @@
 //! Directory scanning and chooser tree interaction.
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     fs,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
 };
 
 use floem::{
@@ -11,16 +16,15 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, Modifiers, NamedKey},
     reactive::{
-        Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal,
+        Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
+        create_rw_signal,
     },
+    style::TextColor,
     views::{Decorators, label, stack, svg, virtual_stack},
 };
 
 use super::{Browser, Complete, Config, FileDialogOptions};
-use crate::{
-    config::{color::SparrowColor, icon::SparrowIcons},
-    widgets::sparrow_scroll,
-};
+use crate::{config::color::SparrowColor, widgets::sparrow_scroll};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub(super) struct Entry {
@@ -95,42 +99,156 @@ pub(super) fn scan(
     Ok(rows)
 }
 
+const ROW_LIMIT: usize = 3_000;
+
+fn search(
+    root: &Path,
+    query: &str,
+    hidden: bool,
+    visible: &impl Fn(&Path, bool) -> bool,
+    cancelled: &impl Fn() -> bool,
+) -> std::io::Result<Vec<Entry>> {
+    let query = query.to_lowercase();
+    let root_entries = fs::read_dir(root)?;
+    let mut folders = VecDeque::new();
+    let mut entries = Some(root_entries);
+    let mut rows = Vec::new();
+    let mut visited = 0;
+    'scan: while let Some(folder) = entries.take().or_else(|| {
+        while let Some(path) = folders.pop_front() {
+            if cancelled() {
+                return None;
+            }
+            if let Ok(folder) = fs::read_dir(path) {
+                return Some(folder);
+            }
+        }
+        None
+    }) {
+        for entry in folder {
+            if cancelled() || rows.len() >= ROW_LIMIT || visited >= 20_000 {
+                break 'scan;
+            }
+            visited += 1;
+            let Ok(entry) = entry else { continue };
+            if !hidden && entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let directory = kind.is_dir() || kind.is_symlink() && path.is_dir();
+            if kind.is_dir() {
+                folders.push_back(path.clone());
+            }
+            let relative = path.strip_prefix(root).unwrap_or(&path);
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .to_lowercase()
+                .contains(&query)
+                && visible(&path, directory)
+            {
+                rows.push(Entry {
+                    name: relative.to_string_lossy().into_owned(),
+                    path,
+                    directory,
+                    expanded: false,
+                    depth: 0,
+                });
+            }
+        }
+    }
+    rows.sort_unstable_by(|a, b| {
+        b.directory
+            .cmp(&a.directory)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    Ok(rows)
+}
+
+pub(super) fn entry_icon(
+    path: PathBuf,
+    directory: bool,
+    config: Config,
+) -> impl View {
+    let icon = create_memo(move |_| {
+        let config = config.get();
+        let (source, tint) = if directory {
+            config.folder_svg(&path)
+        } else {
+            config.file_svg(&path)
+        };
+        let tint = (tint.is_some() || source.contains("currentColor")).then(|| {
+            config.color(if directory {
+                SparrowColor::FILE_PICKER_FOLDER_ICON
+            } else {
+                SparrowColor::EDITOR_LINK
+            })
+        });
+        (source, tint)
+    });
+    svg(move || icon.with(|(source, _)| source.clone())).style(move |s| {
+        s.size(16, 16)
+            .flex_shrink(0.0_f32)
+            .set(TextColor, icon.with(|(_, tint)| *tint))
+    })
+}
+
 pub(super) fn load(browser: Browser, options: Rc<FileDialogOptions>) {
     let generation = create_rw_signal(0_u64);
+    let active = Arc::new(AtomicU64::new(0));
     let scope = Scope::current();
-    create_effect(move |_| {
+    create_effect(move |previous: Option<String>| {
         let directory = browser.directory.get();
         let expanded = browser.expanded.get();
         let hidden = browser.hidden.get();
+        let query = browser.query.with(|query| query.trim().to_owned());
         browser.revision.get();
-        let ticket = generation.get_untracked() + 1;
+        if previous.as_ref().is_some_and(|previous| previous != &query) {
+            browser.rows.set(Vec::new());
+            browser.cursor.set(None);
+            browser.selection.set(vec![directory.clone()]);
+            browser.preview.set(directory.clone());
+            browser.message.set(String::new());
+            browser.overwrite.set(None);
+        }
+        browser.searching.set(!query.is_empty());
+        let current_query = query.clone();
+        let ticket = active.fetch_add(1, Ordering::Relaxed) + 1;
+        let active = active.clone();
         generation.set(ticket);
         let types = options.types.clone();
         let directories = options.directories;
         let rows = browser.rows;
         let message = browser.message;
-        let ready = floem::ext_event::create_ext_action(
-            scope,
-            move |result: std::io::Result<Vec<Entry>>| {
-                if generation.try_get_untracked() != Some(ticket) {
-                    return;
-                }
-                match result {
-                    Ok(value) => rows.set(value),
-                    Err(error) => {
-                        rows.set(Vec::new());
-                        message.set(format!("Could not read the folder. {error}"));
+        let searching = browser.searching;
+        let has_query = !query.is_empty();
+        let start = move || {
+            if generation.try_get_untracked() != Some(ticket) {
+                return;
+            }
+            let ready = floem::ext_event::create_ext_action(
+                scope,
+                move |result: std::io::Result<Vec<Entry>>| {
+                    if generation.try_get_untracked() != Some(ticket) {
+                        return;
                     }
-                }
-            },
-        );
-        std::thread::spawn(move || {
-            ready(scan(
-                &directory,
-                &expanded,
-                hidden,
-                3000,
-                &|path, is_dir| {
+                    searching.set(false);
+                    match result {
+                        Ok(value) => rows.set(value),
+                        Err(error) => {
+                            rows.set(Vec::new());
+                            message
+                                .set(format!("Could not read the folder. {error}"));
+                        }
+                    }
+                },
+            );
+            std::thread::spawn(move || {
+                let visible = |path: &Path, is_dir| {
                     if is_dir {
                         return true;
                     }
@@ -146,9 +264,23 @@ pub(super) fn load(browser: Browser, options: Rc<FileDialogOptions>) {
                                             .any(|e| e.eq_ignore_ascii_case(ext))
                                     })
                                 }))
-                },
-            ));
-        });
+                };
+                let result = if query.is_empty() {
+                    scan(&directory, &expanded, hidden, ROW_LIMIT, &visible)
+                } else {
+                    search(&directory, &query, hidden, &visible, &|| {
+                        active.load(Ordering::Relaxed) != ticket
+                    })
+                };
+                ready(result);
+            });
+        };
+        if has_query {
+            floem::action::exec_after(Duration::from_millis(140), move |_| start());
+        } else {
+            start();
+        }
+        current_query
     });
 }
 
@@ -189,15 +321,10 @@ pub(super) fn view(
             let expanded = entry.expanded;
             let is_folder = entry.directory;
             let name = entry.name.clone();
-            let icon = path.clone();
-            let browse = if is_folder {
-                SparrowIcons::DIRECTORY
-            } else {
-                SparrowIcons::FILE
-            };
+            let query = for_rows.query;
             let row = stack((
                 label(move || {
-                    if !is_folder {
+                    if !is_folder || query.with(|value| !value.trim().is_empty()) {
                         ""
                     } else if expanded {
                         "⌄"
@@ -207,27 +334,17 @@ pub(super) fn view(
                 })
                 .style(|s| s.width(18).flex_shrink(0.0_f32))
                 .on_click_stop(move |_| {
-                    if is_folder {
+                    if is_folder && query.with(|value| value.trim().is_empty()) {
                         toggle(&preview, path.clone());
                     }
                 }),
-                svg(move || {
-                    if is_folder {
-                        config.get().ui_svg(browse)
-                    } else {
-                        config.get().file_svg(&icon).0
-                    }
-                })
-                .style(move |s| {
-                    s.size(15, 15)
-                        .flex_shrink(0.0_f32)
-                        .color(config.get().color(SparrowColor::SPARROW_ICON_ACTIVE))
-                }),
+                entry_icon(entry.path.clone(), is_folder, config),
                 label(move || name.clone())
                     .style(|s| s.min_width(0).text_ellipsis().selectable(false)),
             ))
             .style(move |s| {
                 let config = config.get();
+                let selected = selected.with(|paths| paths.contains(&check));
                 s.width_full()
                     .min_width(0)
                     .height(24)
@@ -235,7 +352,14 @@ pub(super) fn view(
                     .padding_left(6.0 + entry.depth as f64 * 14.0)
                     .gap(4)
                     .border_radius(4)
-                    .apply_if(selected.with(|paths| paths.contains(&check)), |s| {
+                    .apply_if(!selected, |s| {
+                        s.hover(|s| {
+                            s.background(
+                                config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                            )
+                        })
+                    })
+                    .apply_if(selected, |s| {
                         s.background(
                             config.color(SparrowColor::PANEL_SELECTION_BACKGROUND),
                         )
@@ -274,6 +398,7 @@ pub(super) fn view(
                 .min_height(0)
                 .border(1)
                 .border_radius(6)
+                .background(config.get().color(SparrowColor::FILE_PICKER_CANVAS))
                 .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
         });
     let id = view.id();
@@ -291,6 +416,7 @@ pub(super) fn view(
                 .get_untracked()
                 .and_then(|path| rows.iter().position(|entry| entry.path == path));
             let current = index.and_then(|index| rows.get(index));
+            let searching = browser.query.with(|value| !value.trim().is_empty());
             match event.key.logical_key {
                 Key::Named(
                     NamedKey::ArrowDown
@@ -318,14 +444,14 @@ pub(super) fn view(
                         ));
                     }
                 }
-                Key::Named(NamedKey::ArrowRight) => {
+                Key::Named(NamedKey::ArrowRight) if !searching => {
                     if let Some(entry) =
                         current.filter(|e| e.directory && !e.expanded)
                     {
                         toggle(&browser, entry.path.clone());
                     }
                 }
-                Key::Named(NamedKey::ArrowLeft) => {
+                Key::Named(NamedKey::ArrowLeft) if !searching => {
                     if let Some(entry) = current.filter(|e| e.expanded) {
                         toggle(&browser, entry.path.clone());
                     } else if let Some(parent) =
@@ -380,6 +506,44 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|row| row.name == ".secret")
+        );
+    }
+    #[test]
+    fn search_matches_nested_names_and_respects_hidden_files_and_filters() {
+        let root = tempfile::tempdir().unwrap();
+        let public = root.path().join("src");
+        let hidden = root.path().join(".private");
+        fs::create_dir(&public).unwrap();
+        fs::create_dir(&hidden).unwrap();
+        fs::write(public.join("Main.DART"), "").unwrap();
+        fs::write(public.join("main.txt"), "").unwrap();
+        fs::write(hidden.join("main.dart"), "").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.path(), public.join("cycle")).unwrap();
+
+        let visible = |path: &Path, directory| {
+            directory
+                || path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("dart"))
+        };
+        let visible_rows =
+            search(root.path(), "MaIn", false, &visible, &|| false).unwrap();
+        assert_eq!(visible_rows.len(), 1);
+        assert_eq!(visible_rows[0].path, public.join("Main.DART"));
+        assert_eq!(visible_rows[0].depth, 0);
+        let all_rows =
+            search(root.path(), "MaIn", true, &visible, &|| false).unwrap();
+        assert_eq!(all_rows.len(), 2);
+        assert!(
+            all_rows
+                .iter()
+                .any(|row| row.path == hidden.join("main.dart"))
+        );
+        assert!(
+            search(root.path(), "main", true, &visible, &|| true)
+                .unwrap()
+                .is_empty()
         );
     }
 }

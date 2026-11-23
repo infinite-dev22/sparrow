@@ -1,4 +1,5 @@
 //! Sparrow's local file and folder chooser.
+mod navigation;
 mod preview;
 mod tree;
 
@@ -11,22 +12,20 @@ use std::{
 };
 
 use floem::{
-    IntoView, View,
+    View,
     event::{Event, EventListener, EventPropagation},
     file::{FileInfo, FileSpec},
-    keyboard::{Key, NamedKey},
+    keyboard::{Key, Modifiers, NamedKey},
     reactive::{
-        ReadSignal, RwSignal, SignalGet, SignalUpdate, create_effect,
-        create_rw_signal,
+        ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, batch,
+        create_effect, create_rw_signal,
     },
-    views::{Decorators, dyn_container, label, stack, stack_from_iter},
+    views::{Decorators, label, stack},
 };
 
 use crate::{
     config::{SparrowConfig, color::SparrowColor},
-    widgets::{
-        ButtonKind, Divider, DividerVariant, button, horizontal_scroll, text_input,
-    },
+    widgets::{ButtonKind, Divider, DividerVariant, button, text_input},
 };
 
 pub(crate) type Config = ReadSignal<Arc<SparrowConfig>>;
@@ -156,6 +155,7 @@ fn show(
     } else {
         options.title.clone()
     };
+    let window_title = title.clone();
     let home = home();
     let start = options
         .start
@@ -192,11 +192,13 @@ fn show(
                 floem::close_window(id);
             });
             let config = create_rw_signal(theme).read_only();
-            dialog(Rc::new(options), start, home, config, finish)
+            dialog(window_title, Rc::new(options), start, home, config, finish)
         },
         Some(
             crate::app::sparrow_window_config()
                 .title(title)
+                .apply_default_theme(false)
+                .show_titlebar(false)
                 .size((1040.0, 680.0))
                 .min_size((590.0, 390.0)),
         ),
@@ -206,6 +208,10 @@ fn show(
 #[derive(Clone)]
 struct Browser {
     directory: RwSignal<PathBuf>,
+    history: RwSignal<navigation::History>,
+    mode: RwSignal<navigation::Mode>,
+    query: RwSignal<String>,
+    searching: RwSignal<bool>,
     expanded: RwSignal<HashSet<PathBuf>>,
     rows: RwSignal<Vec<tree::Entry>>,
     selection: RwSignal<Vec<PathBuf>>,
@@ -225,6 +231,10 @@ impl Browser {
     fn new(path: PathBuf, name: String) -> Self {
         Self {
             directory: create_rw_signal(path.clone()),
+            history: create_rw_signal(navigation::History::default()),
+            mode: create_rw_signal(navigation::Mode::Location),
+            query: create_rw_signal(String::new()),
+            searching: create_rw_signal(false),
             expanded: create_rw_signal(HashSet::new()),
             rows: create_rw_signal(Vec::new()),
             selection: create_rw_signal(vec![path.clone()]),
@@ -242,18 +252,30 @@ impl Browser {
     }
 
     fn enter(&self, directory: PathBuf) {
+        let current = self.directory.get_untracked();
+        if directory.is_dir() && current != directory {
+            self.history.update(|history| history.record(current));
+        }
+        self.open_directory(directory);
+    }
+
+    fn open_directory(&self, directory: PathBuf) {
         if !directory.is_dir() {
             return;
         }
-        self.expanded.set(HashSet::new());
-        self.rows.set(Vec::new());
-        self.cursor.set(None);
-        self.selection.set(vec![directory.clone()]);
-        self.preview.set(directory.clone());
-        self.path.set(directory.display().to_string());
-        self.message.set(String::new());
-        self.overwrite.set(None);
-        self.directory.set(directory);
+        batch(|| {
+            self.expanded.set(HashSet::new());
+            self.rows.set(Vec::new());
+            self.cursor.set(None);
+            self.selection.set(vec![directory.clone()]);
+            self.preview.set(directory.clone());
+            self.path.set(directory.display().to_string());
+            self.message.set(String::new());
+            self.overwrite.set(None);
+            self.query.set(String::new());
+            self.mode.set(navigation::Mode::Location);
+            self.directory.set(directory);
+        });
     }
 
     fn choose(
@@ -265,7 +287,14 @@ impl Browser {
         self.preview.set(entry.path.clone());
         self.cursor.set(Some(entry.path.clone()));
         if options.save && !entry.directory {
-            self.filename.set(entry.name.clone());
+            self.filename.set(
+                entry
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+            );
         }
         if extend && options.multiple && options.accepts(&entry.path) {
             self.selection.update(|paths| {
@@ -401,6 +430,7 @@ impl Browser {
 }
 
 fn dialog(
+    title: String,
     options: Rc<FileDialogOptions>,
     start: PathBuf,
     home: Option<PathBuf>,
@@ -411,14 +441,25 @@ fn dialog(
     tree::load(browser.clone(), options.clone());
     let tree = tree::view(browser.clone(), options.clone(), config, finish.clone());
     let right = preview::view(browser.clone(), config);
-    let controls = toolbar(browser.clone(), home, config);
-    let path = browser.path;
-    let go = browser.clone();
-    let go_options = options.clone();
-    let go_finish = finish.clone();
-    let entry = text_input(path, config)
-        .placeholder("Enter a path")
-        .on_enter(move || go.path_entry(&go_options, &go_finish));
+    let tree_id = tree.id();
+    let show_preview = create_rw_signal(true);
+    let entry = navigation::location(
+        browser.clone(),
+        options.clone(),
+        finish.clone(),
+        tree_id,
+        home.clone(),
+        config,
+    );
+    let header = navigation::header(
+        title,
+        browser.clone(),
+        home,
+        entry,
+        show_preview,
+        finish.clone(),
+        config,
+    );
     let filename = browser.filename;
     let overwrite = browser.overwrite;
     create_effect(move |_| {
@@ -432,7 +473,7 @@ fn dialog(
     let name_field = text_input(filename, config)
         .placeholder("Filename")
         .on_enter(move || add_name.submit(&name_options, &name_finish))
-        .style(move |s| s.width_full().apply_if(!save, |s| s.hide()));
+        .style(move |s| s.margin_horiz(14).apply_if(!save, |s| s.hide()));
     let new_folder = browser.new_folder;
     let folder_name = browser.folder_name;
     let create = browser.clone();
@@ -467,13 +508,21 @@ fn dialog(
     let closed = finish.clone();
     let escape = finish.clone();
     let status = browser.message;
+    let rows = browser.rows;
+    let searching = browser.searching;
+    let mode = browser.mode;
+    let query = browser.query;
+    let edit_location = browser.clone();
     stack((
-        controls,
-        folder_field,
+        header,
         stack((
-            stack((entry, tree)).style(|s| {
+            stack((folder_field, tree)).style(move |s| {
                 s.flex_col()
-                    .flex_grow(0.85_f32)
+                    .flex_grow(if show_preview.get() { 0.85_f32 } else { 1.0 })
+                    .padding(14)
+                    .background(
+                        config.get().color(SparrowColor::FILE_PICKER_SIDEBAR),
+                    )
                     .flex_basis(0)
                     .min_width(0)
                     .min_height(0)
@@ -482,12 +531,19 @@ fn dialog(
             Divider::new(config)
                 .variant(DividerVariant::Vertical)
                 .into_view()
-                .style(|s| s.width(1).height_full()),
-            right.style(|s| {
-                s.flex_grow(1.15_f32)
+                .style(move |s| {
+                    s.width(1)
+                        .height_full()
+                        .flex_shrink(0.0_f32)
+                        .apply_if(!show_preview.get(), |s| s.hide())
+                }),
+            right.style(move |s| {
+                s.padding(16)
+                    .flex_grow(1.15_f32)
                     .flex_basis(0)
                     .min_width(0)
                     .min_height(0)
+                    .apply_if(!show_preview.get(), |s| s.hide())
             }),
         ))
         .style(|s| {
@@ -495,7 +551,6 @@ fn dialog(
                 .flex_grow(1.0_f32)
                 .flex_basis(0)
                 .min_height(0)
-                .gap(14)
         }),
         name_field,
         stack((
@@ -505,8 +560,21 @@ fn dialog(
                         "Replace the existing file {}?",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     )
+                } else if let Some(message) = status
+                    .with(|message| (!message.is_empty()).then(|| message.clone()))
+                {
+                    message
+                } else if searching.get() {
+                    "Searching…".into()
+                } else if query.with(|value| !value.trim().is_empty()) {
+                    let count = rows.with(Vec::len);
+                    match count {
+                        0 => "No matches".into(),
+                        1 => "1 match".into(),
+                        _ => format!("{count} matches"),
+                    }
                 } else {
-                    status.get()
+                    String::new()
                 }
             })
             .style(move |s| {
@@ -528,114 +596,70 @@ fn dialog(
                 config,
             )
             .on_click_stop(move |_| submit.submit(&options, &confirm))
-            .style(|s| s.padding_horiz(16).height(30)),
+            .style(move |s| {
+                s.padding_horiz(16).height(30).color(
+                    config
+                        .get()
+                        .color(SparrowColor::SPARROW_BUTTON_PRIMARY_FOREGROUND),
+                )
+            }),
             button(|| "Cancel", ButtonKind::Outlined, config)
                 .on_click_stop(move |_| cancel(None))
                 .style(|s| s.padding_horiz(13).height(30)),
         ))
-        .style(|s| s.width_full().items_center().gap(8)),
+        .style(move |s| {
+            s.width_full()
+                .padding_horiz(14)
+                .padding_vert(9)
+                .items_center()
+                .gap(8)
+                .border_top(1)
+                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+        }),
     ))
     .style(move |s| {
         let config = config.get();
         s.size_full()
             .flex_col()
-            .padding(14)
-            .gap(10)
-            .background(config.color(SparrowColor::PANEL_BACKGROUND))
+            .background(config.color(SparrowColor::FILE_PICKER_CANVAS))
             .color(config.color(SparrowColor::EDITOR_FOREGROUND))
             .font_size(config.ui.font_size() as f32)
     })
     .on_event_cont(EventListener::WindowClosed, move |_| closed(None))
     .on_event(EventListener::KeyUp, move |event| {
-        if let Event::KeyUp(event) = event
-            && event.key.logical_key == Key::Named(NamedKey::Escape)
-        {
-            escape(None);
-            return EventPropagation::Stop;
-        }
-        EventPropagation::Continue
-    })
-}
-
-fn toolbar(browser: Browser, home: Option<PathBuf>, config: Config) -> impl View {
-    let go_home = browser.clone();
-    let up = browser.clone();
-    let directory = browser.directory;
-    let refresh = browser.revision;
-    let hidden = browser.hidden;
-    let crumbs = browser.clone();
-    let desktop = home
-        .as_ref()
-        .map(|path| path.join("Desktop"))
-        .filter(|path| path.is_dir());
-    let has_desktop = desktop.is_some();
-    let go_desktop = browser.clone();
-    let new_folder = browser.new_folder;
-    let name = browser.folder_name;
-    stack((
-        button(|| "Home", ButtonKind::Outlined, config)
-            .on_click_stop(move |_| {
-                if let Some(path) = &home {
-                    go_home.enter(path.clone());
+        let Event::KeyUp(event) = event else {
+            return EventPropagation::Continue;
+        };
+        match &event.key.logical_key {
+            Key::Named(NamedKey::Escape) => {
+                if crate::widgets::modal_focus::consume_popup_escape() {
+                    return EventPropagation::Stop;
                 }
-            })
-            .style(|s| s.padding_horiz(9).height(26)),
-        button(|| "Desktop", ButtonKind::Plain, config)
-            .on_click_stop(move |_| {
-                if let Some(path) = &desktop {
-                    go_desktop.enter(path.clone());
-                }
-            })
-            .style(move |s| s.apply_if(!has_desktop, |s| s.hide())),
-        button(|| "New folder", ButtonKind::Plain, config).on_click_stop(
-            move |_| {
-                name.set(String::new());
-                new_folder.set(true);
-            },
-        ),
-        button(|| "Up", ButtonKind::Outlined, config)
-            .on_click_stop(move |_| {
-                if let Some(parent) = directory.get_untracked().parent() {
-                    up.enter(parent.to_path_buf());
-                }
-            })
-            .style(|s| s.padding_horiz(9).height(26)),
-        button(|| "Refresh", ButtonKind::Plain, config)
-            .on_click_stop(move |_| refresh.update(|count| *count += 1)),
-        button(
-            move || {
-                if hidden.get() {
-                    "Hide hidden"
+                if mode.get_untracked() != navigation::Mode::Location {
+                    mode.set(navigation::Mode::Location);
+                    query.set(String::new());
+                    tree_id.request_focus();
                 } else {
-                    "Show hidden"
+                    escape(None);
                 }
-            },
-            ButtonKind::Plain,
-            config,
-        )
-        .on_click_stop(move |_| hidden.update(|hidden| *hidden = !*hidden)),
-        horizontal_scroll(dyn_container(
-            move || directory.get(),
-            move |dir| {
-                let crumbs = crumbs.clone();
-                let parts =
-                    dir.ancestors().map(Path::to_path_buf).collect::<Vec<_>>();
-                stack_from_iter(parts.into_iter().rev().map(move |path| {
-                    let title = path.file_name().map_or_else(
-                        || path.display().to_string(),
-                        |name| name.to_string_lossy().into_owned(),
-                    );
-                    let crumbs = crumbs.clone();
-                    button(move || title.clone(), ButtonKind::Plain, config)
-                        .on_click_stop(move |_| crumbs.enter(path.clone()))
-                        .style(|s| s.padding_horiz(6).flex_shrink(0.0_f32))
-                }))
-                .into_any()
-            },
-        ))
-        .style(|s| s.min_width(0).flex_grow(1.0_f32).height(27)),
-    ))
-    .style(|s| s.width_full().items_center().gap(8))
+            }
+            Key::Character(key)
+                if event
+                    .modifiers
+                    .intersects(Modifiers::CONTROL | Modifiers::META) =>
+            {
+                if key.eq_ignore_ascii_case("l") {
+                    edit_location.edit_location();
+                } else if key.eq_ignore_ascii_case("f") {
+                    mode.set(navigation::Mode::Search);
+                } else {
+                    return EventPropagation::Continue;
+                }
+            }
+            _ => return EventPropagation::Continue,
+        }
+        EventPropagation::Stop
+    })
 }
 
 #[cfg(test)]
