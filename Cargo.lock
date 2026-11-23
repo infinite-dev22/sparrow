@@ -4756,6 +4756,7 @@ dependencies = [
  "fs_extra",
  "globset",
  "im",
+ "image",
  "include_dir",
  "indexmap",
  "interprocess",
