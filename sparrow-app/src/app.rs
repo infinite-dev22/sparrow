@@ -401,6 +401,8 @@ impl AppData {
         let view = stack((
             workspace_tab_header(window_data.clone()),
             window(window_data.clone()),
+            #[cfg(target_os = "linux")]
+            crate::widgets::file_picker::wayland_activation::observe_surface(true),
             stack((
                 drag_resize_window_area(ResizeDirection::West, empty()).style(|s| {
                     s.absolute().width(4.0).height_full().pointer_events_auto()
@@ -619,11 +621,12 @@ impl AppData {
                 }
             })
             .on_event_stop(EventListener::WindowGotFocus, move |_| {
-                crate::widgets::file_picker::focus_existing();
                 crate::ui_test_guard::focus(true);
                 app_command.send(AppCommand::WindowGotFocus(window_id));
             })
             .on_event_stop(EventListener::WindowClosed, move |_| {
+                #[cfg(target_os = "linux")]
+                crate::widgets::file_picker::wayland_activation::detach_owner(window_id);
                 app_command.send(AppCommand::WindowClosed(window_id));
             })
             .on_event_stop(EventListener::DroppedFile, move |event: &Event| {
@@ -1238,6 +1241,8 @@ pub fn launch() {
     app.on_event(move |event| match event {
         floem::AppEvent::WillTerminate => {
             crate::widgets::file_picker::close_active();
+            #[cfg(target_os = "linux")]
+            crate::widgets::file_picker::wayland_activation::shutdown();
             app_data.app_terminated.set(true);
             if let Err(err) = db.insert_app(app_data.clone()) {
                 tracing::error!("{:?}", err);

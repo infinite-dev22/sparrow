@@ -2,6 +2,8 @@
 mod navigation;
 mod preview;
 mod tree;
+#[cfg(target_os = "linux")]
+pub(crate) mod wayland_activation;
 
 use std::{
     cell::RefCell,
@@ -166,6 +168,10 @@ pub(crate) fn focus_existing() -> bool {
         let Some(picker) = picker else { return false };
         if let Some(window) = &picker.window {
             window.id.minimized(false);
+            #[cfg(target_os = "linux")]
+            if wayland_activation::activate(window.id) {
+                return true;
+            }
             window.id.request_attention(floem::Urgency::Informational);
             crate::widgets::dialog_frame::activate_frame(window.view);
         }
@@ -174,6 +180,8 @@ pub(crate) fn focus_existing() -> bool {
 }
 
 pub(crate) fn close_active() {
+    #[cfg(target_os = "linux")]
+    wayland_activation::stop();
     if let Some(window) = PICKER.take().and_then(|picker| picker.window) {
         (window.finish)(None);
     }
@@ -195,6 +203,8 @@ fn show(
         callback(None);
         return;
     }
+    #[cfg(target_os = "linux")]
+    wayland_activation::start();
     let token = Rc::new(());
     PICKER.replace(Some(PickerRequest {
         token: token.clone(),
@@ -247,6 +257,8 @@ fn show(
                         .is_some_and(|window| window.id == id)
                     {
                         *picker = None;
+                        #[cfg(target_os = "linux")]
+                        wayland_activation::stop();
                     }
                 });
                 floem::close_window(id);
@@ -613,6 +625,8 @@ fn dialog(
     let query = browser.query;
     let edit_location = browser.clone();
     let content = stack((
+        #[cfg(target_os = "linux")]
+        wayland_activation::observe_surface(false),
         header,
         stack((
             stack((folder_field, tree)).style(move |s| {
