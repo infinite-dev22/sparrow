@@ -24,6 +24,7 @@ use std::{
 #[derive(Clone, Copy)]
 pub(super) struct Navigation {
     pub(super) page: RwSignal<Page>,
+    pub(super) displayed_page: Memo<Page>,
     pub(super) history: RwSignal<Vec<Page>>,
     pub(super) index: RwSignal<usize>,
     pub(super) expanded: RwSignal<BTreeSet<Page>>,
@@ -41,6 +42,7 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
 ) -> (impl View + use<A>, ViewId) {
     let Navigation {
         page,
+        displayed_page,
         history,
         index,
         expanded,
@@ -105,7 +107,7 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
                 }),
                 label(move || title).style(move |s| {
                     let config = config.get();
-                    let modified = page.get() != p
+                    let modified = displayed_page.get() != p
                         && modifications.with(|items| items.contains(&p));
                     s.min_width(0)
                         .text_ellipsis()
@@ -122,7 +124,7 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
             })
             .style(move |s| {
                 let config = config.get();
-                let selected = page.get() == p;
+                let selected = displayed_page.get() == p;
                 tree_row_layout(s, depth)
                     .apply_if(!shown_pages.with(|pages| pages.contains(&p)), |s| {
                         s.hide()
@@ -231,7 +233,7 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
             }
         });
     let scroll = crate::widgets::sparrow_scroll(tree).scroll_to_view(move || {
-        let current = page.get();
+        let current = displayed_page.get();
         if !shown_pages.with(|pages| pages.contains(&current)) {
             return None;
         }

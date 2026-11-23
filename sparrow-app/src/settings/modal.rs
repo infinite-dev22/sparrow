@@ -195,6 +195,17 @@ fn matching_pages(items: &[SettingsItem], query: &str) -> Vec<Page> {
         .collect()
 }
 
+fn search_page(selected: Page, matches: Option<&[Page]>) -> Page {
+    match matches {
+        Some([only_match])
+            if !only_match.ancestors().any(|ancestor| ancestor == selected) =>
+        {
+            *only_match
+        }
+        _ => selected,
+    }
+}
+
 fn modified_pages(active: &Pending, inactive: &Pending) -> Vec<Page> {
     let changed: BTreeSet<_> = active
         .keys()
@@ -407,6 +418,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 .map(|pattern| all.with(|items| matching_pages(items, pattern)))
         })
     });
+    let displayed_page = cx.create_memo(move |_| {
+        matching.with(|matches| search_page(page.get(), matches.as_deref()))
+    });
     let shown_pages = cx.create_memo(move |_| {
         matching.with(|matching| {
             expanded.with(|expanded| visible_pages(expanded, matching.as_deref()))
@@ -433,7 +447,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             sections.set(Vec::new());
             return;
         }
-        let selected = page.get();
+        let selected = displayed_page.get();
         let items = search_query.with(|pattern| {
             let only_current = matching.with(|pages| {
                 pages
@@ -447,7 +461,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         None => belongs(item, selected),
                         Some(pattern) if only_current => {
                             belongs(item, selected)
-                                && (matches_query(selected.title(), pattern)
+                                && (matches_query(selected.search_terms(), pattern)
                                     || matches_setting(item, pattern))
                         }
                         Some(pattern) => matches_setting(item, pattern),
@@ -596,18 +610,28 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let save = apply;
     let show_page_actions = move || {
         search_query.with(|query| {
-            query
-                .as_ref()
-                .is_none_or(|query| matches_query(page.get().search_terms(), query))
+            query.as_ref().is_none_or(|query| {
+                matches_query(displayed_page.get().search_terms(), query)
+            })
         })
     };
     let overview_keyboard = keyboard.clone();
     let overview = dyn_stack(
         move || {
-            if visible.get() && show_page_actions() {
-                page.get()
+            let selected = displayed_page.get();
+            if visible.get()
+                && (show_page_actions()
+                    || matching.with(|matches| {
+                        matches.as_deref().is_some_and(|matches| {
+                            matches.iter().any(|page| {
+                                page.ancestors().any(|ancestor| ancestor == selected)
+                            })
+                        })
+                    }))
+            {
+                selected
                     .summary()
-                    .map(|summary| (page.get(), summary))
+                    .map(|summary| (selected, summary))
                     .into_iter()
                     .collect::<Vec<_>>()
             } else {
@@ -642,7 +666,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let external_buttons = dyn_stack(
         move || {
             if visible.get() && show_page_actions() {
-                match page.get() {
+                match displayed_page.get() {
                     Page::RunConfigurations => vec![("Edit Run/Debug Configurations…", None)],
                     Page::Plugins => vec![("Manage Plugins and Themes", Some(PanelKind::Plugin))],
                     Page::Git => vec![("Open Commit", Some(PanelKind::SourceControl)), ("Open Git History", Some(PanelKind::GitHistory))],
@@ -693,6 +717,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         accept.clone(),
         navigation::Navigation {
             page,
+            displayed_page,
             history,
             index,
             expanded,
@@ -752,8 +777,10 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
 
     let breadcrumb = dyn_stack(
         move || {
-            let page = page.get();
-            if search_query.with(Option::is_some) {
+            let page = displayed_page.get();
+            if matching.with(|matches| {
+                matches.as_ref().is_some_and(|matches| matches.len() != 1)
+            }) {
                 return vec![(None, true)];
             }
             let mut path: Vec<_> = page.ancestors().collect();
@@ -818,8 +845,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .flex_shrink(0.0_f32)
     });
 
-    let show_menus =
-        move || visible.get() && page.get() == Page::Menus && show_page_actions();
+    let show_menus = move || {
+        visible.get() && displayed_page.get() == Page::Menus && show_page_actions()
+    };
     let menu_keyboard = keyboard.clone();
     let menu_editor = dyn_stack(
         move || show_menus().then_some(()).into_iter().collect::<Vec<_>>(),
@@ -834,8 +862,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         },
     )
     .style(|s| s.flex_col().width_full());
-    let show_keymap =
-        move || visible.get() && page.get() == Page::Keymap && show_page_actions();
+    let show_keymap = move || {
+        visible.get() && displayed_page.get() == Page::Keymap && show_page_actions()
+    };
     let keymap_common = window.common.clone();
     let keymap_keyboard = keyboard.clone();
     let keymap = dyn_stack(
@@ -861,7 +890,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             s.apply_if(
                 !can_project
                     || show_keymap()
-                    || (page.get() == Page::Debugger && show_page_actions()),
+                    || (displayed_page.get() == Page::Debugger
+                        && show_page_actions()),
                 |s| s.hide(),
             )
         }),
@@ -950,7 +980,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .style(|s| s.flex_col().min_width_full()),
         )
         .scroll_to(move || {
-            let _ = (page.get(), search_query.get());
+            let _ = (displayed_page.get(), search_query.get());
             Some(floem::kurbo::Point::ORIGIN)
         })
         .style(move |s| {
@@ -1163,6 +1193,22 @@ mod tests {
         assert_eq!(matching_pages(&items, "quick actions"), [Page::Menus]);
         assert!(matching_pages(&items, "missing value").is_empty());
         cx.dispose();
+    }
+
+    #[test]
+    fn previews_a_single_matching_page_without_changing_navigation() {
+        let selected = Page::Appearance;
+        assert_eq!(search_page(selected, Some(&[Page::Keymap])), Page::Keymap);
+        assert_eq!(search_page(selected, Some(&[])), selected);
+        assert_eq!(
+            search_page(selected, Some(&[Page::Keymap, Page::Menus])),
+            selected
+        );
+        assert_eq!(search_page(selected, None), selected);
+        assert_eq!(
+            search_page(Page::Overview, Some(&[Page::Menus])),
+            Page::Overview
+        );
     }
 
     #[test]
