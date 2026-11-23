@@ -18,10 +18,12 @@ if (Test-Path $proxy) {
 }
 
 switch ($env:PROCESSOR_ARCHITECTURE) {
-    # Only x86_64 is supported currently
     'AMD64' {
         $arch = 'x86_64'
     }
+    'ARM64' { $arch = 'aarch64' }
+    'x86' { $arch = 'x86' }
+    default { throw 'Unsupported proxy architecture' }
 }
 
 $url = "https://github.com/infinite-dev22/sparrow/releases/download/${version}/sparrow-proxy-windows-${arch}.gz"

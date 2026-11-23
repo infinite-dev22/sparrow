@@ -29,7 +29,7 @@
         <!-- Application binaries -->
         <DirectoryRef Id="sparrowProgramFiles">
             <Component Id="sparrowExe" Guid="*">
-                <File Id="sparrowExeFile" Source=".\target\release-lto\sparrow.exe" Name="sparrow.exe" KeyPath="yes"/>
+                <File Id="sparrowExeFile" Source="$(var.SparrowExe)" Name="sparrow.exe" KeyPath="yes"/>
             </Component>
         </DirectoryRef>
 

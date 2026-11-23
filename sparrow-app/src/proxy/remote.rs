@@ -255,6 +255,10 @@ fn download_remote(
 ) -> Result<()> {
     use base64::{Engine as _, engine::general_purpose};
 
+    let proxy_tag = match meta::RELEASE {
+        ReleaseType::Stable => format!("v{}", meta::VERSION),
+        _ => "nightly".to_owned(),
+    };
     let script_install = match platform {
         HostPlatform::Windows => {
             let local_proxy_script =
@@ -277,7 +281,7 @@ fn download_remote(
                     "-c",
                     remote_proxy_script,
                     "-version",
-                    meta::VERSION,
+                    &proxy_tag,
                     "-directory",
                     remote_proxy_path,
                 ])
@@ -290,11 +294,6 @@ fn download_remote(
         _ => {
             let proxy_script = general_purpose::STANDARD.encode(UNIX_PROXY_SCRIPT);
 
-            let version = match meta::RELEASE {
-                ReleaseType::Debug => "nightly".to_string(),
-                ReleaseType::Nightly => "nightly".to_string(),
-                ReleaseType::Stable => format!("v{}", meta::VERSION),
-            };
             let cmd = remote
                 .command_builder()
                 .args([
@@ -306,7 +305,7 @@ fn download_remote(
                     "|",
                     "sh",
                     "/dev/stdin",
-                    &version,
+                    &proxy_tag,
                     remote_proxy_path,
                 ])
                 .output()?;
@@ -342,12 +341,8 @@ fn download_remote(
                 // when needed
                 std::fs::remove_file(&local_proxy_file)?;
             }
-            let proxy_version = match meta::RELEASE {
-                meta::ReleaseType::Stable => meta::VERSION,
-                _ => "nightly",
-            };
             let url = format!(
-                "https://github.com/infinite-dev22/sparrow/releases/download/{proxy_version}/{proxy_filename}.gz"
+                "https://github.com/infinite-dev22/sparrow/releases/download/{proxy_tag}/{proxy_filename}.gz"
             );
             debug!("proxy download URI: {url}");
             let mut resp =

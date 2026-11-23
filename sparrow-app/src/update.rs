@@ -52,22 +52,29 @@ pub fn get_latest_release() -> Result<ReleaseInfo> {
     Ok(release)
 }
 
+fn release_asset_name(os: &str, arch: &str, portable: bool) -> Option<&'static str> {
+    Some(match (os, arch, portable) {
+        ("macos", "aarch64", _) => "Sparrow-macos.dmg",
+        ("linux", "aarch64", _) => "Sparrow-linux-arm64.tar.gz",
+        ("linux", "x86_64", _) => "Sparrow-linux-amd64.tar.gz",
+        ("linux", "x86", _) => "Sparrow-linux-i686.tar.gz",
+        ("windows", "aarch64", true) => "Sparrow-windows-arm64-portable.zip",
+        ("windows", "x86_64", true) => "Sparrow-windows-portable.zip",
+        ("windows", "x86", true) => "Sparrow-windows-i686-portable.zip",
+        ("windows", "x86_64", false) => "Sparrow-windows.msi",
+        _ => return None,
+    })
+}
+
 pub fn download_release(release: &ReleaseInfo) -> Result<PathBuf> {
     let dir =
         Directory::updates_directory().ok_or_else(|| anyhow!("no directory"))?;
-    let name = match std::env::consts::OS {
-        "macos" => "Sparrow-macos.dmg",
-        "linux" => match std::env::consts::ARCH {
-            "aarch64" => "Sparrow-linux-arm64.tar.gz",
-            "x86_64" => "Sparrow-linux-amd64.tar.gz",
-            _ => return Err(anyhow!("arch not supported")),
-        },
-        #[cfg(feature = "portable")]
-        "windows" => "Sparrow-windows-portable.zip",
-        #[cfg(not(feature = "portable"))]
-        "windows" => "Sparrow-windows.msi",
-        _ => return Err(anyhow!("os not supported")),
-    };
+    let name = release_asset_name(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        cfg!(feature = "portable"),
+    )
+    .ok_or_else(|| anyhow!("No release asset for this platform"))?;
     let file_path = dir.join(name);
 
     for asset in &release.assets {
@@ -232,4 +239,33 @@ pub fn cleanup() {
 ))]
 pub fn cleanup() {
     // Nothing to do yet
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_asset_name;
+
+    #[test]
+    fn updater_matches_release_assets_by_platform_and_architecture() {
+        let cases = [
+            ("macos", "aarch64", false, "Sparrow-macos.dmg"),
+            ("linux", "aarch64", false, "Sparrow-linux-arm64.tar.gz"),
+            ("linux", "x86_64", false, "Sparrow-linux-amd64.tar.gz"),
+            ("linux", "x86", false, "Sparrow-linux-i686.tar.gz"),
+            (
+                "windows",
+                "aarch64",
+                true,
+                "Sparrow-windows-arm64-portable.zip",
+            ),
+            ("windows", "x86_64", true, "Sparrow-windows-portable.zip"),
+            ("windows", "x86", true, "Sparrow-windows-i686-portable.zip"),
+            ("windows", "x86_64", false, "Sparrow-windows.msi"),
+        ];
+        for (os, arch, portable, asset) in cases {
+            assert_eq!(release_asset_name(os, arch, portable), Some(asset));
+        }
+        assert_eq!(release_asset_name("macos", "x86_64", false), None);
+        assert_eq!(release_asset_name("windows", "aarch64", false), None);
+    }
 }
