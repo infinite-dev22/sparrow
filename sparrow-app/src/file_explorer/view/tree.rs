@@ -1,37 +1,120 @@
 //! Virtualized Project tree, row appearance and pointer interactions.
 
-use std::{rc::Rc, sync::Arc};
+use std::{path::Path, rc::Rc, sync::Arc};
 
 use floem::{
     View,
-    event::{Event, EventListener},
-    kurbo::Rect,
+    event::{Event, EventListener, EventPropagation},
+    keyboard::Modifiers,
+    kurbo::{Rect, Vec2},
     peniko::Color,
     reactive::{
-        ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal,
+        ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo,
+        create_rw_signal,
     },
     style::{AlignItems, CursorStyle, Style},
+    text::{Attrs, AttrsList, TextLayout, Weight},
     views::{Decorators, container, label, stack, svg, virtual_stack},
 };
 use sparrow_rpc::{
-    file::{FileNodeViewData, FileNodeViewKind, Naming},
+    file::{FileNodeItem, FileNodeViewData, FileNodeViewKind, Naming},
     source_control::FileDiffKind,
 };
 
+use super::naming::{
+    file_node_input_view, initialize_naming_editor,
+    initialize_naming_editor_with_path,
+};
 use crate::file_explorer::{
     data::FileExplorerData, node::FileNodeVirtualList, project,
 };
+use crate::widgets::sparrow_scroll;
 use crate::{
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     panel::kind::PanelKind,
     source_control::SourceControlData,
     window_tab::{Focus, WindowTabData},
 };
-use crate::widgets::sparrow_scroll;
-use super::naming::{
-    file_node_input_view, initialize_naming_editor,
-    initialize_naming_editor_with_path,
-};
+
+const TREE_INDENT: f64 = 10.0;
+const CHEVRON_MARGIN: f64 = 10.0;
+const ICON_MARGIN: f64 = 6.0;
+const ROW_END_PADDING: f64 = 15.0;
+const ROOT_LABEL_GAP: f64 = 5.0;
+const EMPHASIZED: Weight = Weight(600);
+
+fn root_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn root_location(path: &Path) -> String {
+    std::env::var_os("HOME")
+        .and_then(|home| {
+            path.strip_prefix(home)
+                .ok()
+                .map(|relative| format!("~/{}", relative.display()))
+        })
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+fn platform_folder(path: &Path, is_dir: bool, workspace: Option<&Path>) -> bool {
+    is_dir
+        && path.parent() == workspace
+        && project::role(path, workspace) == Some("platform")
+}
+
+fn expanded_tree_width(
+    root: &FileNodeItem,
+    info: &project::ProjectInfo,
+    config: &SparrowConfig,
+    workspace: Option<&Path>,
+) -> f64 {
+    let family = config.ui.font_family();
+    let attrs = Attrs::new()
+        .family(&family)
+        .font_size(config.ui.font_size() as f32);
+    let mut layout = TextLayout::new();
+    let mut measure = |text: &str, emphasized| {
+        let attrs = if emphasized {
+            attrs.clone().weight(EMPHASIZED)
+        } else {
+            attrs.clone()
+        };
+        layout.set_text(text, AttrsList::new(attrs), None);
+        layout.size().width.ceil()
+    };
+    let row_chrome = CHEVRON_MARGIN
+        + config.ui.icon_size() as f64 * 2.0
+        + ICON_MARGIN * 2.0
+        + ROW_END_PADDING;
+    let mut widest = row_chrome
+        + TREE_INDENT
+        + ROOT_LABEL_GAP
+        + measure(&root_name(&root.path), true)
+        + measure(&root_location(&root.path), false);
+    let mut pending = Vec::new();
+    if root.open {
+        pending.extend(root.children.values().map(|node| (2, node)));
+    }
+    while let Some((level, node)) = pending.pop() {
+        let label = project::node_label(&node.path, info);
+        widest = widest.max(
+            row_chrome
+                + f64::from(level) * TREE_INDENT
+                + measure(
+                    &label,
+                    platform_folder(&node.path, node.is_dir, workspace),
+                ),
+        );
+        if node.open {
+            pending.extend(node.children.values().map(|child| (level + 1, child)));
+        }
+    }
+    widest
+}
 
 fn file_node_text_color(
     config: ReadSignal<Arc<SparrowConfig>>,
@@ -58,10 +141,7 @@ fn file_node_text_color(
         Some(FileDiffKind::Deleted) => SparrowColor::SOURCE_CONTROL_REMOVED,
         None => {
             if node.kind.path().and_then(|path| {
-                project::role(
-                    path,
-                    source_control.common.workspace.path.as_deref(),
-                )
+                project::role(path, source_control.common.workspace.path.as_deref())
             }) == Some("excluded")
             {
                 return Color::from_rgb8(184, 133, 88);
@@ -87,34 +167,19 @@ fn file_node_text_view(
             if node.is_root {
                 let file = path.clone();
                 container((
-                    label(move || {
-                        file.file_name()
-                            .map(|f| f.to_string_lossy().to_string())
-                            .unwrap_or_default()
-                    })
-                    .style(move |s| {
+                    label(move || root_name(&file)).style(move |s| {
                         s.height(ui_line_height.get())
                             .items_center()
-                            .font_weight(floem::text::Weight(600))
+                            .font_weight(EMPHASIZED)
                             .color(file_node_text_color(
                                 config,
                                 node.clone(),
                                 source_control.clone(),
                             ))
-                            .padding_right(5.0)
+                            .padding_right(ROOT_LABEL_GAP)
                             .selectable(false)
                     }),
-                    label(move || {
-                        let home =
-                            std::env::var_os("HOME").map(std::path::PathBuf::from);
-                        home.and_then(|home| {
-                            path.strip_prefix(home)
-                                .ok()
-                                .map(|p| format!("~/{}", p.display()))
-                        })
-                        .unwrap_or_else(|| path.display().to_string())
-                    })
-                    .style(move |s| {
+                    label(move || root_location(&path)).style(move |s| {
                         s.height(ui_line_height.get())
                             .color(
                                 config
@@ -125,23 +190,19 @@ fn file_node_text_view(
                     }),
                 ))
             } else {
-                let platform = node.is_dir
-                    && path.parent() == data.common.workspace.path.as_deref()
-                    && project::role(
-                        &path,
-                        data.common.workspace.path.as_deref(),
-                    ) == Some("platform");
+                let platform = platform_folder(
+                    &path,
+                    node.is_dir,
+                    data.common.workspace.path.as_deref(),
+                );
                 container(
                     label(move || {
-                        project_info
-                            .with(|info| project::node_label(&path, info))
+                        project_info.with(|info| project::node_label(&path, info))
                     })
                     .style(move |s| {
                         s.height(ui_line_height.get())
                             .items_center()
-                            .apply_if(platform, |s| {
-                                s.font_weight(floem::text::Weight(600))
-                            })
+                            .apply_if(platform, |s| s.font_weight(EMPHASIZED))
                             .color(file_node_text_color(
                                 config,
                                 node.clone(),
@@ -191,19 +252,30 @@ pub(super) fn file_explorer_view(
     let select = data.select;
     let secondary_click_data = data.clone();
     let scroll_rect = create_rw_signal(Rect::ZERO);
+    let scroll_width = create_rw_signal(0.0_f64);
+    let horizontal_delta = create_rw_signal(Vec2::ZERO);
     let focus = data.common.focus;
 
-    let external =
-        project::external_libraries(window, project_info, library_watch);
+    let external = project::external_libraries(window, project_info, library_watch);
     let workspace_root = data.common.workspace.path.clone();
-    sparrow_scroll(
-        stack((
+    let width_workspace = workspace_root.clone();
+    // Measure expanded nodes independently of the virtual rows on screen, so
+    // the horizontal viewport stays stable while scrolling vertically.
+    let tree_width = create_memo(move |_| {
+        let config = config.get();
+        project_info.with(|info| {
+            root.with(|root| {
+                expanded_tree_width(root, info, &config, width_workspace.as_deref())
+            })
+        })
+    });
+    let content_id;
+    sparrow_scroll({
+        let content = stack((
             container(
                 virtual_stack(
                     move || FileNodeVirtualList::new(root.get(), data.naming.get()),
-                    move |node| {
-                        (node.kind.clone(), node.is_dir, node.open, node.level)
-                    },
+                    move |node| (node.kind.clone(), node.is_dir, node.open, node.level),
                     move |node| {
                         let level = node.level;
                         let data = data.clone();
@@ -234,10 +306,9 @@ pub(super) fn file_explorer_view(
 
                                 s.size(size, size)
                                     .flex_shrink(0.0f32)
-                                    .margin_left(10.0)
+                                    .margin_left(CHEVRON_MARGIN)
                                     .color(if is_dir {
-                                        config
-                                            .color(SparrowColor::SPARROW_ICON_ACTIVE)
+                                        config.color(SparrowColor::SPARROW_ICON_ACTIVE)
                                     } else {
                                         Color::TRANSPARENT
                                     })
@@ -254,8 +325,7 @@ pub(super) fn file_explorer_view(
                                         kind.path()
                                             .map(|path| config.folder_svg(path).0)
                                             .unwrap_or_else(|| {
-                                                config
-                                                    .ui_svg(SparrowIcons::DIRECTORY)
+                                                config.ui_svg(SparrowIcons::DIRECTORY)
                                             })
                                     } else if let Some(path) = kind.path() {
                                         config.file_svg(path).0
@@ -269,12 +339,11 @@ pub(super) fn file_explorer_view(
 
                                     s.size(size, size)
                                         .flex_shrink(0.0f32)
-                                        .margin_horiz(6.0)
+                                        .margin_horiz(ICON_MARGIN)
                                         .apply_opt(
                                             kind_for_style.path().and_then(|path| {
                                                 if is_root
-                                                    && project_info
-                                                        .with(|p| p.flutter)
+                                                    && project_info.with(|p| p.flutter)
                                                 {
                                                     None
                                                 } else if is_dir
@@ -283,18 +352,13 @@ pub(super) fn file_explorer_view(
                                                     Some(config.color(
                                                         SparrowColor::EDITOR_LINK,
                                                     ))
-                                                } else if is_dir
-                                                    && role == Some("test")
+                                                } else if is_dir && role == Some("test")
                                                 {
-                                                    Some(Color::from_rgb8(
-                                                        109, 161, 107,
-                                                    ))
+                                                    Some(Color::from_rgb8(109, 161, 107))
                                                 } else if is_dir
                                                     && role == Some("excluded")
                                                 {
-                                                    Some(Color::from_rgb8(
-                                                        184, 133, 88,
-                                                    ))
+                                                    Some(Color::from_rgb8(184, 133, 88))
                                                 } else if is_dir {
                                                     config.folder_svg(path).1
                                                 } else {
@@ -315,20 +379,16 @@ pub(super) fn file_explorer_view(
                         .style({
                             let kind = kind.clone();
                             move |s| {
-                                s.padding_right(15.0)
+                                s.padding_right(ROW_END_PADDING)
                                     .border_radius(6.0)
                                     .min_width_full()
-                                    .padding_left((level * 10) as f32)
+                                    .padding_left(level as f64 * TREE_INDENT)
                                     .align_items(AlignItems::Center)
                                     .apply_if(role == Some("excluded"), |s| {
-                                        s.background(Color::from_rgba8(
-                                            122, 79, 40, 35,
-                                        ))
+                                        s.background(Color::from_rgba8(122, 79, 40, 35))
                                     })
                                     .apply_if(role == Some("test"), |s| {
-                                        s.background(Color::from_rgba8(
-                                            58, 103, 48, 30,
-                                        ))
+                                        s.background(Color::from_rgba8(58, 103, 48, 30))
                                     })
                                     .hover(|s| {
                                         s.background(config.get().color(
@@ -343,8 +403,8 @@ pub(super) fn file_explorer_view(
                                             .unwrap_or_default(),
                                         |x| {
                                             x.background(config.get().color(
-                                            SparrowColor::PANEL_SELECTION_BACKGROUND,
-                                        ))
+                                                SparrowColor::PANEL_SELECTION_BACKGROUND,
+                                            ))
                                         },
                                     )
                             }
@@ -378,11 +438,9 @@ pub(super) fn file_explorer_view(
                             .on_event_stop(
                                 EventListener::PointerDown,
                                 move |event| {
-                                    if let Event::PointerDown(pointer_event) = event
-                                    {
+                                    if let Event::PointerDown(pointer_event) = event {
                                         if pointer_event.button.is_auxiliary() {
-                                            aux_click_data
-                                                .middle_click(&aux_click_path);
+                                            aux_click_data.middle_click(&aux_click_path);
                                         }
                                     }
                                 },
@@ -404,31 +462,57 @@ pub(super) fn file_explorer_view(
             }),
             external,
         ))
-        .style(|s| s.flex_col().min_width_full()),
-    )
-    .style(|s| s.absolute().size_full().line_height(1.0))
-    .on_secondary_click_stop(move |_| {
-        if let Naming::None = naming.get_untracked() {
-            if let Some(path) = &secondary_click_data.common.workspace.path {
-                secondary_click_data.secondary_click(path);
+        .style(move |s| {
+            s.flex_col()
+                .min_width(tree_width.get().max(scroll_width.get()))
+        });
+        content_id = content.id();
+        content
+    })
+        .style(|s| s.absolute().size_full().line_height(1.0))
+        .on_secondary_click_stop(move |_| {
+            if let Naming::None = naming.get_untracked() {
+                if let Some(path) = &secondary_click_data.common.workspace.path {
+                    secondary_click_data.secondary_click(path);
+                }
             }
-        }
-    })
-    .on_resize(move |rect| {
-        scroll_rect.set(rect);
-    })
-    .scroll_to(move || {
-        if let Some(line) = scroll_to_line.get() {
-            let line_height = ui_line_height.get_untracked();
-            Some(
-                (
-                    0.0,
-                    line * line_height - scroll_rect.get_untracked().height() / 2.0,
+        })
+        .on_scroll(move |rect| {
+            scroll_rect.set(rect);
+            if scroll_width.get_untracked() != rect.width() {
+                scroll_width.set(rect.width());
+            }
+        })
+        .on_event(EventListener::PointerWheel, move |event| {
+            let Event::PointerWheel(pointer) = event else {
+                return EventPropagation::Continue;
+            };
+            if pointer.modifiers.contains(Modifiers::SHIFT)
+                && pointer.delta.x == 0.0
+                && pointer.delta.y != 0.0
+                && content_id
+                    .get_size()
+                    .is_some_and(|size| size.width > scroll_width.get_untracked())
+            {
+                horizontal_delta.set(Vec2::new(pointer.delta.y, 0.0));
+                return EventPropagation::Stop;
+            }
+            EventPropagation::Continue
+        })
+        .scroll_delta(move || horizontal_delta.get())
+        .scroll_to(move || {
+            if let Some(line) = scroll_to_line.get() {
+                let line_height = ui_line_height.get_untracked();
+                Some(
+                    (
+                        scroll_rect.get_untracked().x0,
+                        line * line_height
+                            - scroll_rect.get_untracked().height() / 2.0,
+                    )
+                        .into(),
                 )
-                    .into(),
-            )
-        } else {
-            None
-        }
-    })
+            } else {
+                None
+            }
+        })
 }
