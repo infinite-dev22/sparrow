@@ -33,10 +33,14 @@ pub(super) fn size(group: &str, key: &str) -> [f64; 2] {
     [0, 1].map(|index| values[index].as_integer().expect("integer size") as f64)
 }
 
-pub(super) fn padding(style: Style, group: &str, key: &str) -> Style {
+pub(super) fn insets(group: &str, key: &str) -> [f64; 4] {
     let values = value(group, key).as_array().expect("insets array");
-    let [top, left, bottom, right] = [0, 1, 2, 3]
-        .map(|index| values[index].as_integer().expect("integer inset") as f64);
+    [0, 1, 2, 3]
+        .map(|index| values[index].as_integer().expect("integer inset") as f64)
+}
+
+pub(super) fn padding(style: Style, group: &str, key: &str) -> Style {
+    let [top, left, bottom, right] = insets(group, key);
     style
         .padding_top(top)
         .padding_left(left)

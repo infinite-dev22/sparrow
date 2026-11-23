@@ -34,7 +34,7 @@ pub(super) fn settings_split(
     let available = create_rw_signal(0.0_f64);
     let anchor = create_rw_signal(None::<(f64, f64)>);
     let rule_width = tokens::length("navigation", "split_divider_width");
-    let clamp_width = sidebar_width_clamp(default_proportion, rule_width);
+    let clamp_width = sidebar_width_clamp(rule_width);
     let width = move || {
         let available = available.get();
         clamp_width(available * proportion.get(), available)
@@ -134,27 +134,39 @@ pub(super) fn sidebar_background(config: &SparrowConfig) -> floem::peniko::Color
     config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND)
 }
 
-fn sidebar_width_clamp(
-    default_proportion: f64,
-    rule_width: f64,
-) -> impl Fn(f64, f64) -> f64 + Copy {
-    let [field_minimum, _] = tokens::control_minimum_size("TextField.minimumSize");
+fn sidebar_width_clamp(rule_width: f64) -> impl Fn(f64, f64) -> f64 + Copy {
+    let [input_minimum, _] = tokens::control_minimum_size("TextField.minimumSize");
     let [icon_width, _] = tokens::size("search", "search_icon_grid");
     let [button_width, _] = tokens::control_minimum_size("Button.minimumSize");
-    let icon_gap = tokens::length("search", "icon_gap");
-    let sidebar_minimum = field_minimum + icon_width * 2.0 + icon_gap * 2.0;
+    let [_, left, _, right] =
+        tokens::insets("navigation", "search_container_insets");
+    let gap = tokens::length("search", "icon_gap");
+    let border = tokens::length("search", "inner_border_width");
+    // Keep room for the query after Clear appears. Two gaps and two padding edges
+    // use the same spacing in the search frame.
+    let sidebar_minimum = input_minimum
+        + icon_width
+        + search_control_height()
+        + 4.0 * gap
+        + 2.0 * border
+        + left
+        + right;
     move |desired, available| {
-        let minimum = sidebar_minimum.min(available * default_proportion);
-        let maximum = (available - button_width - rule_width).max(minimum);
+        let maximum = (available - button_width - rule_width).max(0.0);
+        let minimum = sidebar_minimum.min(maximum);
         desired.clamp(minimum, maximum)
     }
 }
 
-pub(super) fn search_field(style: Style) -> Style {
+pub(super) fn search_control_height() -> f64 {
     let [_, height] = tokens::control_minimum_size("TextField.minimumSize");
+    height
+}
+
+pub(super) fn search_field(style: Style) -> Style {
     let gap = tokens::length("search", "icon_gap");
     style
-        .height(height)
+        .height(search_control_height())
         .padding_horiz(gap)
         .gap(gap)
         .border_radius(tokens::length("search", "inner_outline_radius_at_1x"))
@@ -305,12 +317,13 @@ mod tests {
         let proportion =
             tokens::proportion("navigation", "split_default_proportion");
         let rule_width = tokens::length("navigation", "split_divider_width");
-        let clamp = sidebar_width_clamp(proportion, rule_width);
+        let clamp = sidebar_width_clamp(rule_width);
 
         assert_eq!(clamp(900.0 * proportion, 900.0), 180.0);
-        assert_eq!(clamp(0.0, 900.0), 85.0);
+        assert_eq!(clamp(0.0, 900.0), 113.0);
+        assert_eq!(clamp(60.0, 305.0), 113.0);
         assert_eq!(clamp(900.0, 900.0), 827.0);
-        assert_eq!(clamp(18.0, 90.0), 18.0);
+        assert_eq!(clamp(18.0, 90.0), 17.0);
         assert_eq!(clamp(0.0, 0.0), 0.0);
     }
 

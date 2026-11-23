@@ -666,11 +666,17 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 search_id.request_focus();
             },
             || false,
-            move || query.with(String::is_empty),
+            // Hiding Clear removes it from the tab order. Disabling it in the click
+            // handler would schedule a focus advance after the input regains focus.
+            || false,
             || tokens::text("search", "clear_action_label"),
             config,
         )
-        .style(move |s| s.apply_if(query.with(String::is_empty), |s| s.hide()));
+        .style(move |s| {
+            s.width(layout::search_control_height())
+                .flex_shrink(0.0_f32)
+                .apply_if(query.with(String::is_empty), |s| s.hide())
+        });
     let icon_grid = tokens::size("search", "search_icon_grid");
     let search = search_field_with_style(
         search.on_event(EventListener::KeyDown, move |event| {
