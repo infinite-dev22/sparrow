@@ -55,6 +55,8 @@ pub fn source_control_panel(
     let new_open = create_rw_signal(true);
     let refresh_source = source.clone();
     let commit_action = source.commit_action;
+    let lease = source.pending_amend_push;
+    let pending_source = source.clone();
     let group = move |unversioned: bool, open: floem::reactive::RwSignal<bool>| {
         let selection = create_memo(move |_| {
             untracked.with(|untracked| {
@@ -159,6 +161,46 @@ pub fn source_control_panel(
     .on_click_stop(move |_| push.commit_with_options(true))
     .disabled(move || busy.get())
     .style(|s| s.padding_horiz(12.0).height(26.0));
+    let pending_window = window.clone();
+    let pending_push_button = crate::widgets::button(
+        move || {
+            lease.with(|pending| {
+                pending
+                    .as_ref()
+                    .map(|pending| format!("{}…", pending.label()))
+                    .unwrap_or_default()
+            })
+        },
+        crate::widgets::ButtonKind::Outlined,
+        config,
+    )
+    .on_click_stop(move |_| {
+        let Some(pending) = lease.get_untracked() else {
+            return;
+        };
+        let label = pending.label();
+        let source = pending_source.clone();
+        let alert_active = pending_window.alert_data.active;
+        pending_window.show_alert(
+            label.into(),
+            pending.confirmation(),
+            vec![crate::widgets::alert::AlertButton {
+                text: label.into(),
+                action: Rc::new(move || {
+                    alert_active.set(false);
+                    source.push_pending_amend(pending.clone());
+                }),
+            }],
+        );
+    })
+    .disabled(move || busy.get())
+    .style(move |s| {
+        s.padding_horiz(12.0)
+            .height(26.0)
+            .margin_left(6.0)
+            .margin_bottom(4.0)
+            .apply_if(lease.with(Option::is_none), |s| s.hide())
+    });
     let message_view = stack((
         editor_view(editor.get_untracked(), debug, active)
             .style(move |s| s.width(message_width.get().max(40.0) as f32)),
@@ -259,6 +301,7 @@ pub fn source_control_panel(
                 .font_size(11.0)
                 .apply_if(status.with(|s| s.is_empty()), |s| s.hide())
         }),
+        pending_push_button,
         stack((commit_button, push_button))
             .style(|s| s.height(36.0).gap(6.0).items_center().padding_horiz(6.0)),
     ))

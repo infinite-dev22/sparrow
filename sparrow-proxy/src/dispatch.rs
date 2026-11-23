@@ -1831,57 +1831,8 @@ fn search_in_path(
     Ok(ProxyResponse::GlobalSearchResponse { matches })
 }
 
-/// Commit only the selected working-tree paths; preserve staged changes in other files.
-pub fn commit_selected(workspace: &Path, message: &str, diffs: Vec<FileDiff>, amend: bool, push: bool) -> std::result::Result<String,String> {
-    fn git(root:&Path,args:&[String])->std::result::Result<String,String>{
-        let result=std::process::Command::new("git").current_dir(root).args(args)
-            .stdin(std::process::Stdio::null()).env("GIT_TERMINAL_PROMPT","0").output().map_err(|e|e.to_string())?;
-        if result.status.success(){Ok(String::from_utf8_lossy(&result.stdout).trim().to_string())}
-        else{Err(String::from_utf8_lossy(&result.stderr).trim().to_string())}
-    }
-    if message.trim().is_empty(){return Err("Enter a commit message.".into());}
-    let mut paths=Vec::new();let mut new_paths=Vec::new();
-    for diff in diffs {
-        let (selected,added)=match diff {
-            FileDiff::Added(path)=>(vec![path.clone()],Some(path)),
-            FileDiff::Renamed(added,removed)=>(vec![added.clone(),removed],Some(added)),
-            FileDiff::Modified(path)|FileDiff::Deleted(path)=>(vec![path],None),
-        };
-        for path in selected {paths.push(path.strip_prefix(workspace).map_err(|_|"Selected file is outside the project")?.to_string_lossy().to_string());}
-        if let Some(path)=added {new_paths.push(path.strip_prefix(workspace).map_err(|_|"Selected file is outside the project")?.to_string_lossy().to_string());}
-    }
-    paths.sort();paths.dedup();
-    if paths.is_empty()&&!amend{return Err("Select changes to commit.".into());}
-    if !new_paths.is_empty(){let mut args=vec!["add".into(),"--intent-to-add".into(),"--".into()];args.extend(new_paths);git(workspace,&args)?;}
-    let mut args=vec!["commit".into(),"--only".into(),"--message".into(),message.into()];
-    if amend{args.push("--amend".into());}args.push("--".into());args.extend(paths);
-    let committed=git(workspace,&args)?;
-    if push {match git(workspace,&["push".into()]) {
-        Ok(pushed)=>Ok(format!("{committed}\n{pushed}")),
-        Err(error)=>Ok(format!("Commit succeeded. Push failed:\n{error}")),
-    }}else{Ok(committed)}
-}
-
-#[cfg(test)]
-mod selected_commit_tests {
-    use super::*;
-    fn git(root:&Path,args:&[&str])->String {
-        let out=std::process::Command::new("git").current_dir(root).args(args).output().unwrap();
-        assert!(out.status.success(),"{}",String::from_utf8_lossy(&out.stderr));String::from_utf8_lossy(&out.stdout).to_string()
-    }
-    #[test]
-    fn selected_commit_preserves_unselected_staging_and_amend_is_real() {
-        let dir=tempfile::tempdir().unwrap();let root=dir.path();git(root,&["init","-q"]);git(root,&["config","user.name","Probe"]);git(root,&["config","user.email","probe@example.invalid"]);
-        std::fs::write(root.join("main.dart"),"first").unwrap();std::fs::write(root.join("other.dart"),"other").unwrap();git(root,&["add","."]);git(root,&["commit","-qm","initial"]);
-        std::fs::write(root.join("main.dart"),"changed").unwrap();std::fs::write(root.join("other.dart"),"staged").unwrap();git(root,&["add","other.dart"]);
-        commit_selected(root,"selected",vec![FileDiff::Modified(root.join("main.dart"))],false,false).unwrap();
-        assert_eq!(git(root,&["show","HEAD:other.dart"]).trim(),"other");
-        assert_eq!(git(root,&["diff","--cached","--name-only"]).trim(),"other.dart");
-        std::fs::write(root.join("new.dart"),"new").unwrap();
-        commit_selected(root,"amended",vec![FileDiff::Added(root.join("new.dart"))],true,false).unwrap();
-        assert_eq!(git(root,&["rev-list","--count","HEAD"]).trim(),"2");
-        assert_eq!(git(root,&["show","HEAD:new.dart"]).trim(),"new");
-        assert_eq!(git(root,&["log","-1","--format=%s"]).trim(),"amended");
-        let error=commit_selected(root,"",vec![],false,false).unwrap_err();assert!(error.contains("message"));
-    }
-}
+mod selected_commit;
+pub use selected_commit::{
+    AmendLeaseError, AmendPushLease, SelectedCommitResult, commit_selected,
+    push_amend_with_lease, recover_amend_push,
+};

@@ -52,10 +52,8 @@ ignore        = "0.4"
 grep-searcher = "0.1"
 grep-matcher  = "0.1"
 grep-regex    = "0.1"
+tempfile      = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies.locale_config]
 git    = "https://github.com/lapce/locale_config.git"
 branch = "lapce"
-
-[dev-dependencies]
-tempfile = { workspace = true }
