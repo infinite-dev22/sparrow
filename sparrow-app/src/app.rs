@@ -76,7 +76,7 @@ use workbench::workbench;
 use workspace_tabs::workspace_tab_header;
 
 pub(crate) fn sparrow_window_config() -> WindowConfig {
-    WindowConfig::default().application_id("dev.sparrow.sparrow")
+    WindowConfig::default().app_id("dev.sparrow.sparrow")
 }
 
 #[derive(Parser)]
