@@ -1,3 +1,4 @@
+use crate::widgets::file_picker::{FileDialogOptions, open_file};
 use sparrow_core::rope_text_pos::RopeTextPosition;
 use std::{
     cell::Cell,
@@ -14,9 +15,8 @@ use std::{
 
 use floem::{
     ViewId,
-    action::{TimerToken, open_file, remove_overlay},
+    action::{TimerToken, remove_overlay},
     ext_event::{create_ext_action, create_signal_from_channel},
-    file::FileDialogOptions,
     keyboard::Modifiers,
     kurbo::Size,
     peniko::kurbo::{Point, Rect, Vec2},
@@ -1360,7 +1360,7 @@ impl WindowTabData {
                     } else {
                         options
                     };
-                    open_file(options, move |file| {
+                    open_file(options, self.common.config, move |file| {
                         if let Some(mut file) = file {
                             let workspace = SparrowWorkspace {
                                 kind: SparrowWorkspaceType::Local,
@@ -1397,17 +1397,29 @@ impl WindowTabData {
             OpenFile => {
                 if !self.workspace.kind.is_remote() {
                     let internal_command = self.common.internal_command;
-                    let options = FileDialogOptions::new().title("Choose a file");
-                    open_file(options, move |file| {
-                        if let Some(mut file) = file {
-                            internal_command.send(InternalCommand::OpenFile {
-                                path: if let Some(path) = file.path.pop() {
-                                    path
-                                } else {
-                                    error!("No path");
-                                    return;
-                                },
-                            })
+                    let window_command = self.common.window_common.window_command;
+                    let mut options = FileDialogOptions::new()
+                        .title("Open File or Project")
+                        .files_and_directories();
+                    if let Some(path) = self.workspace.path.as_ref() {
+                        options = options.force_starting_directory(path);
+                    }
+                    open_file(options, self.common.config, move |file| {
+                        let Some(path) = file.and_then(|file| file.path.into_iter().next()) else {
+                            return;
+                        };
+                        if path.is_dir() {
+                            let workspace = SparrowWorkspace {
+                                kind: SparrowWorkspaceType::Local,
+                                path: Some(path),
+                                last_open: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                            };
+                            window_command.send(WindowCommand::SetWorkspace { workspace });
+                        } else {
+                            internal_command.send(InternalCommand::OpenFile { path });
                         }
                     });
                 } else { // TODO: Force only choosing files?

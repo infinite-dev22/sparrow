@@ -134,9 +134,10 @@ pub(super) fn panel(state: State) -> impl View {
         label(|| "Browse…")
             .on_click_stop(move |_| {
                 let state = browse.clone();
-                floem::action::open_file(
-                    floem::file::FileDialogOptions::new()
+                crate::widgets::file_picker::open_file(
+                    crate::widgets::file_picker::FileDialogOptions::new()
                         .title("Open Logcat capture"),
+                    config,
                     move |file| {
                         if let Some(mut file) = file {
                             if let Some(path) = file.path.pop() {

@@ -1,5 +1,7 @@
 pub(crate) mod view;
 
+use crate::widgets::file_picker::{FileDialogOptions, save_as};
+
 use std::{
     cell::Cell,
     collections::HashMap,
@@ -8,9 +10,9 @@ use std::{
 };
 
 use floem::{
-    action::{exec_after, save_as},
+    action::exec_after,
     ext_event::create_ext_action,
-    file::{FileDialogOptions, FileInfo},
+    file::FileInfo,
     keyboard::Modifiers,
     peniko::kurbo::{Point, Rect, Vec2},
     reactive::{Memo, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, batch},
@@ -2120,6 +2122,7 @@ impl MainSplitData {
                             internal_command.send(InternalCommand::HideAlert);
                             save_as(
                                 FileDialogOptions::new().title("Save File"),
+                                main_split.common.config,
                                 move |file: Option<FileInfo>| {
                                     let main_split = main_split.clone();
                                     let child = child.clone();
@@ -2877,6 +2880,7 @@ impl MainSplitData {
         let main_split = self.clone();
         save_as(
             FileDialogOptions::new().title("Save File"),
+            self.common.config,
             move |file: Option<FileInfo>| {
                 if let Some(mut file) = file {
                     main_split.save_as(
@@ -2898,6 +2902,7 @@ impl MainSplitData {
         let main_split = self.clone();
         save_as(
             FileDialogOptions::new().title("Save File"),
+            self.common.config,
             move |file: Option<FileInfo>| {
                 if let Some(mut file) = file {
                     main_split.save_as2(

@@ -192,7 +192,8 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
                 let generation = import_window.scaffold.generation.get_untracked();
                 let window = import_window.clone();
                 import_focus.open_file(
-                    floem::file::FileDialogOptions::new().title("Import scaffold pack folder").select_directories(),
+                    crate::widgets::file_picker::FileDialogOptions::new().title("Import scaffold pack folder").select_directories(),
+                    config,
                     move |file| {
                         if !active.get_untracked() || !window.scaffold.manager_mode.get_untracked()
                             || window.scaffold.generation.get_untracked() != generation { return; }

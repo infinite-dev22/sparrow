@@ -279,8 +279,9 @@ fn toolbar_actions(
             move || {
                 let entries = export.get_untracked();
                 let window = export_window.clone();
-                floem::action::save_as(
-                    floem::file::FileDialogOptions::new().title("Export Logcat"),
+                crate::widgets::file_picker::save_as(
+                    crate::widgets::file_picker::FileDialogOptions::new().title("Export Logcat"),
+                    config,
                     move |file| {
                         if let Some(mut file) = file {
                             if let Some(path) = file.path.pop() {

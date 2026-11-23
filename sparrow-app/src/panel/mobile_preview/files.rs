@@ -3,13 +3,14 @@ use std::{path::PathBuf, rc::Rc};
 
 use floem::{
     View,
-    file::FileDialogOptions,
-    file_action::{open_file, save_as},
     reactive::{SignalGet, SignalUpdate},
     views::{Decorators, dyn_stack, label, stack},
 };
 
-use crate::widgets::{ButtonKind, button};
+use crate::widgets::{
+    ButtonKind, button,
+    file_picker::{FileDialogOptions, open_file, save_as},
+};
 
 use super::{screen::Config, session::Session};
 
@@ -24,6 +25,7 @@ pub(super) fn view(session: Session, config: Config) -> impl View {
             FileDialogOptions::new()
                 .title("Import files to simulated device")
                 .multi_selection(),
+            config,
             move |info| {
                 let Some(info) = info else {
                     return;
@@ -100,6 +102,7 @@ pub(super) fn view(session: Session, config: Config) -> impl View {
                             save_as(
                                 FileDialogOptions::new()
                                     .default_name(destination_name.clone()),
+                                config,
                                 move |info| {
                                     if let Some(target) = info
                                         .as_ref()

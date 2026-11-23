@@ -231,13 +231,13 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         focus.control(
             button(|| "Browse…", ButtonKind::Plain, config).on_click_stop(
                 move |_| {
-                    let mut options = floem::file::FileDialogOptions::new()
+                    let mut options = crate::widgets::file_picker::FileDialogOptions::new()
                         .title("Search directory")
                         .select_directories();
                     if let Some(root) = &root_for_picker {
                         options = options.force_starting_directory(root.clone());
                     }
-                    directory_picker.open_file(options, move |file| {
+                    directory_picker.open_file(options, config, move |file| {
                         if let Some(path) =
                             file.and_then(|file| file.path.into_iter().next())
                         {

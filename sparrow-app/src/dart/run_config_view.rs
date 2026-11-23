@@ -1,3 +1,4 @@
+use crate::widgets::file_picker::FileDialogOptions;
 use super::run_config::{self, Draft, TaskDraft};
 use crate::widgets::modal_focus::{ModalChoice, ModalFocus};
 use crate::{
@@ -10,7 +11,7 @@ use crate::{
 use floem::{
     View,
     event::{Event, EventListener},
-    file::{FileDialogOptions, FileSpec},
+    file::FileSpec,
     keyboard::{Key, NamedKey},
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::{Decorators, container, empty, label, stack},
@@ -624,7 +625,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     extensions: &["dart"],
                 }]);
             }
-            entry_browser.open_file(options, move |file| {
+            entry_browser.open_file(options, config, move |file| {
                 if !visible.get_untracked() {
                     return;
                 }
@@ -659,6 +660,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         &browse_root,
                         Some(&cwd.get_untracked()),
                     )),
+                config,
                 move |file| {
                     if !visible.get_untracked() {
                         return;

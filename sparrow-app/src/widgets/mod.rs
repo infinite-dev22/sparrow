@@ -7,6 +7,7 @@ mod checkbox;
 mod dialog_surface;
 pub mod divider;
 pub mod dropdown;
+pub(crate) mod file_picker;
 mod editor_input;
 mod empty_state;
 pub mod focus_text;

@@ -105,10 +105,11 @@ impl Default for ModalFocus {
     }
 }
 impl ModalFocus {
-    /// Keep the owning dialog modal while the asynchronous OS chooser is open.
-    pub fn open_file(
+    /// Keep the owning dialog modal while the file chooser is open.
+    pub(crate) fn open_file(
         &self,
-        options: floem::file::FileDialogOptions,
+        options: super::file_picker::FileDialogOptions,
+        config: super::file_picker::Config,
         selected: impl Fn(Option<floem::file::FileInfo>) + 'static,
     ) {
         let pending = self.picker_open;
@@ -117,10 +118,12 @@ impl ModalFocus {
         }
         pending.set(true);
         FILE_PICKERS.with(|count| count.set(count.get() + 1));
-        floem::action::open_file(options, move |file| {
+        super::file_picker::open_file(options, config, move |file| {
             FILE_PICKERS.with(|count| count.set(count.get().saturating_sub(1)));
-            pending.set(false);
-            selected(file);
+            if pending.try_get_untracked().is_some() {
+                pending.set(false);
+                selected(file);
+            }
         });
     }
     pub fn set_root(&self, root: ViewId) {

@@ -94,7 +94,7 @@ pub(super) fn setting_row(
                 keyboard.icon(
                     || SparrowIcons::DIRECTORY,
                     move || {
-                        let mut options = floem::file::FileDialogOptions::new()
+                        let mut options = crate::widgets::file_picker::FileDialogOptions::new()
                             .title("Choose SDK directory")
                             .select_directories();
                         let current =
@@ -102,7 +102,7 @@ pub(super) fn setting_row(
                         if current.is_dir() {
                             options = options.force_starting_directory(current);
                         }
-                        browser.open_file(options, move |selection| {
+                        browser.open_file(options, config, move |selection| {
                             if let Some(path) = selection.and_then(|selection| {
                                 selection.path.first().cloned()
                             }) {
