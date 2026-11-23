@@ -2,364 +2,234 @@ name: Release
 
 on:
   schedule:
-    - cron: 0 0 * * *
+    - cron: '0 0 * * *'
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Tag name for release"
-        required: false
+        description: nightly or an existing version tag on the selected commit
+        type: string
         default: nightly
+      publish:
+        description: Publish the artifacts to GitHub Releases
+        type: boolean
+        default: false
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
   pull_request:
     paths:
-      # trigger release workflow only if this file changed
       - .github/workflows/release.yml
+      - scripts/release-linux.sh
+      - .cargo/config.toml
+      - Cargo.lock
+      - '**/Cargo.toml'
+      - extra/macos/**
+      - extra/windows/wix/**
+      - sparrow-app/src/update.rs
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ${{ github.ref }}-${{ github.workflow }}
+  group: release-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.publish && inputs.tag_name == 'nightly') && 'nightly' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  CARGO_TERM_COLOR: always
-
-permissions: {}
-
 jobs:
-  tagname:
-    runs-on: ubuntu-latest
+  metadata:
+    runs-on: ubuntu-24.04
     outputs:
-      tag_name: ${{ steps.tag.outputs.tag }}
-    steps:
-      - id: vars
-        shell: bash
-        run: echo "sha_short=${GITHUB_SHA::7}" | tee -a $GITHUB_OUTPUT
-
-      - if: github.event_name == 'workflow_dispatch'
-        run: echo "TAG_NAME=${{ github.event.inputs.tag_name }}" | tee -a $GITHUB_ENV
-
-      - if: github.event_name == 'schedule' || github.event_name == 'pull_request'
-        run: echo 'TAG_NAME=nightly-${{ steps.vars.outputs.sha_short }}' | tee -a $GITHUB_ENV
-
-      - if: github.event_name == 'push'
-        run: |
-          TAG_NAME=${{ github.ref }}
-          echo "TAG_NAME=${TAG_NAME#refs/tags/}" | tee -a $GITHUB_ENV
-
-      - id: tag
-        run: echo "tag=$TAG_NAME" | tee -a $GITHUB_OUTPUT
-
-  windows:
-    runs-on: windows-latest
-    needs: tagname
-    env:
-      RELEASE_TAG_NAME: ${{ needs.tagname.outputs.tag_name }}
-    defaults:
-      run:
-        shell: bash
-    permissions:
-      contents: read
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-
-      - name: Update rust
-        run: rustup update --no-self-update
-
-      - name: Fetch dependencies
-        run: cargo fetch --locked
-
-      - name: Build
-        run: cargo build --frozen --profile release-lto
-
-      - name: Crate msi installer
+        with:
+          fetch-depth: 0
+      - name: Resolve and validate release tag
+        id: tag
+        env:
+          EVENT: ${{ github.event_name }}
+          REQUESTED_TAG: ${{ inputs.tag_name }}
         run: |
-          candle.exe -arch "x64" -ext WixUIExtension -ext WixUtilExtension \
-            -out "./sparrow.wixobj" "extra/windows/wix/sparrow.wxs"
+          case "$EVENT" in
+            push) tag="$GITHUB_REF_NAME" ;;
+            workflow_dispatch) tag="${REQUESTED_TAG:-nightly}" ;;
+            *) tag=nightly ;;
+          esac
+          if [[ "$tag" != nightly ]]; then
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][a-zA-Z0-9.-]+)?$ ]]
+            [[ "$(git rev-parse "refs/tags/$tag^{commit}")" == "$GITHUB_SHA" ]]
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-          light.exe -ext WixUIExtension -ext WixUtilExtension \
-            -out "./sparrow-windows.msi" -sice:ICE61 -sice:ICE91 \
-            "./sparrow.wixobj"
+  build:
+    name: Build ${{ matrix.target }}
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            cpu: apple-m1
+            platform: darwin
+            arch: aarch64
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            cpu: generic
+            platform: windows
+            arch: aarch64
+            asset: Sparrow-windows-arm64-portable.zip
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            cpu: x86-64-v2
+            platform: windows
+            arch: x86_64
+            asset: Sparrow-windows-portable.zip
+          - runner: windows-2022
+            target: i686-pc-windows-msvc
+            cpu: pentium4
+            platform: windows
+            arch: x86
+            asset: Sparrow-windows-i686-portable.zip
+          - runner: ubuntu-24.04
+            target: i686-unknown-linux-gnu
+            cpu: pentium4
+            platform: linux
+            arch: x86
+            image: i386/debian:bookworm-slim
+            asset: Sparrow-linux-i686.tar.gz
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            cpu: generic
+            platform: linux
+            arch: aarch64
+            image: debian:bookworm-slim
+            asset: Sparrow-linux-arm64.tar.gz
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            cpu: x86-64-v2
+            platform: linux
+            arch: x86_64
+            image: debian:bookworm-slim
+            asset: Sparrow-linux-amd64.tar.gz
+    env:
+      RELEASE_TAG_NAME: ${{ needs.metadata.outputs.tag }}
+      RELEASE_TARGET: ${{ matrix.target }}
+      RELEASE_CPU: ${{ matrix.cpu }}
+      RELEASE_ARCH: ${{ matrix.arch }}
+      RELEASE_ASSET: ${{ matrix.asset }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
 
-      - name: Create portable
+      - name: Build and package Linux
+        if: matrix.platform == 'linux'
+        env:
+          RELEASE_IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm --volume "$PWD:/src" --workdir /src \
+            --env RELEASE_TAG_NAME --env RELEASE_TARGET --env RELEASE_CPU \
+            --env RELEASE_ARCH --env RELEASE_ASSET \
+            "$RELEASE_IMAGE" bash scripts/release-linux.sh
+
+      - name: Build and package macOS
+        if: matrix.platform == 'darwin'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          rustup toolchain install stable --profile minimal --target "$RELEASE_TARGET"
+          RUSTFLAGS="-C target-cpu=$RELEASE_CPU" cargo +stable build --locked \
+            --profile release-lto --target "$RELEASE_TARGET" --bins
+          bin="target/$RELEASE_TARGET/release-lto"
+          "$bin/sparrow" --version
+          "$bin/sparrow-proxy" --version
+          staging="$RUNNER_TEMP/sparrow-dmg"
+          mkdir -p "$staging" dist
+          ditto extra/macos/Sparrow.app "$staging/Sparrow.app"
+          mkdir -p "$staging/Sparrow.app/Contents/MacOS"
+          install -m755 "$bin/sparrow" "$staging/Sparrow.app/Contents/MacOS/sparrow"
+          codesign --force --sign - "$staging/Sparrow.app"
+          codesign --verify --strict "$staging/Sparrow.app"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname Sparrow -srcfolder "$staging" -format UDZO dist/Sparrow-macos.dmg
+          gzip -c "$bin/sparrow-proxy" > dist/sparrow-proxy-darwin-aarch64.gz
+
+      - name: Build and package Windows
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          cargo build --profile release-lto --features sparrow-app/portable
-          Compress-Archive ./target/release-lto/sparrow.exe ./sparrow-windows-portable.zip
-
-      - name: Create sparrow-proxy archive
-        shell: pwsh
-        run: |
-          $file = [System.IO.File]::Open((Join-Path $PWD '.\target\release-lto\sparrow-proxy.exe'), [System.IO.FileMode]::Open)
-          $archive = [System.IO.File]::Create((Join-Path $PWD '.\sparrow-proxy-windows-x86_64.gz'))
-          $compressor = [System.IO.Compression.GZipStream]::new($archive, [System.IO.Compression.CompressionMode]::Compress)
-          $file.CopyTo($compressor)
-          Start-Sleep -Seconds 10
-          $compressor.close()
-
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        with:
-          name: sparrow-windows
-          path: |
-            ./sparrow-proxy-windows-*.gz
-            ./sparrow-windows-portable.zip
-            ./sparrow-windows.msi
-          retention-days: 1
-
-  linux:
-    runs-on: ubuntu-latest
-    needs: tagname
-    env:
-      RELEASE_TAG_NAME: ${{ needs.tagname.outputs.tag_name }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-      - name: Build deb packages
-        run: |
-          docker buildx create --driver=docker-container --use
-          docker buildx bake --pull ubuntu-focal-binary
-
-      - name: Gzip
-        run: |
-          mkdir sparrow
-          cp ./target/linux_amd64/sparrow sparrow/
-          tar -zcvf ./sparrow-linux-amd64.tar.gz sparrow
-
-          rm -rf sparrow
-
-          mkdir sparrow
-          cp ./target/linux_arm64/sparrow sparrow/
-          tar -zcvf ./sparrow-linux-arm64.tar.gz sparrow
-
-      - name: Fetch dependencies
-        run: cargo fetch --locked
-
-      - name: Vendor dependencies
-        run: |
-          cargo vendor --frozen > ./vendor-config.toml
-          mv ./vendor-config.toml ./vendor/
-          tar -zcf vendor.tar.gz ./vendor/
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustup toolchain install stable --profile minimal --target $env:RELEASE_TARGET
+          $env:RUSTFLAGS = "-C target-cpu=$env:RELEASE_CPU -C target-feature=+crt-static"
+          # Vendored OpenSSL can build its portable C implementation without NASM.
+          if ($env:RELEASE_ARCH -eq 'aarch64') { $env:OPENSSL_RUST_USE_NASM = '0' }
+          $bin = "target/$env:RELEASE_TARGET/release-lto"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          if ($env:RELEASE_ARCH -eq 'x86_64') {
+            cargo +stable build --locked --profile release-lto --target $env:RELEASE_TARGET --bins
+            $wix = Join-Path $env:RUNNER_TEMP wix
+            $zip = "$wix.zip"
+            Invoke-WebRequest https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip -OutFile $zip
+            Expand-Archive $zip $wix
+            & "$wix/candle.exe" -arch x64 "-dSparrowExe=$bin/sparrow.exe" -ext WixUIExtension -ext WixUtilExtension -out sparrow.wixobj extra/windows/wix/sparrow.wxs
+            & "$wix/light.exe" -ext WixUIExtension -ext WixUtilExtension -sice:ICE61 -sice:ICE91 -out dist/Sparrow-windows.msi sparrow.wixobj
+          }
+          cargo +stable build --locked --profile release-lto --target $env:RELEASE_TARGET --bins --features sparrow-app/portable
+          $app = Start-Process "$bin/sparrow.exe" -ArgumentList '--version' -Wait -PassThru
+          if ($app.ExitCode -ne 0) { throw "Sparrow smoke test exited $($app.ExitCode)" }
+          & "$bin/sparrow-proxy.exe" --version
+          Compress-Archive "$bin/sparrow.exe" "dist/$env:RELEASE_ASSET"
+          $source = [IO.File]::OpenRead("$bin/sparrow-proxy.exe")
+          try {
+            $destination = [IO.File]::Create("dist/sparrow-proxy-windows-$env:RELEASE_ARCH.gz")
+            $gzip = [IO.Compression.GZipStream]::new($destination, [IO.Compression.CompressionMode]::Compress)
+            try { $source.CopyTo($gzip) } finally { $gzip.Dispose() }
+          } finally { $source.Dispose() }
 
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
         with:
-          name: sparrow-linux
-          path: |
-            ./sparrow-linux-*.tar.gz
-            ./vendor.tar.gz
-          retention-days: 1
-
-  deb:
-    runs-on: ubuntu-latest
-    needs: tagname
-    env:
-      RELEASE_TAG_NAME: ${{ needs.tagname.outputs.tag_name }}
-    permissions:
-      contents: read
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os-name: debian
-            os-version: bookworm
-           # - os-name: debian
-           #   os-version: bullseye
-          - os-name: ubuntu
-            os-version: jammy
-          - os-name: ubuntu
-            os-version: noble
-          - os-name: ubuntu
-            os-version: plucky
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-
-      - name: Build deb packages
-        run: |
-          docker buildx create --driver=docker-container --use
-          docker buildx bake --pull ${{ matrix.os-name }}-${{ matrix.os-version }}-package
-
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        with:
-          name: sparrow-${{ matrix.os-name }}-${{ matrix.os-version }}
-          path: |
-            ./target/linux_*/*
-          retention-days: 1
-
-  rpm:
-    runs-on: ubuntu-latest
-    needs: tagname
-    env:
-      RELEASE_TAG_NAME: ${{ needs.tagname.outputs.tag_name }}
-    permissions:
-      contents: read
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os-name: fedora
-            os-version: 42
-          - os-name: fedora
-            os-version: 43
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-
-      - name: Build rpm packages
-        run: |
-          docker buildx create --driver=docker-container --use
-          docker buildx bake --pull ${{ matrix.os-name }}-${{ matrix.os-version }}-package
-
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        with:
-          name: sparrow-${{ matrix.os-name }}-${{ matrix.os-version }}
-          path: |
-            ./target/*
-          retention-days: 1
-
-  sparrow-proxy:
-    runs-on: ubuntu-latest
-    needs: tagname
-    env:
-      RELEASE_TAG_NAME: ${{ needs.tagname.outputs.tag_name }}
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os-name: alpine
-            os-version: "" # uses latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a
-
-      - name: Build sparrow-proxy binary
-        run: |
-          docker buildx create --driver=docker-container --use
-          docker buildx bake --pull ${{ matrix.os-name }}-${{ matrix.os-version }}
-
-      - name: Gzip
-        run: |
-          gzip -c ./target/linux_amd64/sparrow-proxy > ./sparrow-proxy-linux-x86_64.gz
-          gzip -c ./target/linux_arm64/sparrow-proxy > ./sparrow-proxy-linux-aarch64.gz
-
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        with:
-          name: sparrow-proxy-linux
-          path: |
-            ./sparrow-proxy-linux-*.gz
-          retention-days: 1
-
-  macos:
-    runs-on: macos-15
-    needs: tagname
-    env:
-      RELEASE_TAG_NAME: ${{ needs.tagname.outputs.tag_name }}
-
-      NOTARIZE_USERNAME: ${{ secrets.NOTARIZE_USERNAME }}
-      NOTARIZE_PASSWORD: ${{ secrets.NOTARIZE_PASSWORD }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-
-      - name: Install ARM target
-        run: rustup update && rustup target add x86_64-apple-darwin
-
-#      - name: Import Certificate
-#        uses: Apple-Actions/import-codesign-certs@b610f78488812c1e56b20e6df63ec42d833f2d14
-#        with:
-#          p12-file-base64: ${{ secrets.MACOS_CERTIFICATE }}
-#          p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-
-      - name: Fetch dependencies
-        run: cargo fetch --locked
-
-      - name: Make DMG
-        run: make dmg-universal
-
-      - name: Rename
-        run: |
-          cp ./target/release-lto/macos/sparrow.dmg ./target/release-lto/macos/sparrow-macos.dmg
-
-      - name: Gzip sparrow-proxy
-        run: |
-          gzip -c ./target/x86_64-apple-darwin/release-lto/sparrow-proxy > ./target/release-lto/macos/sparrow-proxy-darwin-x86_64.gz
-          gzip -c ./target/aarch64-apple-darwin/release-lto/sparrow-proxy > ./target/release-lto/macos/sparrow-proxy-darwin-aarch64.gz
-
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        with:
-          name: sparrow-macos
-          path: |
-            ./target/release-lto/macos/sparrow-proxy-darwin-*.gz
-            ./target/release-lto/macos/sparrow-macos.dmg
-          retention-days: 3
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
 
   publish:
-    needs:
-      - linux
-      - sparrow-proxy
-      - deb
-      - rpm
-      - windows
-      - macos
-    runs-on: ubuntu-latest
-    env:
-      GH_REPO: ${{ github.repository }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: [metadata, build]
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.metadata.outputs.tag }}
     steps:
-      # Must perform checkout first, since it deletes the target directory
-      # before running, and would therefore delete the downloaded artifacts
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-
-      - if: github.event_name == 'workflow_dispatch'
-        run: echo "TAG_NAME=${{ github.event.inputs.tag_name }}" | tee -a $GITHUB_ENV
-
-      - if: github.event_name == 'schedule'
-        run: echo 'TAG_NAME=nightly' | tee -a $GITHUB_ENV
-
-      - if: github.event_name == 'push'
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+      - name: Verify and publish release assets
         run: |
-          TAG_NAME=${{ github.ref }}
-          echo "TAG_NAME=${TAG_NAME#refs/tags/}" | tee -a $GITHUB_ENV
+          cd dist
+          for asset in Sparrow-macos.dmg Sparrow-linux-{i686,arm64,amd64}.tar.gz \
+            Sparrow-windows{,-arm64,-i686}-portable.zip Sparrow-windows.msi \
+            sparrow-proxy-darwin-aarch64.gz sparrow-proxy-{linux,windows}-{x86,x86_64,aarch64}.gz; do
+            test -s "$asset"
+          done
+          sha256sum -- * > SHA256SUMS
 
-      - if: env.TAG_NAME == 'nightly'
-        run: |
-          {
-            echo 'SUBJECT=sparrow development build'
-            echo 'PRERELEASE=--prerelease'
-          } | tee -a $GITHUB_ENV
-
-      - if: env.TAG_NAME == 'nightly' && github.event_name != 'pull_request'
-        name: Re-Tag nightly
-        run: |
-          gh release delete nightly --yes || true
-          git push origin :nightly || true
-
-      - if: env.TAG_NAME != 'nightly'
-        run: |
-          {
-            echo 'SUBJECT=sparrow release build'
-            echo 'PRERELEASE='
-          } | tee -a $GITHUB_ENV
-
-      - name: Publish release
-        if: github.event_name != 'pull_request'
-        env:
-          DEBUG: api
-        run: |
-          gh release create $TAG_NAME $PRERELEASE --title "$TAG_NAME" --target $GITHUB_SHA \
-            sparrow-macos/* \
-            sparrow-linux/* \
-            sparrow-debian*/*/* \
-            sparrow-ubuntu*/*/* \
-            sparrow-fedora*/* \
-            sparrow-proxy-linux/* \
-            sparrow-windows/*
+          if [[ "$TAG" == nightly ]]; then
+            if ! gh release view "$TAG" >/dev/null 2>&1; then
+              gh release create "$TAG" --draft --prerelease --title 'Sparrow Nightly' --target "$GITHUB_SHA"
+            fi
+            gh release upload "$TAG" --clobber ./*
+            git fetch origin refs/tags/nightly:refs/tags/nightly || true
+            git push --force-with-lease origin "$GITHUB_SHA:refs/tags/nightly"
+            gh release edit "$TAG" --draft=false --prerelease --target "$GITHUB_SHA"
+          elif gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" --clobber ./*
+          else
+            gh release create "$TAG" --verify-tag --generate-notes ./*
+          fi

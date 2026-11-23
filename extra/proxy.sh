@@ -60,10 +60,10 @@ case $(uname -s) in
   ;;
 esac
 
-# Currently only amd64/arm64 are supported
 case $(uname -m) in
   x86_64|amd64|x64) arch_name=x86_64 ;;
   arm64|aarch64) arch_name=aarch64 ;;
+  i386|i486|i586|i686|x86) arch_name=x86 ;;
   # riscv64) arch_name=riscv64 ;;
   *)
     printf '[ERROR] unsupported arch\n'

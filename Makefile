@@ -14,7 +14,7 @@ CODESIGN_IDENTITY = -
 ASSETS_DIR = extra
 RELEASE_DIR = target/release-lto
 
-APP_NAME = sparrow.app
+APP_NAME = Sparrow.app
 APP_TEMPLATE = $(ASSETS_DIR)/macos/$(APP_NAME)
 APP_DIR = $(RELEASE_DIR)/macos
 APP_BINARY = $(RELEASE_DIR)/$(TARGET)
@@ -40,12 +40,12 @@ ubuntu-deps:
 binary: $(TARGET)-native ## Build a release binary
 binary-universal: $(TARGET)-universal ## Build a universal release binary
 $(TARGET)-native:
-	MACOSX_DEPLOYMENT_TARGET="10.11" cargo build --profile release-lto
+	MACOSX_DEPLOYMENT_TARGET="11.0" cargo build --profile release-lto
 	@lipo target/release-lto/$(TARGET) -create -output $(APP_BINARY)
 $(TARGET)-universal:
-	MACOSX_DEPLOYMENT_TARGET="10.11" cargo build --profile release-lto --target=x86_64-apple-darwin
-	MACOSX_DEPLOYMENT_TARGET="10.11" cargo build --profile release-lto --target=aarch64-apple-darwin
-	@lipo target/{x86_64,aarch64}-apple-darwin/release-lto/$(TARGET) -create -output $(APP_BINARY)
+	MACOSX_DEPLOYMENT_TARGET="11.0" RUSTFLAGS="" cargo build --profile release-lto --target=x86_64-apple-darwin
+	MACOSX_DEPLOYMENT_TARGET="11.0" RUSTFLAGS="" cargo build --profile release-lto --target=aarch64-apple-darwin
+	@lipo target/x86_64-apple-darwin/release-lto/$(TARGET) target/aarch64-apple-darwin/release-lto/$(TARGET) -create -output $(APP_BINARY)
 	/usr/bin/codesign -vvv --deep --entitlements $(ASSETS_DIR)/entitlements.plist --strict --options=runtime --force -s $(CODESIGN_IDENTITY) $(APP_BINARY)
 
 app: $(APP_NAME)-native ## Create a sparrow.app
