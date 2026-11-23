@@ -4,13 +4,15 @@ Open **File → Settings**, use **Ctrl+,** or **Ctrl+Alt+S** on Linux and Window
 
 The modal adapts to smaller windows with scrollable contents. Drag the divider to resize the category sidebar. The dialog saves the sidebar proportion and shows the current page path next to the history controls. [Platform measurements and unresolved values](settings-tokens.toml).
 
-The first visit opens Appearance. Subsequent visits reopen the last selected page. Appearance & Behavior retains links to its supported settings. Appearance includes UI and theme options; System Settings covers the remaining core options. Editor and Terminal settings are generated from Sparrow's existing configuration metadata. The Appearance & Behavior tree expands when you select a subpage.
+The first visit opens Appearance. Subsequent visits reopen the last selected page. Expand Appearance & Behavior, Editor, Version Control, Build, Execution, Deployment, Languages & Frameworks, and Tools to reach their subpages. Selecting a subpage opens its ancestors and scrolls its row into view.
+
+Appearance groups themes, UI scale, typography, and workbench controls. System Settings contains Project and Files pages. The Editor branch organizes editing, fonts, tabs, completion, hints, and diagnostics. Tools contains Actions on Save, Android Devices, Logcat, and Terminal. Android device and Logcat pages open their respective tool windows.
 
 Search filters the category tree by page titles, setting names, keys and descriptions. Ancestor rows remain visible, and matching terms are highlighted in setting labels. Native theme/enum choices use dropdown menus, booleans use toggles, and numeric/string settings use editable fields. Invalid numbers are reported before saving. Changes survive category navigation, but are not written until Apply or OK. Cancel, Close and Escape with an empty search discard unapplied edits. Unselected pages with pending changes are marked in the tree, including changes in the other scope. Apply saves without closing.
 
 Saving validates the complete pending draft, preserves unrelated TOML values and comments, and atomically replaces the settings file. Malformed settings files and section conflicts are reported rather than overwritten. Platform-specific terminal profile settings retain their existing storage format.
 
-Keymap, local appearance themes, and Run/Debug Configuration links open Sparrow's existing editors. Pending settings must first be applied or cancelled before leaving for one of those editors. Android Studio-only settings and services are not represented by non-functional controls.
+Keymap embeds Sparrow's shortcut editor. Its shortcut capture confirmation saves directly to the keymap file. Menus and Toolbars edits the ordered Quick Actions list shared by the application menu and toolbar. Build, Execution, Deployment contains Run Configurations and the project Debugger page. Debugger changes are staged until Apply or OK alongside other settings. Run Configurations, Git tools, and the plugin manager open their existing tools. Apply or cancel pending changes before opening one of those tools.
 
 The older Settings editor tab remains available for restoring existing sessions; the standard Open Settings action now opens this modal. The scope picker above the settings page selects the values and destination being edited. Project overrides take precedence over IDE defaults.
 

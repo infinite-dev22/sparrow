@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use floem::{
-    View,
+    View, ViewId,
     event::{Event, EventListener},
+    keyboard::{Key, NamedKey},
     reactive::{
         Memo, ReadSignal, SignalGet, SignalUpdate, SignalWith, create_effect,
     },
@@ -23,6 +24,7 @@ pub(super) fn keyboard_picker_view(
     picker: KeymapPicker,
     ui_line_height: Memo<f64>,
     config: ReadSignal<Arc<SparrowConfig>>,
+    return_focus: ViewId,
 ) -> impl View {
     let picker_cmd = picker.cmd;
     let view = container(
@@ -105,6 +107,7 @@ pub(super) fn keyboard_picker_view(
                         if let Some(keymap) = keymap {
                             let keys = picker.keys.get_untracked();
                             picker.keymap.set(None);
+                            return_focus.request_focus();
                             KeyPressData::update_file(
                                 &keymap,
                                 &keys
@@ -139,6 +142,7 @@ pub(super) fn keyboard_picker_view(
                     })
                     .on_click_stop(move |_| {
                         picker.keymap.set(None);
+                        return_focus.request_focus();
                     }),
             ))
             .style(move |s| {
@@ -157,6 +161,7 @@ pub(super) fn keyboard_picker_view(
                 .flex_col()
                 .padding(20.0)
                 .width(400.0)
+                .max_width_full()
                 .border(1.0)
                 .border_radius(6.0)
                 .border_color(config.color(SparrowColor::SPARROW_BORDER))
@@ -166,6 +171,12 @@ pub(super) fn keyboard_picker_view(
     .keyboard_navigable()
     .on_event_stop(EventListener::KeyDown, move |event| {
         if let Event::KeyDown(key_event) = event {
+            if key_event.key.logical_key == Key::Named(NamedKey::Escape) {
+                crate::widgets::modal_focus::note_popup_escape();
+                picker.keymap.set(None);
+                return_focus.request_focus();
+                return;
+            }
             if let Some(keypress) = KeyPressData::keypress(key_event) {
                 if let Some(keypress) = keypress.keymap_press() {
                     picker.keys.update(|keys| {

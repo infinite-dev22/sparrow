@@ -12,20 +12,23 @@ use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
     editor::view::editor_view,
-    widgets::{checkbox, labeled_checkbox},
+    widgets::{CheckboxState, group_checkbox, labeled_checkbox},
     window_tab::{Focus, WindowTabData},
 };
 
 mod file_list;
+#[path = "/tmp/sparrow-commit-portal.aYRa5i/checkbox_probe.rs"]
+mod probe;
 
-use file_list::file_diffs_view;
 use crate::widgets::sparrow_scroll;
+use file_list::file_diffs_view;
 
 pub fn source_control_panel(
     window: Rc<WindowTabData>,
     _position: PanelPosition,
 ) -> impl View {
     let source = window.source_control.clone();
+    probe::run(source.clone());
     let config = window.common.config;
     let focus = source.common.focus;
     let editor = create_rw_signal(source.editor.clone());
@@ -56,47 +59,46 @@ pub fn source_control_panel(
     let refresh_source = source.clone();
     let commit_action = source.commit_action;
     let group = move |unversioned: bool, open: floem::reactive::RwSignal<bool>| {
-        let count = move || {
-            files.with(|items| {
-                items
-                    .values()
-                    .filter(|(diff, _)| {
-                        untracked.with(|set| set.contains(diff.path()))
-                            == unversioned
-                    })
-                    .count()
+        let selection = create_memo(move |_| {
+            untracked.with(|untracked| {
+                files.with(|items| {
+                    items
+                        .values()
+                        .filter(|(diff, _)| {
+                            untracked.contains(diff.path()) == unversioned
+                        })
+                        .fold((0, 0), |(total, selected), (_, checked)| {
+                            (total + 1, selected + usize::from(*checked))
+                        })
+                })
             })
-        };
+        });
+        let count = move || selection.with(|(total, _)| *total);
         stack((
             stack((
-                label(move || if open.get() { "⌄" } else { "›" })
+                probe::watch(label(move || if open.get() { "⌄" } else { "›" })
                     .on_click_stop(move |_| open.update(|v| *v = !*v))
-                    .style(|s| s.width(18.0)),
-                checkbox(
+                    .style(|s| s.width(18.0)), if unversioned { "fold:untracked" } else { "fold:tracked" }),
+                probe::watch(group_checkbox(
                     move || {
-                        files.with(|items| {
-                            items
-                                .values()
-                                .filter(|(diff, _)| {
-                                    untracked.with(|set| set.contains(diff.path()))
-                                        == unversioned
-                                })
-                                .all(|(_, checked)| *checked)
+                        selection.with(|&(total, selected)| {
+                            CheckboxState::from_selection(total, selected)
                         })
                     },
+                    move |selected| {
+                        untracked.with_untracked(|untracked| {
+                            files.update(|items| {
+                                for (diff, checked) in items.values_mut() {
+                                    if untracked.contains(diff.path()) == unversioned
+                                    {
+                                        *checked = selected;
+                                    }
+                                }
+                            });
+                        });
+                    },
                     config,
-                )
-                .on_update(move |selected| {
-                    files.update(|items| {
-                        for (diff, checked) in items.values_mut() {
-                            if untracked.with(|set| set.contains(diff.path()))
-                                == unversioned
-                            {
-                                *checked = selected;
-                            }
-                        }
-                    })
-                }),
+                ), if unversioned { "untracked" } else { "tracked" }),
                 label(move || {
                     format!(
                         "{}  {} files",

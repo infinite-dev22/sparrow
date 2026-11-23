@@ -16,15 +16,17 @@ use floem::{
 
 use super::{PAGES, Page, select_page, tokens};
 use floem::reactive::ReadSignal;
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 #[derive(Clone, Copy)]
 pub(super) struct Navigation {
     pub(super) page: RwSignal<Page>,
     pub(super) history: RwSignal<Vec<Page>>,
     pub(super) index: RwSignal<usize>,
-    pub(super) appearance_expanded: RwSignal<bool>,
-    pub(super) languages_expanded: RwSignal<bool>,
+    pub(super) expanded: RwSignal<BTreeSet<Page>>,
     pub(super) matching: Memo<Option<Vec<Page>>>,
     pub(super) shown_pages: Memo<Vec<Page>>,
     pub(super) modifications: Memo<Vec<Page>>,
@@ -36,32 +38,30 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
     config: ReadSignal<Arc<SparrowConfig>>,
     accept: A,
     state: Navigation,
-) -> impl View + use<A> {
+) -> (impl View + use<A>, ViewId) {
     let Navigation {
         page,
         history,
         index,
-        appearance_expanded,
-        languages_expanded,
+        expanded,
         matching,
         shown_pages,
         modifications,
     } = state;
     let [icon_width, icon_height] =
         tokens::size("navigation", "disclosure_icon_size");
-    let tree_focus = cx.create_rw_signal(None::<floem::ViewId>);
+    let tree_focus = cx.create_rw_signal(None::<ViewId>);
+    let rows = cx.create_rw_signal(BTreeMap::<Page, ViewId>::new());
     let tree = dyn_stack(
         || PAGES.to_vec(),
-        |(p, _, _)| *p as u8,
-        move |(p, title, depth)| {
-            stack((
+        |(page, ..)| *page,
+        move |(p, _, title, _)| {
+            let depth = p.ancestors().count();
+            let has_children = p.children().next().is_some();
+            let row = stack((
                 svg(move || {
                     let expanded = matching.with(Option::is_some)
-                        || match p {
-                            Page::Overview => appearance_expanded.get(),
-                            Page::Languages => languages_expanded.get(),
-                            _ => false,
-                        };
+                        || expanded.with(|expanded| expanded.contains(&p));
                     config.get().ui_svg(if expanded {
                         SparrowIcons::ITEM_OPENED
                     } else {
@@ -69,37 +69,32 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
                     })
                 })
                 .on_click_stop(move |_| {
-                    if matching.with_untracked(Option::is_some) {
+                    if matching.with_untracked(Option::is_some) || !has_children {
                         select_page(p, page, history, index);
-                    } else if p == Page::Overview {
-                        let collapsing = appearance_expanded.get_untracked();
-                        if collapsing
-                            && matches!(
-                                page.get_untracked(),
-                                Page::Appearance | Page::System
-                            )
+                    } else if expanded
+                        .with_untracked(|expanded| expanded.contains(&p))
+                    {
+                        if page
+                            .get_untracked()
+                            .ancestors()
+                            .any(|ancestor| ancestor == p)
                         {
                             select_page(p, page, history, index);
                         }
-                        appearance_expanded.set(!collapsing);
-                    } else if p == Page::Languages {
-                        let collapsing = languages_expanded.get_untracked();
-                        if collapsing
-                            && matches!(
-                                page.get_untracked(),
-                                Page::Flutter | Page::Dart
-                            )
-                        {
-                            select_page(p, page, history, index);
-                        }
-                        languages_expanded.set(!collapsing);
+                        expanded.update(|expanded| {
+                            expanded.remove(&p);
+                        });
+                    } else {
+                        expanded.update(|expanded| {
+                            expanded.insert(p);
+                        });
                     }
                     if let Some(id) = tree_focus.get_untracked() {
                         id.request_focus();
                     }
                 })
                 .style(move |s| {
-                    let color = if matches!(p, Page::Overview | Page::Languages) {
+                    let color = if has_children {
                         config.get().color(SparrowColor::EDITOR_FOREGROUND)
                     } else {
                         floem::peniko::Color::TRANSPARENT
@@ -149,13 +144,17 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
                             },
                         )
                     })
-            })
+            });
+            rows.update(|rows| {
+                rows.insert(p, row.id());
+            });
+            row
         },
     )
     .style(|s| s.flex_col().width_full());
     let tree_id = tree.id();
     tree_focus.set(Some(tree_id));
-    keyboard
+    let tree = keyboard
         .control(tree)
         .style(|s| s.focus(|s| s.background(floem::peniko::Color::TRANSPARENT)))
         .on_event(EventListener::KeyDown, move |event| {
@@ -186,32 +185,27 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
                     _ => vertical,
                 }
             } else {
-                match (key, current) {
-                    (Key::Named(NamedKey::ArrowRight), Page::Overview) => {
-                        if appearance_expanded.get_untracked() {
-                            Some(Page::Appearance)
-                        } else {
-                            appearance_expanded.set(true);
+                let is_expanded =
+                    expanded.with_untracked(|expanded| expanded.contains(&current));
+                match key {
+                    Key::Named(NamedKey::ArrowRight) => {
+                        let child = current.children().next();
+                        if child.is_some() && !is_expanded {
+                            expanded.update(|expanded| {
+                                expanded.insert(current);
+                            });
                             None
+                        } else {
+                            child
                         }
                     }
-                    (Key::Named(NamedKey::ArrowRight), Page::Languages) => {
-                        if languages_expanded.get_untracked() {
-                            Some(Page::Flutter)
-                        } else {
-                            languages_expanded.set(true);
-                            None
-                        }
-                    }
-                    (Key::Named(NamedKey::ArrowLeft), Page::Overview) => {
-                        appearance_expanded.set(false);
+                    Key::Named(NamedKey::ArrowLeft) if is_expanded => {
+                        expanded.update(|expanded| {
+                            expanded.remove(&current);
+                        });
                         None
                     }
-                    (Key::Named(NamedKey::ArrowLeft), Page::Languages) => {
-                        languages_expanded.set(false);
-                        None
-                    }
-                    (Key::Named(NamedKey::ArrowLeft), page) => page.parent(),
+                    Key::Named(NamedKey::ArrowLeft) => current.parent(),
                     _ => vertical,
                 }
             };
@@ -235,7 +229,15 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
             } else {
                 EventPropagation::Continue
             }
-        })
+        });
+    let scroll = crate::widgets::sparrow_scroll(tree).scroll_to_view(move || {
+        let current = page.get();
+        if !shown_pages.with(|pages| pages.contains(&current)) {
+            return None;
+        }
+        rows.with(|rows| rows.get(&current).copied())
+    });
+    (scroll, tree_id)
 }
 
 fn tree_row_layout(style: Style, depth: usize) -> Style {

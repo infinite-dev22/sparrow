@@ -15,8 +15,15 @@ use floem::{
     },
     views::{Decorators, container, dyn_stack, empty, label, stack},
 };
-use std::{collections::BTreeMap, rc::Rc, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    rc::Rc,
+    sync::Arc,
+};
+mod catalog;
+mod form;
 mod layout;
+mod menu_editor;
 mod navigation;
 mod setting_row;
 mod tokens;
@@ -25,88 +32,29 @@ use crate::widgets::sparrow_scroll;
 use navigation::navigation_tree;
 use setting_row::setting_row;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Page {
-    Overview,
-    Appearance,
-    System,
-    Editor,
-    Plugins,
-    Keymap,
-    Run,
-    Terminal,
-    Languages,
-    Flutter,
-    Dart,
-}
-const PAGES: [(Page, &str, usize); 11] = [
-    (Page::Overview, "Appearance & Behavior", 0),
-    (Page::Appearance, "Appearance", 1),
-    (Page::System, "System Settings", 1),
-    (Page::Keymap, "Keymap", 0),
-    (Page::Editor, "Editor", 0),
-    (Page::Plugins, "Themes", 0),
-    (Page::Run, "Build, Execution, Deployment", 0),
-    (Page::Terminal, "Tools › Terminal", 0),
-    (Page::Languages, "Languages & Frameworks", 0),
-    (Page::Flutter, "Flutter", 1),
-    (Page::Dart, "Dart", 1),
-];
-impl Page {
-    fn title(self) -> &'static str {
-        PAGES.iter().find(|(p, _, _)| *p == self).unwrap().1
-    }
+use catalog::{PAGES, Page, owner};
 
-    fn parent(self) -> Option<Self> {
-        match self {
-            Self::Appearance | Self::System => Some(Self::Overview),
-            Self::Flutter | Self::Dart => Some(Self::Languages),
-            _ => None,
-        }
-    }
-
-    fn id(self) -> &'static str {
-        match self {
-            Self::Overview => "appearance-and-behavior",
-            Self::Appearance => "appearance",
-            Self::System => "system",
-            Self::Editor => "editor",
-            Self::Plugins => "themes",
-            Self::Keymap => "keymap",
-            Self::Run => "run",
-            Self::Terminal => "terminal",
-            Self::Languages => "languages",
-            Self::Flutter => "flutter",
-            Self::Dart => "dart",
-        }
-    }
-}
-
-fn visible_pages(
-    appearance: bool,
-    languages: bool,
-    matching: Option<&[Page]>,
-) -> Vec<Page> {
+fn visible_pages(expanded: &BTreeSet<Page>, matching: Option<&[Page]>) -> Vec<Page> {
     PAGES
         .iter()
-        .map(|(page, _, _)| *page)
-        .filter(|page| {
-            if let Some(matching) = matching {
-                return matching.contains(page)
-                    || matching.iter().any(|item| item.parent() == Some(*page));
+        .map(|&(page, ..)| page)
+        .filter(|&page| match matching {
+            Some(matching) => {
+                matching.contains(&page)
+                    || matching
+                        .iter()
+                        .any(|item| item.ancestors().any(|parent| parent == page))
             }
-            match page.parent() {
-                Some(Page::Overview) => appearance,
-                Some(Page::Languages) => languages,
-                _ => true,
-            }
+            None => page.ancestors().all(|parent| expanded.contains(&parent)),
         })
         .collect()
 }
+
 #[derive(Clone)]
 enum Type {
     Reset,
     String,
+    StringList,
     Integer,
     Float,
     Bool,
@@ -121,6 +69,12 @@ impl Edit {
         match self.kind {
             Type::Reset => Err("An inherited setting has no stored value".into()),
             Type::String => Ok(self.raw.clone().into()),
+            Type::StringList => {
+                let items = serde_json::from_str::<Vec<String>>(&self.raw)
+                    .map_err(|error| error.to_string())?;
+                let array = items.into_iter().collect::<toml_edit::Array>();
+                Ok(toml_edit::Value::Array(array))
+            }
             Type::Bool => self
                 .raw
                 .parse::<bool>()
@@ -177,29 +131,31 @@ fn initial(value: &SettingsValue) -> Option<(String, Type)> {
         _ => None,
     }
 }
-fn belongs(item: &SettingsItem, page: Page) -> bool {
-    let appearance = item.kind == "ui"
-        || (item.kind == "core"
-            && ["color-theme", "icon-theme", "custom-titlebar"]
-                .contains(&item.field.as_str()));
-    match page {
-        Page::Appearance => appearance,
-        Page::System => {
-            item.kind == "core"
-                && !appearance
-                && !["flutter-sdk-path", "dart-sdk-path"]
-                    .contains(&item.field.as_str())
-        }
-        Page::Flutter => item.kind == "core" && item.field == "flutter-sdk-path",
-        Page::Dart => item.kind == "core" && item.field == "dart-sdk-path",
-        Page::Editor => item.kind == "editor",
-        Page::Terminal => item.kind == "terminal",
-        Page::Plugins => {
-            !["core", "ui", "editor", "terminal"].contains(&item.kind.as_str())
-        }
-        _ => false,
+fn validated_draft_value(
+    section: &str,
+    key: &str,
+    edit: &Edit,
+) -> Result<Option<toml_edit::Value>, String> {
+    if matches!(edit.kind, Type::Reset) {
+        return Ok(None);
     }
+    let value = edit.value(section)?;
+    if section == "core"
+        && ["flutter-sdk-path", "dart-sdk-path"].contains(&key)
+        && !edit.raw.trim().is_empty()
+    {
+        let path = std::path::Path::new(edit.raw.trim());
+        if !path.is_absolute() {
+            return Err("Use an absolute SDK directory path.".into());
+        }
+        crate::dart::sdk::validate_sdk_root(path, key == "flutter-sdk-path")?;
+    }
+    Ok(Some(value))
 }
+fn belongs(item: &SettingsItem, page: Page) -> bool {
+    owner(&item.kind, &item.field) == page
+}
+
 struct HighlightMatcher(regex::Regex);
 
 impl PartialEq for HighlightMatcher {
@@ -229,9 +185,9 @@ fn matches_setting(item: &SettingsItem, query: &str) -> bool {
 fn matching_pages(items: &[SettingsItem], query: &str) -> Vec<Page> {
     PAGES
         .iter()
-        .map(|(page, _, _)| *page)
+        .map(|&(page, ..)| page)
         .filter(|&page| {
-            matches_query(page.title(), query)
+            matches_query(page.search_terms(), query)
                 || items
                     .iter()
                     .any(|item| belongs(item, page) && matches_setting(item, query))
@@ -239,21 +195,15 @@ fn matching_pages(items: &[SettingsItem], query: &str) -> Vec<Page> {
         .collect()
 }
 
-fn modified_pages(
-    items: &[SettingsItem],
-    active: &Pending,
-    inactive: &Pending,
-) -> Vec<Page> {
+fn modified_pages(active: &Pending, inactive: &Pending) -> Vec<Page> {
+    let changed: BTreeSet<_> = active
+        .keys()
+        .chain(inactive.keys())
+        .map(|(kind, field)| owner(kind, field))
+        .collect();
     PAGES
         .iter()
-        .map(|(page, _, _)| *page)
-        .filter(|&page| {
-            active.keys().chain(inactive.keys()).any(|(kind, field)| {
-                items.iter().any(|item| {
-                    &item.kind == kind && &item.field == field && belongs(item, page)
-                })
-            })
-        })
+        .filter_map(|&(page, ..)| changed.contains(&page).then_some(page))
         .collect()
 }
 
@@ -291,7 +241,11 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let config = window.common.config;
     let visible = window.settings_modal_visible;
     let keyboard = ModalFocus::default();
+    let can_project =
+        window.workspace.path.is_some() && window.workspace.kind.is_local();
     let project_scope = cx.create_rw_signal(false);
+    let debugger_pending = cx.create_rw_signal(Pending::new());
+    let no_reset = cx.create_rw_signal(false);
     let scope_drafts = cx.create_rw_signal([Pending::new(), Pending::new()]);
     let settings_config = cx.create_rw_signal(config.get_untracked());
     let mut settings_common = (*window.common).clone();
@@ -322,8 +276,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let initial_page = db
         .as_ref()
         .and_then(|db| db.settings_page().ok())
-        .and_then(|id| PAGES.iter().find(|(page, _, _)| page.id() == id))
-        .map(|(page, _, _)| *page)
+        .and_then(|id| PAGES.iter().find(|(page, ..)| page.id() == id))
+        .map(|&(page, ..)| page)
         .unwrap_or(Page::Appearance);
     let page = cx.create_rw_signal(initial_page);
     cx.create_effect(move |previous: Option<Page>| {
@@ -335,17 +289,10 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         }
         selected
     });
-    let appearance_expanded = cx.create_rw_signal(false);
-    let languages_expanded = cx.create_rw_signal(false);
+    let expanded = cx.create_rw_signal(BTreeSet::new());
     cx.create_effect(move |_| {
-        if matches!(page.get(), Page::Flutter | Page::Dart) {
-            languages_expanded.set(true);
-        }
-    });
-    cx.create_effect(move |_| {
-        if matches!(page.get(), Page::Appearance | Page::System) {
-            appearance_expanded.set(true);
-        }
+        let ancestors: Vec<_> = page.get().ancestors().collect();
+        expanded.update(|expanded| expanded.extend(ancestors));
     });
     let history = cx.create_rw_signal(vec![initial_page]);
     let index = cx.create_rw_signal(0usize);
@@ -364,6 +311,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         let is_open = visible.get();
         batch(|| {
             pending.set(Pending::new());
+            debugger_pending.set(Pending::new());
             scope_drafts.set([Pending::new(), Pending::new()]);
             query.set(String::new());
             error.set(String::new());
@@ -382,9 +330,44 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         }
     });
     let all = cx.create_rw_signal(Vec::<SettingsItem>::new());
+    let debugger_settings = window.common.debugger_settings;
+    let debugger_items = can_project
+        .then(|| {
+            crate::debug_settings::OPTIONS
+                .iter()
+                .map(|&(key, title, accessor)| {
+                    (
+                        accessor,
+                        SettingsItem {
+                            kind: "debugger".into(),
+                            field: key.into(),
+                            name: format!("Debugger: {title}"),
+                            description: String::new(),
+                            filter_text: String::new(),
+                            value: SettingsValue::Empty,
+                            serde_value: serde_json::Value::Null,
+                            pos: cx.create_rw_signal(floem::kurbo::Point::ORIGIN),
+                            size: cx.create_rw_signal(floem::kurbo::Size::ZERO),
+                            header: false,
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     cx.create_effect(move |_| {
         let mut combined = items.get();
         combined.extend(plugins.get());
+        if can_project {
+            let mut values = debugger_settings.get();
+            combined.extend(debugger_items.iter().map(|(accessor, item)| {
+                let mut item = item.clone();
+                let value = *accessor(&mut values);
+                item.value = SettingsValue::Bool(value);
+                item.serde_value = value.into();
+                item
+            }));
+        }
         all.set(
             combined
                 .into_iter()
@@ -426,30 +409,28 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     });
     let shown_pages = cx.create_memo(move |_| {
         matching.with(|matching| {
-            visible_pages(
-                appearance_expanded.get(),
-                languages_expanded.get(),
-                matching.as_deref(),
-            )
+            expanded.with(|expanded| visible_pages(expanded, matching.as_deref()))
         })
     });
     let modifications = cx.create_memo(move |_| {
-        all.with(|items| {
-            pending.with(|active| {
-                scope_drafts.with(|drafts| {
-                    modified_pages(
-                        items,
-                        active,
-                        &drafts[usize::from(!project_scope.get())],
-                    )
-                })
+        pending.with(|active| {
+            scope_drafts.with(|drafts| {
+                let mut pages = modified_pages(
+                    active,
+                    &drafts[usize::from(!project_scope.get())],
+                );
+                if !debugger_pending.with(Pending::is_empty) {
+                    pages.push(Page::Debugger);
+                }
+                pages
             })
         })
     });
-    let filtered = cx.create_rw_signal(Vec::<SettingsItem>::new());
+    let sections =
+        cx.create_rw_signal(Vec::<(&'static str, Vec<SettingsItem>)>::new());
     cx.create_effect(move |_| {
         if !visible.get() {
-            filtered.set(Vec::new());
+            sections.set(Vec::new());
             return;
         }
         let selected = page.get();
@@ -475,15 +456,14 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                     .collect()
             })
         });
-        filtered.set(items);
+        sections.set(form::sections(items, search_query.with(Option::is_some)));
     });
     let dirty = cx.create_memo(move |_| {
-        !pending.with(|pending| pending.is_empty())
+        !pending.with(Pending::is_empty)
+            || !debugger_pending.with(Pending::is_empty)
             || scope_drafts
                 .with(|drafts| !drafts[usize::from(!project_scope.get())].is_empty())
     });
-    let can_project =
-        window.workspace.path.is_some() && window.workspace.kind.is_local();
     let scope_label = cx.create_rw_signal(String::new());
     cx.create_effect(move |_| {
         scope_label.set(
@@ -534,24 +514,62 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             }
             let mut drafts = scope_drafts.get_untracked();
             drafts[project_scope.get_untracked() as usize] = pending.get_untracked();
-            let result = drafts.into_iter().enumerate().filter(|(_,edits)|!edits.is_empty()).map(|(scope,edits)| {
-                let changes = edits.into_iter().map(|((section,key),edit)| {
-                    let value = if matches!(edit.kind,Type::Reset) { Ok(None) } else {
-                        edit.value(&section).and_then(|value| {
-                            if section=="core" && ["flutter-sdk-path","dart-sdk-path"].contains(&key.as_str()) && !edit.raw.trim().is_empty() {
-                                let path=std::path::Path::new(edit.raw.trim());
-                                if !path.is_absolute() { return Err("Use an absolute SDK directory path.".into()); }
-                                crate::dart::sdk::validate_sdk_root(path,key=="flutter-sdk-path")?;
-                            }
-                            Ok(Some(value))
+            let result = (|| {
+                let mut files = drafts
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, edits)| !edits.is_empty())
+                    .map(|(scope, edits)| {
+                        let path = SparrowConfig::scoped_settings_file(
+                            window.workspace.path.as_deref(),
+                            scope == 1,
+                        )?;
+                        let scope = if scope == 0 { "IDE" } else { "Project" };
+                        let values = edits
+                            .into_iter()
+                            .map(|((section, key), edit)| {
+                                let value =
+                                    validated_draft_value(&section, &key, &edit)
+                                        .map_err(|error| {
+                                            format!(
+                                                "{scope} / {section}.{key}: {error}"
+                                            )
+                                        })?;
+                                Ok((section, key, value))
+                            })
+                            .collect::<Result<Vec<_>, String>>()?;
+                        Ok((path, values))
+                    })
+                    .collect::<Result<Vec<_>, String>>()?;
+                let debugger = debugger_pending.get_untracked();
+                if !debugger.is_empty() {
+                    let path = window
+                        .workspace
+                        .path
+                        .as_ref()
+                        .ok_or("Open a local project to edit debugger settings")?
+                        .join(".sparrow/debugger.toml");
+                    let values = debugger
+                        .into_iter()
+                        .map(|((section, key), edit)| {
+                            let value =
+                                validated_draft_value(&section, &key, &edit)?;
+                            Ok((String::new(), key, value))
                         })
-                    };
-                    value.map(|value|(section.clone(),key.clone(),value)).map_err(|error|format!("{} / {section}.{key}: {error}",if scope==0 {"IDE"}else{"Project"}))
-                }).collect::<Result<Vec<_>,String>>()?;
-                Ok((SparrowConfig::scoped_settings_file(window.workspace.path.as_deref(),scope==1)?,changes))
-            }).collect::<Result<Vec<_>,String>>().and_then(SparrowConfig::update_scoped_settings);
+                        .collect::<Result<Vec<_>, String>>()?;
+                    files.push((path, values));
+                }
+                SparrowConfig::update_scoped_settings(files)
+            })();
             match result {
                 Ok(()) => {
+                    if !debugger_pending.with_untracked(Pending::is_empty) {
+                        let settings = crate::debug_settings::load(
+                            window.workspace.path.as_deref(),
+                        );
+                        crate::debug_settings::apply_to_window(&window, settings);
+                        debugger_pending.set(Pending::new());
+                    }
                     pending.set(Pending::new());
                     scope_drafts.set([Pending::new(), Pending::new()]);
                     error.set(String::new());
@@ -576,54 +594,81 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     };
     keyboard.set_submit(accept.clone());
     let save = apply;
-    let external = window.clone();
     let show_page_actions = move || {
         search_query.with(|query| {
             query
                 .as_ref()
-                .is_none_or(|query| matches_query(page.get().title(), query))
+                .is_none_or(|query| matches_query(page.get().search_terms(), query))
         })
     };
     let overview_keyboard = keyboard.clone();
-    let overview=stack((
-        label(||"Customize IDE appearance and behavior: change themes and font size, tune the keymap, configure Dart/Flutter and system settings.").style(|s|s.width_full().margin_top(8.0).margin_bottom(10.0)),
-        dyn_stack(move ||if page.get()==Page::Languages {vec![Page::Flutter,Page::Dart]}else{vec![Page::Appearance,Page::System,Page::Editor,Page::Terminal,Page::Keymap,Page::Plugins,Page::Flutter,Page::Dart]},|p|*p as u8,move |p|overview_keyboard.control(label(move ||p.title()).on_click_stop(move |_|navigate(p,page,history,index,query)).style(move |s|s.margin_left(24.0).height(22.0).color(config.get().color(SparrowColor::EDITOR_LINK)).hover(|s|s.cursor(floem::style::CursorStyle::Pointer))))).style(|s|s.flex_col().width_full()),
-    )).style(move |s|s.flex_col().width_full().apply_if(!matches!(page.get(),Page::Overview|Page::Languages)||!show_page_actions(),|s|s.hide()));
-    let launch_page = page;
-    let external_button = label(move || match launch_page.get() {
-        Page::Keymap => "Open Keymap Editor",
-        Page::Run => "Edit Run/Debug Configurations…",
-        _ => "Manage Themes…",
-    })
-    .on_click_stop(move |_| {
-        if dirty.get_untracked() {
-            error.set(
-                "Apply or cancel your settings changes before opening this editor."
-                    .into(),
-            );
-            return;
-        }
-        visible.set(false);
-        match launch_page.get() {
-            Page::Keymap => external.main_split.open_keymap(),
-            Page::Run => external.run_config_modal_visible.set(true),
-            _ => external.show_panel(PanelKind::Plugin),
-        }
-    })
-    .style(move |s| {
-        s.height(28.0)
-            .items_center()
-            .color(config.get().color(SparrowColor::EDITOR_LINK))
-            .apply_if(
-                !show_page_actions()
-                    || !matches!(
-                        page.get(),
-                        Page::Keymap | Page::Run | Page::Plugins
-                    ),
-                |s| s.hide(),
-            )
-    });
-    let external_button = keyboard.control(external_button);
+    let overview = dyn_stack(
+        move || {
+            if visible.get() && show_page_actions() {
+                page.get()
+                    .summary()
+                    .map(|summary| (page.get(), summary))
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            }
+        },
+        |(page, _)| *page,
+        move |(selected, summary)| {
+            let keyboard = overview_keyboard.clone();
+            stack((
+                label(move || summary).style(|s| s.width_full()),
+                dyn_stack(
+                    move || form::children(selected),
+                    |page| *page,
+                    move |child| {
+                        form::link(
+                            &keyboard,
+                            child.title(),
+                            move || navigate(child, page, history, index, query),
+                            config,
+                        )
+                    },
+                )
+                .style(|s| s.flex_col().items_start().width_full()),
+            ))
+            .style(|s| s.flex_col().width_full())
+        },
+    )
+    .style(|s| s.flex_col().width_full());
+    let tools_window = window.clone();
+    let tools_keyboard = keyboard.clone();
+    let external_buttons = dyn_stack(
+        move || {
+            if visible.get() && show_page_actions() {
+                match page.get() {
+                    Page::RunConfigurations => vec![("Edit Run/Debug Configurations…", None)],
+                    Page::Plugins => vec![("Manage Plugins and Themes", Some(PanelKind::Plugin))],
+                    Page::Git => vec![("Open Commit", Some(PanelKind::SourceControl)), ("Open Git History", Some(PanelKind::GitHistory))],
+                    Page::Devices => vec![("Open Device Manager", Some(PanelKind::DeviceManager)), ("Open Running Devices", Some(PanelKind::RunningDevices))],
+                    Page::Logcat => vec![("Open Logcat", Some(PanelKind::Logcat))],
+                    _ => Vec::new(),
+                }
+            } else { Vec::new() }
+        },
+        |(label, _)| *label,
+        move |(label, panel)| {
+            let window = tools_window.clone();
+            form::link(&tools_keyboard, label, move || {
+                if dirty.get_untracked() {
+                    error.set("Apply or cancel your settings changes before opening this tool.".into());
+                    return;
+                }
+                close();
+                if let Some(panel) = panel {
+                    window.show_panel(panel);
+                } else {
+                    window.run_config_modal_visible.set(true);
+                }
+            }, config)
+        },
+    ).style(|s| s.flex_col().items_start().width_full());
     let button_keyboard = keyboard.clone();
     let button = move |text: &'static str| {
         button_keyboard.control_if(
@@ -641,7 +686,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         )
     };
     let rows_keyboard = keyboard.clone();
-    let tree = navigation_tree(
+    let (tree, tree_id) = navigation_tree(
         cx,
         &keyboard,
         config,
@@ -650,14 +695,12 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             page,
             history,
             index,
-            appearance_expanded,
-            languages_expanded,
+            expanded,
             matching,
             shown_pages,
             modifications,
         },
     );
-    let tree_id = tree.id();
     let search_clear = keyboard
         .icon(
             || SparrowIcons::SEARCH_CLEAR,
@@ -700,55 +743,33 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         container(search).style(|s| {
             tokens::padding(s.width_full(), "navigation", "search_container_insets")
         }),
-        sparrow_scroll(tree)
-            .style(|s| s.size_full().min_height(0).flex_grow(1.0_f32).flex_basis(0)),
+        tree.style(|s| s.size_full().min_height(0).flex_grow(1.0_f32).flex_basis(0)),
     ))
     .style(move |s| {
         s.flex_col()
             .background(layout::sidebar_background(&config.get()))
     });
 
-    let parent = breadcrumb_item(
-        true,
-        label(move || match page.get() {
-            Page::Appearance | Page::System => Page::Overview.title(),
-            Page::Flutter | Page::Dart => Page::Languages.title(),
-            _ => "",
-        }),
-        config,
-    )
-    .style(move |s| {
-        s.apply_if(
-            search_query.with(Option::is_some)
-                || !matches!(
-                    page.get(),
-                    Page::Appearance | Page::System | Page::Flutter | Page::Dart
-                ),
-            |s| s.hide(),
-        )
-    });
     let breadcrumb = dyn_stack(
         move || {
-            vec![
-                search_query.with(Option::is_none)
-                    && matches!(
-                        page.get(),
-                        Page::Appearance | Page::System | Page::Flutter | Page::Dart
-                    ),
-            ]
+            let page = page.get();
+            if search_query.with(Option::is_some) {
+                return vec![(None, true)];
+            }
+            let mut path: Vec<_> = page.ancestors().collect();
+            path.reverse();
+            path.push(page);
+            path.into_iter()
+                .enumerate()
+                .map(|(index, page)| (Some(page), index == 0))
+                .collect()
         },
-        |nested| *nested,
-        move |nested| {
+        |part| *part,
+        move |(page, first)| {
             breadcrumb_item(
-                !nested,
-                label(move || {
-                    if search_query.with(Option::is_none) {
-                        page.get().title()
-                    } else {
-                        "Search results"
-                    }
-                })
-                .style(|s| s.min_width(0).text_ellipsis()),
+                first,
+                label(move || page.map(Page::title).unwrap_or("Search results"))
+                    .style(|s| s.min_width(0).text_ellipsis()),
                 config,
             )
         },
@@ -781,7 +802,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     ))
     .style(|s| tokens::padding(s, "navigation", "history_toolbar_insets"));
     let header = stack((
-        stack((parent, breadcrumb)).style(|s| {
+        breadcrumb.style(|s| {
             tokens::padding(s, "navigation", "banner_insets")
                 .font_bold()
                 .min_width(0)
@@ -797,9 +818,54 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .flex_shrink(0.0_f32)
     });
 
+    let show_menus =
+        move || visible.get() && page.get() == Page::Menus && show_page_actions();
+    let menu_keyboard = keyboard.clone();
+    let menu_editor = dyn_stack(
+        move || show_menus().then_some(()).into_iter().collect::<Vec<_>>(),
+        |_| (),
+        move |_| {
+            menu_editor::view(
+                menu_keyboard.clone(),
+                pending,
+                settings_config.read_only(),
+                config,
+            )
+        },
+    )
+    .style(|s| s.flex_col().width_full());
+    let show_keymap =
+        move || visible.get() && page.get() == Page::Keymap && show_page_actions();
+    let keymap_common = window.common.clone();
+    let keymap_keyboard = keyboard.clone();
+    let keymap = dyn_stack(
+        move || show_keymap().then_some(()).into_iter().collect::<Vec<_>>(),
+        |_| (),
+        move |_| {
+            crate::keymap::settings_keymap_view(
+                keymap_common.clone(),
+                keymap_keyboard.clone(),
+            )
+        },
+    )
+    .style(move |s| {
+        s.width_full()
+            .flex_grow(1.0_f32)
+            .flex_basis(0)
+            .min_height(0)
+            .apply_if(!show_keymap(), |s| s.hide())
+    });
     let page_content = stack((
         header,
-        scope_picker.style(move |s| s.apply_if(!can_project, |s| s.hide())),
+        scope_picker.style(move |s| {
+            s.apply_if(
+                !can_project
+                    || show_keymap()
+                    || (page.get() == Page::Debugger && show_page_actions()),
+                |s| s.hide(),
+            )
+        }),
+        keymap,
         label(move || error.get()).style(move |s| {
             s.color(config.get().color(SparrowColor::SPARROW_ERROR))
                 .text_ellipsis()
@@ -808,7 +874,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         sparrow_scroll(
             stack((
                 overview,
-                external_button,
+                external_buttons,
+                menu_editor,
                 label(|| "No settings match your search.").style(move |s| {
                     s.margin_top(12.0)
                         .color(
@@ -822,46 +889,97 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         )
                 }),
                 dyn_stack(
-                    move || filtered.get(),
-                    move |item| {
-                        (
-                            epoch.get(),
-                            item.kind.clone(),
-                            item.field.clone(),
-                            initial(&item.value).map(|v| v.0),
-                        )
+                    move || {
+                        sections.with(|sections| {
+                            sections
+                                .iter()
+                                .map(|(title, _)| *title)
+                                .collect::<Vec<_>>()
+                        })
                     },
-                    move |item| {
-                        setting_row(
-                            item,
-                            pending,
-                            rows_keyboard.clone(),
-                            project_scope,
-                            highlight_matcher,
-                            config,
-                        )
+                    |title| *title,
+                    move |title| {
+                        let keyboard = rows_keyboard.clone();
+                        stack((
+                            form::section_title(title, config),
+                            dyn_stack(
+                                move || {
+                                    sections.with(|sections| {
+                                        sections
+                                            .iter()
+                                            .find(|(section, _)| *section == title)
+                                            .map(|(_, items)| items.clone())
+                                            .unwrap_or_default()
+                                    })
+                                },
+                                move |item| {
+                                    (
+                                        epoch.get(),
+                                        item.kind.clone(),
+                                        item.field.clone(),
+                                        initial(&item.value).map(|v| v.0),
+                                    )
+                                },
+                                move |item| {
+                                    let debugger = item.kind == "debugger";
+                                    setting_row(
+                                        item,
+                                        if debugger {
+                                            debugger_pending
+                                        } else {
+                                            pending
+                                        },
+                                        keyboard.clone(),
+                                        if debugger {
+                                            no_reset
+                                        } else {
+                                            project_scope
+                                        },
+                                        highlight_matcher,
+                                        config,
+                                    )
+                                },
+                            )
+                            .style(|s| s.flex_col().width_full()),
+                        ))
+                        .style(|s| s.flex_col().width_full())
                     },
                 )
                 .style(|s| s.flex_col().width_full()),
             ))
             .style(|s| s.flex_col().min_width_full()),
         )
-        .style(|s| {
+        .scroll_to(move || {
+            let _ = (page.get(), search_query.get());
+            Some(floem::kurbo::Point::ORIGIN)
+        })
+        .style(move |s| {
             s.flex_grow(1.0_f32)
                 .flex_basis(0)
                 .min_height(0)
                 .width_full()
+                .apply_if(show_keymap(), |s| s.hide())
         }),
     ))
     .style(|s| s.flex_col().padding_horiz(16.0).padding_top(8.0));
 
+    let project_name = window
+        .workspace
+        .path
+        .as_deref()
+        .and_then(std::path::Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned());
     let title = stack((
-        label(|| {
-            if cfg!(target_os = "macos") {
+        label(move || {
+            let caption = if cfg!(target_os = "macos") {
                 tokens::text("dialog", "title_macos")
             } else {
                 tokens::text("dialog", "title")
-            }
+            };
+            project_name.as_ref().map_or_else(
+                || caption.to_owned(),
+                |name| format!("{caption} – {name}"),
+            )
         })
         .style(|s| s.flex_grow(1.0_f32).font_bold().text_ellipsis()),
         keyboard.icon(
@@ -938,23 +1056,84 @@ mod tests {
     use super::*;
     #[test]
     fn category_navigation_skips_collapsed_children_and_retains_search_results() {
-        let collapsed = visible_pages(false, false, None);
+        let collapsed = visible_pages(&BTreeSet::new(), None);
         assert!(!collapsed.contains(&Page::Appearance));
         assert!(!collapsed.contains(&Page::Flutter));
-        let appearance = visible_pages(true, false, None);
+        let appearance = visible_pages(&BTreeSet::from([Page::Overview]), None);
         assert!(appearance.contains(&Page::Appearance));
         assert!(appearance.contains(&Page::System));
         assert!(!appearance.contains(&Page::Dart));
-        let languages = visible_pages(false, true, None);
+        let languages = visible_pages(&BTreeSet::from([Page::Languages]), None);
         assert!(languages.contains(&Page::Flutter));
         assert!(languages.contains(&Page::Dart));
         assert!(!languages.contains(&Page::Appearance));
         assert_eq!(
-            visible_pages(false, false, Some(&[Page::Dart])),
+            visible_pages(&BTreeSet::new(), Some(&[Page::Dart])),
             vec![Page::Languages, Page::Dart]
         );
-        assert!(visible_pages(false, false, Some(&[])).is_empty());
+        assert!(visible_pages(&BTreeSet::new(), Some(&[])).is_empty());
     }
+    #[test]
+    fn nested_settings_keep_all_ancestors_and_follow_expansion() {
+        assert_eq!(
+            visible_pages(&BTreeSet::new(), Some(&[Page::Files])),
+            [Page::Overview, Page::System, Page::Files],
+        );
+        assert!(
+            !visible_pages(&BTreeSet::from([Page::Overview]), None)
+                .contains(&Page::Files)
+        );
+        assert!(
+            visible_pages(&BTreeSet::from([Page::Overview, Page::System]), None)
+                .contains(&Page::Files)
+        );
+    }
+
+    #[test]
+    fn quick_actions_and_project_debugger_settings_round_trip() {
+        let temp = tempfile::tempdir().unwrap();
+        let ide = temp.path().join("settings.toml");
+        let debugger = temp.path().join("debugger.toml");
+        std::fs::write(&debugger, "# Debugger preferences\ndebug-external = true\n")
+            .unwrap();
+        let edit = Edit {
+            raw: r#"["save_all","palette"]"#.into(),
+            kind: Type::StringList,
+        };
+        SparrowConfig::update_scoped_settings(vec![
+            (
+                ide.clone(),
+                vec![(
+                    "ui".into(),
+                    "quick-actions".into(),
+                    Some(edit.value("ui").unwrap()),
+                )],
+            ),
+            (
+                debugger.clone(),
+                vec![(String::new(), "inline-values".into(), Some(false.into()))],
+            ),
+        ])
+        .unwrap();
+        let ide: toml::Value =
+            toml::from_str(&std::fs::read_to_string(ide).unwrap()).unwrap();
+        let actions = ide["ui"]["quick-actions"].as_array().unwrap();
+        assert_eq!(
+            actions
+                .iter()
+                .map(|item| item.as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["save_all", "palette"]
+        );
+        let text = std::fs::read_to_string(debugger).unwrap();
+        assert!(text.starts_with("# Debugger preferences"));
+        let settings: sparrow_rpc::dap_types::DebuggerSettings =
+            toml::from_str(&text).unwrap();
+        assert!(settings.debug_external);
+        assert!(!settings.inline_values);
+        assert!(settings.preview_files);
+    }
+
     fn setting(cx: Scope, field: &str, description: &str) -> SettingsItem {
         SettingsItem {
             kind: "core".into(),
@@ -980,17 +1159,14 @@ mod tests {
         assert_eq!(matching_pages(&items, "path flutter"), [Page::Flutter]);
         assert_eq!(matching_pages(&items, "standalone toolchain"), [Page::Dart]);
         assert_eq!(matching_pages(&items, "keymap"), [Page::Keymap]);
+        assert_eq!(matching_pages(&items, "keyboard shortcuts"), [Page::Keymap]);
+        assert_eq!(matching_pages(&items, "quick actions"), [Page::Menus]);
         assert!(matching_pages(&items, "missing value").is_empty());
         cx.dispose();
     }
 
     #[test]
     fn marks_pending_changes_and_override_removals_in_both_scopes() {
-        let cx = Scope::new();
-        let items = [
-            setting(cx, "flutter-sdk-path", ""),
-            setting(cx, "dart-sdk-path", ""),
-        ];
         let dart_key = ("core".into(), "dart-sdk-path".into());
         let mut active = Pending::from([(
             dart_key,
@@ -1007,13 +1183,12 @@ mod tests {
             },
         )]);
         assert_eq!(
-            modified_pages(&items, &active, &inactive),
-            [Page::Flutter, Page::Dart]
+            modified_pages(&active, &inactive),
+            [Page::Dart, Page::Flutter]
         );
         active.clear();
-        assert_eq!(modified_pages(&items, &active, &inactive), [Page::Flutter]);
-        assert!(modified_pages(&items, &active, &Pending::new()).is_empty());
-        cx.dispose();
+        assert_eq!(modified_pages(&active, &inactive), [Page::Flutter]);
+        assert!(modified_pages(&active, &Pending::new()).is_empty());
     }
 
     #[test]

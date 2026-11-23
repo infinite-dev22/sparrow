@@ -173,7 +173,7 @@ impl AppData {
     fn default_window_config(&self) -> WindowConfig {
         WindowConfig::default()
             .apply_default_theme(false)
-            .title("Sparrow")
+            .title(std::env::var("SPARROW_CHECKBOX_TEST_TITLE").unwrap_or_else(|_| "Sparrow".to_string()))
     }
 
     pub fn new_window(&self, folder: Option<PathBuf>) {
@@ -583,6 +583,8 @@ impl AppData {
 
         view.window_scale(move || window_scale.get())
             .keyboard_navigable()
+            .on_event_cont(EventListener::WindowGotFocus, |_| println!("CHECKBOX_WINDOW_FOCUS true"))
+            .on_event_cont(EventListener::WindowLostFocus, |_| println!("CHECKBOX_WINDOW_FOCUS false"))
             .on_event(EventListener::KeyUp, move |event| {
                 // Floem sends keys directly to the focused field, without
                 // bubbling to its modal. Escape clears text-input focus on
@@ -1923,6 +1925,10 @@ pub fn window_menu(
                 workbench_command.send(NewWindow);
             })),
     );
+
+    if let Some(actions) = crate::menus::quick_actions_menu(&context.quick_actions, workbench_command) {
+        menu = menu.entry(actions);
+    }
 
     // ── HELP ────────────────────────────────────────────────────────
     menu = menu.entry(

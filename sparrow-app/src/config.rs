@@ -1139,7 +1139,7 @@ fn settings_scope_transaction(
                 (section, key)
             };
             let mut table = Some(document.as_table_mut());
-            for segment in section.split('.') {
+            for segment in section.split('.').filter(|_| !section.is_empty()) {
                 table = table
                     .and_then(|table| table.get_mut(segment))
                     .and_then(toml_edit::Item::as_table_mut);
@@ -1173,7 +1173,7 @@ fn settings_transaction(
             key
         };
         let mut table = document.as_table_mut();
-        for segment in parent.split('.') {
+        for segment in parent.split('.').filter(|_| !parent.is_empty()) {
             if !table.contains_key(segment) {
                 table.insert(
                     segment,

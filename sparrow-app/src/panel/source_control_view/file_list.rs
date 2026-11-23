@@ -14,6 +14,7 @@ use floem::{
 };
 use sparrow_rpc::source_control::FileDiff;
 
+use crate::widgets::sparrow_scroll;
 use crate::{
     command::{
         CommandKind, InternalCommand, SparrowCommand, SparrowWorkbenchCommand,
@@ -22,7 +23,6 @@ use crate::{
     source_control::SourceControlData,
     widgets::checkbox,
 };
-use crate::widgets::sparrow_scroll;
 
 pub(super) fn file_diffs_view(
     source_control: SourceControlData,
@@ -37,8 +37,9 @@ pub(super) fn file_diffs_view(
     let sparrow_command = source_control.common.sparrow_command;
     let internal_command = source_control.common.internal_command;
 
-    let view_fn = move |(path, (diff, checked)): (PathBuf, (FileDiff, bool))| {
+    let view_fn = move |(path, diff): (PathBuf, FileDiff)| {
         let full_path = path.clone();
+        let selection_path = full_path.clone();
         let diff_for_menu = diff.clone();
         let path_for_click = full_path.clone();
 
@@ -61,13 +62,15 @@ pub(super) fn file_diffs_view(
             .to_string();
         let style_path = path.clone();
         stack((
-            checkbox(move || checked, config).on_update(move |selected| {
+            super::probe::watch(checkbox(move || file_diffs.with(|diffs| {
+                diffs.get(&selection_path).is_some_and(|(_, checked)| *checked)
+            }), config).on_update(move |selected| {
                 file_diffs.update(|diffs| {
                     if let Some((_, checked)) = diffs.get_mut(&full_path) {
                         *checked = selected;
                     }
                 });
-            }),
+            }), format!("file:{file_name}")),
             svg(move || config.get().file_svg(&path).0).style(move |s| {
                 let config = config.get();
                 let size = config.ui.icon_size() as f32;
@@ -147,18 +150,21 @@ pub(super) fn file_diffs_view(
         sparrow_scroll({
             dyn_stack(
                 move || {
-                    file_diffs
-                        .get()
-                        .into_iter()
-                        .filter(|(_, (diff, _))| {
-                            untracked.with(|set| set.contains(diff.path()))
-                                == unversioned
+                    untracked.with(|untracked| {
+                        file_diffs.with(|diffs| {
+                            diffs
+                                .iter()
+                                .filter(|(_, (diff, _))| {
+                                    untracked.contains(diff.path()) == unversioned
+                                })
+                                .map(|(path, (diff, _))| {
+                                    (path.clone(), diff.clone())
+                                })
+                                .collect::<Vec<_>>()
                         })
-                        .collect::<Vec<_>>()
+                    })
                 },
-                |(path, (diff, checked))| {
-                    (path.to_path_buf(), diff.clone(), *checked)
-                },
+                |(path, diff)| (path.clone(), diff.clone()),
                 view_fn,
             )
             .style(|s| s.flex_col().width_pct(100.0))

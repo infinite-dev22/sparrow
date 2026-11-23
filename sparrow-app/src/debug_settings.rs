@@ -70,76 +70,54 @@ pub fn refresh(terminal: &TerminalPanelData) {
     });
 }
 
+pub(crate) type DebuggerOption = (&'static str, &'static str, fn(&mut DebuggerSettings) -> &mut bool);
+
+pub(crate) const OPTIONS: &[DebuggerOption] = &[
+    ("preview-files", "Open Files in Preview Tab", |s| &mut s.preview_files),
+    ("inline-values", "Show Variable Values in Editor", |s| &mut s.inline_values),
+    ("sort-variables", "Sort Variables Alphabetically", |s| &mut s.sort_variables),
+    ("unmute-on-finish", "Unmute Breakpoints on Session Finish", |s| &mut s.unmute_on_finish),
+    ("value-renderers", "Enable Value Renderers (next launch)", |s| &mut s.value_renderers),
+    ("debug-sdk", "Step into SDK Libraries", |s| &mut s.debug_sdk),
+    ("debug-external", "Step into External Packages", |s| &mut s.debug_external),
+];
+
+pub(crate) fn apply_to_window(window: &WindowTabData, settings: DebuggerSettings) {
+    window.common.debugger_settings.set(settings.clone());
+    for (_, process) in window
+        .terminal
+        .run_debug_process(false)
+        .into_iter()
+        .filter(|(_, process)| !process.stopped)
+    {
+        window.common.proxy.dap_advanced(
+            process.config.dap_id,
+            DebugAction::UpdateOptions {
+                debug_sdk: settings.debug_sdk,
+                debug_external: settings.debug_external,
+            },
+        );
+    }
+    refresh(&window.terminal);
+}
+
 pub fn menu(window: Rc<WindowTabData>) -> Menu {
-    let preferences = window.common.debugger_settings.get_untracked();
+    let mut preferences = window.common.debugger_settings.get_untracked();
     let mut menu = Menu::new("Debugger Settings");
-    for (index, title, checked) in [
-        (0, "Open Files in Preview Tab", preferences.preview_files),
-        (
-            1,
-            "Show Variable Values in Editor",
-            preferences.inline_values,
-        ),
-        (
-            2,
-            "Sort Variables Alphabetically",
-            preferences.sort_variables,
-        ),
-        (
-            3,
-            "Unmute Breakpoints on Session Finish",
-            preferences.unmute_on_finish,
-        ),
-        (
-            4,
-            "Enable Value Renderers (next launch)",
-            preferences.value_renderers,
-        ),
-        (5, "Step into SDK Libraries", preferences.debug_sdk),
-        (6, "Step into External Packages", preferences.debug_external),
-    ] {
+    for &(_, title, field) in OPTIONS {
+        let checked = *field(&mut preferences);
         let window = window.clone();
         menu = menu.entry(
-            MenuItem::new(format!("{}{}", if checked { "✓ " } else { "" }, title))
+            MenuItem::new(format!("{}{title}", if checked { "✓ " } else { "" }))
                 .action(move || {
-                    let mut settings =
-                        window.common.debugger_settings.get_untracked();
-                    let flag = match index {
-                        0 => &mut settings.preview_files,
-                        1 => &mut settings.inline_values,
-                        2 => &mut settings.sort_variables,
-                        3 => &mut settings.unmute_on_finish,
-                        4 => &mut settings.value_renderers,
-                        5 => &mut settings.debug_sdk,
-                        _ => &mut settings.debug_external,
-                    };
+                    let mut settings = window.common.debugger_settings.get_untracked();
+                    let flag = field(&mut settings);
                     *flag = !*flag;
-                    if let Err(error) =
-                        save(window.workspace.path.as_deref(), &settings)
-                    {
-                        window.show_alert(
-                            "Cannot save debugger settings".into(),
-                            error,
-                            Vec::new(),
-                        );
+                    if let Err(error) = save(window.workspace.path.as_deref(), &settings) {
+                        window.show_alert("Cannot save debugger settings".into(), error, Vec::new());
                         return;
                     }
-                    window.common.debugger_settings.set(settings.clone());
-                    for (_, process) in window
-                        .terminal
-                        .run_debug_process(false)
-                        .into_iter()
-                        .filter(|(_, p)| !p.stopped)
-                    {
-                        window.common.proxy.dap_advanced(
-                            process.config.dap_id,
-                            DebugAction::UpdateOptions {
-                                debug_sdk: settings.debug_sdk,
-                                debug_external: settings.debug_external,
-                            },
-                        );
-                    }
-                    refresh(&window.terminal);
+                    apply_to_window(&window, settings);
                 }),
         );
     }

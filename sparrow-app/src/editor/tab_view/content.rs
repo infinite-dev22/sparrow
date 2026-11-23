@@ -209,7 +209,7 @@ pub(super) fn editor_tab_content(
             EditorTabChild::ThemeColorSettings(_) => {
                 theme_color_settings_view(editors, common).into_any()
             }
-            EditorTabChild::Keymap(_) => keymap_view(editors, common).into_any(),
+            EditorTabChild::Keymap(_) => keymap_view(common).into_any(),
             EditorTabChild::Volt(_, id) => {
                 plugin_info_view(plugin.clone(), id).into_any()
             }

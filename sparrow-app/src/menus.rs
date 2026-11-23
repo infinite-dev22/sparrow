@@ -1,5 +1,9 @@
 //! Shared context-menu behavior for file, editor and tab surfaces.
-use crate::widgets::popup_menu::{Menu, MenuItem};
+use crate::{
+    command::SparrowWorkbenchCommand,
+    listener::Listener,
+    widgets::popup_menu::{Menu, MenuItem},
+};
 use floem::{
     views::editor::{core::register::Clipboard, text::SystemClipboard},
 };
@@ -13,6 +17,7 @@ pub struct MenuContext {
     pub can_stop: bool,
     pub can_reload: bool,
     pub dart_editor: bool,
+    pub quick_actions: Vec<String>,
 }
 impl MenuContext {
     pub fn from_window(tab: &crate::window_tab::WindowTabData) -> Self {
@@ -49,8 +54,38 @@ impl MenuContext {
             can_stop,
             can_reload,
             dart_editor,
+            quick_actions: tab.common.config.with(|config| config.ui.quick_actions.clone()),
         }
     }
+}
+
+pub(crate) const QUICK_ACTIONS: &[(&str, SparrowWorkbenchCommand)] = {
+    use SparrowWorkbenchCommand::*;
+    &[
+        ("Find Action", PaletteCommand),
+        ("Go to File", Palette),
+        ("Open Project", OpenFolder),
+        ("Save All", SaveAll),
+        ("Run Configurations", EditRunConfigurations),
+        ("Toggle Terminal", ToggleTerminalFocus),
+        ("Focus Commit", ToggleSourceControlFocus),
+        ("Show IDE Logs", OpenLogFile),
+    ]
+};
+
+pub(crate) fn quick_action(id: &str) -> Option<(&'static str, SparrowWorkbenchCommand)> {
+    QUICK_ACTIONS.iter().find(|(_, command)| <&str>::from(command) == id).cloned()
+}
+
+pub(crate) fn quick_actions_menu(
+    ids: &[String],
+    listener: Listener<SparrowWorkbenchCommand>,
+) -> Option<Menu> {
+    let mut actions = ids.iter().filter_map(|id| quick_action(id)).peekable();
+    actions.peek()?;
+    Some(actions.fold(Menu::new("Quick Actions"), |menu, (label, command)| {
+        menu.entry(MenuItem::new(label).action(move || listener.send(command.clone())))
+    }))
 }
 
 pub fn path_references(

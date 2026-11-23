@@ -35,6 +35,7 @@ pub(crate) use button::native_button_has_focus;
 pub use button::{ButtonKind, button};
 pub(crate) use button::button_with_content;
 pub use checkbox::{checkbox, labeled_checkbox};
+pub(crate) use checkbox::{CheckboxState, group_checkbox};
 pub use dialog_surface::dialog_surface;
 pub use divider::{Divider, DividerVariant};
 pub use dropdown::dropdown;

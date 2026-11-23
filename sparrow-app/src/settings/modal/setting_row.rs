@@ -46,15 +46,27 @@ pub(super) fn setting_row(
         }
         raw
     });
+    let name = item
+        .name
+        .split_once(": ")
+        .map(|(_, title)| title)
+        .unwrap_or(&item.name)
+        .to_owned();
+    let is_boolean = matches!(item.value, SettingsValue::Bool(_));
+    let checkbox_name = name.clone();
     let control = match item.value {
         SettingsValue::Bool(_) => keyboard
             .control(crate::widgets::labeled_checkbox(
                 move || value.with(|value| value == "true"),
                 move || {
-                    if value.with(|value| value == "true") {
-                        "Enabled"
+                    if highlight.with(Option::is_some) {
+                        if value.with(|value| value == "true") {
+                            "Enabled".into()
+                        } else {
+                            "Disabled".into()
+                        }
                     } else {
-                        "Disabled"
+                        checkbox_name.clone()
                     }
                 },
                 move |checked| value.set(checked.to_string()),
@@ -146,12 +158,8 @@ pub(super) fn setting_row(
         }),
     );
     let qualified_name = item.name.clone();
-    let name = item
-        .name
-        .split_once(": ")
-        .map(|(_, n)| n.to_string())
-        .unwrap_or(item.name);
-    stack((
+    let gap = super::tokens::length("navigation", "tree_icon_gap");
+    let field = stack((
         focus_text(
             {
                 let qualified_name = qualified_name.clone();
@@ -181,15 +189,30 @@ pub(super) fn setting_row(
             },
             move || config.get().color(SparrowColor::EDITOR_LINK),
         )
-        .style(|s| s.font_bold().margin_bottom(6.0).width_full().min_width(0)),
+        .style(move |s| {
+            s.max_width_full()
+                .min_width(0)
+                .apply_if(is_boolean && highlight.with(Option::is_none), |s| {
+                    s.hide()
+                })
+        }),
         control,
         reset,
+    ))
+    .style(move |s| {
+        s.items_center()
+            .width_full()
+            .gap(gap)
+            .flex_wrap(floem::style::FlexWrap::Wrap)
+    });
+    let item_description_empty = item.description.is_empty();
+    stack((
+        field,
         label(move || item.description.clone()).style(move |s| {
-            s.margin_top(6.0)
-                .font_size(12.0)
-                .max_width_full()
+            s.max_width_full()
                 .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+                .apply_if(is_boolean && item_description_empty, |s| s.hide())
         }),
     ))
-    .style(|s| s.flex_col().width_full().padding_bottom(20.0))
+    .style(move |s| s.flex_col().width_full().gap(gap).padding_bottom(gap))
 }

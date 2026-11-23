@@ -69,6 +69,19 @@ pub(super) fn application_controls(
                 .margin_right(6.0)
                 .apply_if(is_macos, |s| s.hide())
         }),
+        not_clickable_icon(
+            || SparrowIcons::PALETTE_MENU, || false, || false, || "Quick Actions", config,
+        )
+        .ide_popout_menu(move || {
+            crate::menus::quick_actions_menu(&config.get().ui.quick_actions, workbench_command)
+                .unwrap_or_else(|| Menu::new("Quick Actions"))
+        })
+        .style(move |s| {
+            s.apply_if(
+                !config.get().ui.quick_actions.iter().any(|id| crate::menus::quick_action(id).is_some()),
+                |s| s.hide(),
+            )
+        }),
         tooltip_label(
             config,
             container(
