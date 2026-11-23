@@ -22,6 +22,7 @@ path = "sparrow-proxy/src/bin/sparrow-proxy.rs"
 
 [workspace]
 members = ["sparrow-app", "sparrow-proxy", "sparrow-rpc", "sparrow-core"]
+exclude = ["third-party/floem"]
 
 [workspace.package]
 version      = "0.4.6"
@@ -78,9 +79,7 @@ sparrow-rpc   = { path = "./sparrow-rpc" }
 sparrow-proxy = { path = "./sparrow-proxy" }
 
 [workspace.dependencies.floem]
-# path = "../floem"
-git = "https://github.com/lapce/floem"
-rev = "31fa8f444c37f4c314f47d88c23ffdbc25f2ab53"
+path = "third-party/floem"
 features = ["editor", "serde", "default-image-formats", "rfd-async-std"]
 
 [workspace.dependencies.floem-editor-core]

@@ -75,6 +75,10 @@ use crate::{
 use workbench::workbench;
 use workspace_tabs::workspace_tab_header;
 
+pub(crate) fn sparrow_window_config() -> WindowConfig {
+    WindowConfig::default().application_id("dev.sparrow.sparrow")
+}
+
 #[derive(Parser)]
 #[clap(name = "Sparrow", about = "Native Dart and Flutter IDE")]
 #[clap(version=meta::VERSION)]
@@ -171,7 +175,7 @@ impl AppData {
     }
 
     fn default_window_config(&self) -> WindowConfig {
-        WindowConfig::default()
+        sparrow_window_config()
             .apply_default_theme(false)
             .title("Sparrow")
     }

@@ -20,7 +20,6 @@ use floem::{
         create_rw_signal,
     },
     views::{Decorators, dyn_container, label, stack, stack_from_iter},
-    window::WindowConfig,
 };
 
 use crate::{
@@ -196,7 +195,7 @@ fn show(
             dialog(Rc::new(options), start, home, config, finish)
         },
         Some(
-            WindowConfig::default()
+            crate::app::sparrow_window_config()
                 .title(title)
                 .size((1040.0, 680.0))
                 .min_size((590.0, 390.0)),
