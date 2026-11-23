@@ -114,13 +114,11 @@ impl TabStrip {
 
 /// Scrolls an intrinsic-width row only when it exceeds the available width.
 /// Active tabs are fully revealed on selection, layout changes, and viewport resize.
-#[track_caller]
 pub fn tab_strip<V: View + 'static>(build: impl FnOnce(TabStrip) -> V) -> Scroll {
     let active = create_rw_signal(None);
     let width = create_rw_signal(0.0);
     let content = build(TabStrip { active });
-    let content_id = content.id();
-    let scroll = super::horizontal_scroll(content.style(|s| s.items_center()))
+    super::horizontal_scroll(content.style(|s| s.items_center()))
         .scroll_style(|s| s.handle_thickness(3).track_thickness(3))
         .ensure_visible(move || {
             width.track();
@@ -131,44 +129,5 @@ pub fn tab_strip<V: View + 'static>(build: impl FnOnce(TabStrip) -> V) -> Scroll
                 width.set(rect.width());
             }
         })
-        .style(|s| s.min_width(0.0).flex_shrink(1.0_f32));
-    let name = std::panic::Location::caller().file();
-    let id = scroll.id();
-    if std::env::var_os("SPARROW_TEST_TAB_LAYOUT").is_some() {
-        observe_tabs(name, id, content_id, active, String::new());
-    }
-    scroll
-}
-
-fn observe_tabs(name: &'static str, id: ViewId, content: ViewId, active: RwSignal<Option<(ViewId, Rect)>>, previous: String) {
-    floem::action::exec_after(std::time::Duration::from_millis(95), move |_| {
-        let mut next = previous;
-        if active.try_get_untracked().is_none() {
-            return;
-        }
-        if !id.is_hidden_recursive() {
-            if let (Some(size), Some(row)) = (id.get_size(), content.get_size()) {
-                let origin = id.layout_rect().origin();
-                let offset = origin.x - content.layout_rect().x0;
-                let items = content.children().into_iter().filter_map(|child| {
-                    let layout = child.get_layout()?;
-                    Some([layout.location.x.into(), layout.size.width.into(), layout.size.height.into()])
-                }).collect::<Vec<[f64; 3]>>();
-                let selected = active.get_untracked().map(|(child, rect)| {
-                    let style = child.get_combined_style().get(floem::style::Background);
-                    (rect.x0,rect.x1, format!("{style:?}"))
-                });
-                let payload = serde_json::json!({
-                    "name":name, "id":format!("{id:?}"), "size":[size.width,size.height],
-                    "row":[row.width,row.height], "origin":[origin.x,origin.y],
-                    "offset":offset, "items":items,"active":selected
-                }).to_string();
-                if payload != next {
-                    println!("TAB_LAYOUT {payload}");
-                    next = payload;
-                }
-            }
-        }
-        observe_tabs(name, id, content, active, next);
-    });
+        .style(|s| s.min_width(0.0).flex_shrink(1.0_f32))
 }
