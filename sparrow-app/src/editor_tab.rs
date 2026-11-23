@@ -169,24 +169,18 @@ impl EditorTabChild {
         matches!(self, EditorTabChild::Settings(_))
     }
 
-    pub fn child_info(&self, data: &WindowTabData) -> EditorTabChildInfo {
-        match &self {
+    pub fn child_info(
+        &self,
+        editors: &Editors,
+        diffs: &im::HashMap<DiffEditorId, DiffEditorData>,
+    ) -> Option<EditorTabChildInfo> {
+        Some(match &self {
             EditorTabChild::Editor(editor_id) => {
-                let editor_data = data
-                    .main_split
-                    .editors
-                    .editor_untracked(*editor_id)
-                    .unwrap();
-                EditorTabChildInfo::Editor(editor_data.editor_info(data))
+                let editor_data = editors.editor_untracked(*editor_id)?;
+                EditorTabChildInfo::Editor(editor_data.editor_info())
             }
             EditorTabChild::DiffEditor(diff_editor_id) => {
-                let diff_editor_data = data
-                    .main_split
-                    .diff_editors
-                    .get_untracked()
-                    .get(diff_editor_id)
-                    .cloned()
-                    .unwrap();
+                let diff_editor_data = diffs.get(diff_editor_id).cloned()?;
                 EditorTabChildInfo::DiffEditor(diff_editor_data.diff_editor_info())
             }
             EditorTabChild::Settings(_) => EditorTabChildInfo::Settings,
@@ -195,7 +189,7 @@ impl EditorTabChild {
             }
             EditorTabChild::Keymap(_) => EditorTabChildInfo::Keymap,
             EditorTabChild::Volt(_, id) => EditorTabChildInfo::Volt(id.to_owned()),
-        }
+        })
     }
 
     pub fn view_info(
@@ -461,16 +455,38 @@ impl EditorTabData {
         None
     }
 
-    pub fn tab_info(&self, data: &WindowTabData) -> EditorTabInfo {
-        EditorTabInfo {
+    pub fn tab_info(&self, data: &WindowTabData) -> Option<EditorTabInfo> {
+        Some(EditorTabInfo {
             active: self.active,
             is_focus: data.main_split.active_editor_tab.get_untracked()
                 == Some(self.editor_tab_id),
             children: self
                 .children
                 .iter()
-                .map(|(_, _, child)| child.child_info(data))
-                .collect(),
-        }
+                .map(|(_, _, child)| child.child_info(&data.main_split.editors, &data.main_split.diff_editors.get_untracked()))
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    #[test]
+    fn missing_editor_aborts_snapshot_instead_of_panicking_or_dropping_tabs() {
+        let scope = Scope::new();
+        let editors = Editors(scope.create_rw_signal(im::HashMap::new()));
+        let diffs = im::HashMap::new();
+        let closed = EditorTabChild::Editor(EditorId::next());
+        let closed_diff = EditorTabChild::DiffEditor(DiffEditorId::next());
+        let live = EditorTabChild::Settings(SettingsId::next());
+        assert!(closed.child_info(&editors, &diffs).is_none());
+        assert!(closed_diff.child_info(&editors, &diffs).is_none());
+        let incomplete = [live.clone(), closed].iter()
+            .map(|child| child.child_info(&editors, &diffs))
+            .collect::<Option<Vec<_>>>();
+        assert!(incomplete.is_none());
+        assert!(live.child_info(&editors, &diffs).is_some());
+        scope.dispose();
     }
 }

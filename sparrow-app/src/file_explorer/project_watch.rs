@@ -113,7 +113,7 @@ impl ProjectWatch {
                                 let metadata = old == &root
                                     || old == &root.join(".dart_tool")
                                     || old == &root.join("android")
-                                    || old == &root.join(".sparrow")
+                                    || old == &root.join(".sparrow") || old == &root.join(".sparrow")
                                     || settings.as_ref().and_then(|p| p.parent())
                                         == Some(old.as_path());
                                 if !dirs.contains(old) && !metadata {
@@ -202,13 +202,11 @@ fn relevant(root: &Path, settings: Option<&Path>, event: &notify::Event) -> bool
         matches!(
             relative.to_str(),
             Some(
-                ".dart_tool"
+                ".sparrow" | ".sparrow/workspace.json" | ".sparrow/settings.toml" | ".dart_tool"
                     | ".dart_tool/package_config.json"
                     | "pubspec.yaml"
                     | "pubspec.lock"
                     | "android"
-                    | ".sparrow"
-                    | ".sparrow/settings.toml"
                     | ".fvmrc"
             )
         ) || (relative.parent() == Some(Path::new("android"))
@@ -226,6 +224,7 @@ fn fingerprint(
         root.join("android"),
         root.join(".sparrow/settings.toml"),
         root.join(".fvmrc"),
+        root.join(".sparrow/workspace.json"),
     ];
     paths.extend(settings.map(Path::to_path_buf));
     paths
@@ -239,8 +238,10 @@ fn fingerprint(
         .collect()
 }
 fn read_project(root: &Path, previous: ProjectInfo) -> ProjectInfo {
+    let project = crate::dart::classify_project(root);
     let mut value = ProjectInfo {
-        flutter: crate::dart::is_flutter_project(root),
+        accent: Some(crate::project_appearance::color(root)),
+        flutter: project.is_flutter(),
         revision: previous.revision + 1,
         ..Default::default()
     };
@@ -259,6 +260,10 @@ fn read_project(root: &Path, previous: ProjectInfo) -> ProjectInfo {
             }
         }
     }
+    if !project.is_dart() {
+        return value;
+    }
+
     let path = root.join(".dart_tool/package_config.json");
     // An interrupted write must not replace the last good tree with an empty one.
     let mut resolution =
@@ -391,7 +396,13 @@ mod tests {
                 }
             }
         };
-        wait(0, true);
+        wait(0, false);
+        let pubspec = root.join("pubspec.yaml");
+        std::fs::write(&pubspec, "name: app\ndependencies:\n  one: any\n").unwrap();
+        assert_eq!(
+            wait(0, true).error.as_deref(),
+            Some("Dependencies are not resolved. Run Pub Get.")
+        );
         let dir = root.join(".dart_tool");
         std::fs::create_dir_all(&dir).unwrap();
         let config = dir.join("package_config.json");
@@ -411,6 +422,8 @@ mod tests {
         wait(0, false);
         std::fs::remove_dir_all(&dir).unwrap();
         wait(0, true);
+        std::fs::remove_file(pubspec).unwrap();
+        wait(0, false);
         drop(watch);
         std::fs::remove_dir_all(root).unwrap();
     }

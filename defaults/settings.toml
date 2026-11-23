@@ -68,6 +68,7 @@ files-exclude = "**/{.git,.svn,.hg,CVS,.DS_Store,Thumbs.db}" # Glob patterns
 [terminal]
 font-family = "JetBrains Mono, Noto Sans Mono, monospace"
 font-size = 13
+font-weight = 500
 line-height = 1.4
 
 [terminal.default-profile]

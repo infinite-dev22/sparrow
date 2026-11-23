@@ -14,7 +14,7 @@ use crate::{
     command::{CommandExecuted, CommandKind},
     config::color::SparrowColor,
     keypress::KeyPressFocus,
-    web_link::web_link,
+    widgets::web_link::web_link,
     window_tab::{Focus, WindowTabData},
 };
 
@@ -117,28 +117,28 @@ pub fn about_popup(window_tab_data: Rc<WindowTabData>) -> impl View {
             web_link(
                 || "Website".to_string(),
                 || AboutUri::SPARROW.to_string(),
-                move || config.get().color(SparrowColor::EDITOR_LINK),
+                config,
                 internal_command,
             )
             .style(|s| s.margin_top(20.0)),
             web_link(
                 || "GitHub".to_string(),
                 || AboutUri::GITHUB.to_string(),
-                move || config.get().color(SparrowColor::EDITOR_LINK),
+                config,
                 internal_command,
             )
             .style(|s| s.margin_top(10.0)),
             web_link(
                 || "Discord".to_string(),
                 || AboutUri::DISCORD.to_string(),
-                move || config.get().color(SparrowColor::EDITOR_LINK),
+                config,
                 internal_command,
             )
             .style(|s| s.margin_top(10.0)),
             web_link(
                 || "Matrix".to_string(),
                 || AboutUri::MATRIX.to_string(),
-                move || config.get().color(SparrowColor::EDITOR_LINK),
+                config,
                 internal_command,
             )
             .style(|s| s.margin_top(10.0)),
@@ -150,7 +150,7 @@ pub fn about_popup(window_tab_data: Rc<WindowTabData>) -> impl View {
             web_link(
                 || "Codicons (CC-BY-4.0)".to_string(),
                 || AboutUri::CODICONS.to_string(),
-                move || config.get().color(SparrowColor::EDITOR_LINK),
+                config,
                 internal_command,
             )
             .style(|s| s.margin_top(10.0)),

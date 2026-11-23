@@ -32,7 +32,7 @@ use super::{
 };
 use crate::{
     command::{CommandExecuted, CommandKind, InternalCommand},
-    debug::{RunDebugMode, RunDebugProcess},
+    debug::RunDebugProcess,
     keypress::{KeyPressFocus, condition::Condition},
     window_tab::CommonData,
     workspace::SparrowWorkspace,
@@ -44,12 +44,28 @@ pub struct TerminalData {
     pub term_id: TermId,
     pub workspace: Arc<SparrowWorkspace>,
     pub title: RwSignal<String>,
+    pub activity: RwSignal<Option<crate::background_tasks::Task>>,
     pub launch_error: RwSignal<Option<String>>,
     pub mode: RwSignal<Mode>,
     pub visual_mode: RwSignal<VisualMode>,
     pub raw: RwSignal<Arc<RwLock<RawTerminal>>>,
     pub run_debug: RwSignal<Option<RunDebugProcess>>,
     pub common: Rc<CommonData>,
+}
+
+/// Track IDE-launched commands; an idle interactive shell is not a task.
+fn terminal_activity(common: &CommonData, process: Option<&RunDebugProcess>, profile: Option<&TerminalProfile>) -> Option<crate::background_tasks::Task> {
+    let title = if let Some(process) = process {
+        if process.is_prelaunch && process.config.prelaunch.is_some() {
+            format!("Before launch · {}", process.config.name)
+        } else { format!("Launching {}", process.config.name) }
+    } else {
+        let profile = profile?;
+        let program = std::path::Path::new(profile.command.as_deref()?).file_stem()?.to_str()?;
+        if matches!(program, "sh" | "bash" | "zsh" | "fish" | "nu" | "pwsh" | "powershell" | "cmd") && !profile.arguments.as_ref().is_some_and(|args| args.iter().any(|arg| matches!(arg.as_str(), "-c" | "-lc" | "-ic" | "/c" | "-Command" | "-File"))) { return None; }
+        profile.name.clone()
+    };
+    Some(common.background_tasks.begin(title, None))
 }
 
 impl KeyPressFocus for TerminalData {
@@ -334,6 +350,7 @@ impl TerminalData {
         };
 
         let launch_error = cx.create_rw_signal(None);
+        let activity = cx.create_rw_signal(terminal_activity(&common, run_debug.as_ref(), profile.as_ref()));
 
         let raw = Self::new_raw_terminal(
             &workspace,
@@ -342,8 +359,10 @@ impl TerminalData {
             profile,
             common.clone(),
             launch_error,
+            activity.with_untracked(|t| t.as_ref().map(|t| t.report_handle())),
         );
 
+        if launch_error.get_untracked().is_some() { activity.set(None); }
         let run_debug = cx.create_rw_signal(run_debug);
         let mode = cx.create_rw_signal(Mode::Terminal);
         let visual_mode = cx.create_rw_signal(VisualMode::Normal);
@@ -360,6 +379,7 @@ impl TerminalData {
             visual_mode,
             common,
             launch_error,
+            activity,
         }
     }
 
@@ -370,7 +390,11 @@ impl TerminalData {
         profile: Option<TerminalProfile>,
         common: Rc<CommonData>,
         launch_error: RwSignal<Option<String>>,
+        progress: Option<crate::background_tasks::TaskProgress>,
     ) -> Arc<RwLock<RawTerminal>> {
+        let progress = progress.map(|p| {
+            if run_debug.is_some_and(|r| !(r.is_prelaunch && r.config.prelaunch.is_some()) && crate::dart::run_config::is_flutter_target(&r.config)) { p.for_launch() } else { p }
+        });
         let raw = Arc::new(RwLock::new(RawTerminal::new(
             term_id,
             common.proxy.clone(),
@@ -422,7 +446,7 @@ impl TerminalData {
         {
             let raw = raw.clone();
             if let Err(err) =
-                common.term_tx.send((term_id, TermEvent::NewTerminal(raw)))
+                common.term_tx.send((term_id, TermEvent::NewTerminal(raw, progress)))
             {
                 tracing::error!("{:?}", err);
             }
@@ -634,6 +658,17 @@ impl TerminalData {
         }
     }
 
+    pub fn clear_buffer(&self) {
+        use alacritty_terminal::vte::ansi::{ClearMode, Handler};
+        let Some(raw) = self.raw.try_get_untracked() else {
+            return;
+        };
+        let mut raw = raw.write();
+        raw.term.clear_screen(ClearMode::All);
+        raw.term.clear_screen(ClearMode::Saved);
+        self.common.view_id.get_untracked().request_paint();
+    }
+
     pub fn wheel_scroll(&self, delta: f64) {
         let config = self.common.config.get_untracked();
         let step = config.terminal_line_height() as f64;
@@ -721,6 +756,8 @@ impl TerminalData {
     }
 
     pub fn new_process(&self, run_debug: Option<RunDebugProcess>) {
+        self.launch_error.set(None);
+        self.activity.set(terminal_activity(&self.common, run_debug.as_ref(), None));
         let (width, height) = {
             let raw = self.raw.get_untracked();
             let raw = raw.read();
@@ -736,9 +773,11 @@ impl TerminalData {
             None,
             self.common.clone(),
             self.launch_error,
+            self.activity.with_untracked(|t| t.as_ref().map(|t| t.report_handle())),
         );
 
         self.raw.set(raw);
+        if self.launch_error.get_untracked().is_some() { self.activity.set(None); }
         self.run_debug.set(run_debug);
 
         let term_size = TermSize::new(width, height);
@@ -748,17 +787,14 @@ impl TerminalData {
             .terminal_resize(self.term_id, width, height);
     }
 
+    pub fn begin_reload_progress(&self, restart: bool) {
+        let task = self.common.background_tasks.begin(if restart { "Hot restarting Flutter application" } else { "Hot reloading Flutter application" }, None);
+        let progress = task.report_handle().for_launch();
+        self.activity.set(Some(task));
+        let _ = self.common.term_tx.send((self.term_id, TermEvent::Progress(progress)));
+    }
     pub fn stop(&self) {
-        if let Some(dap_id) = self.run_debug.with_untracked(|x| {
-            if let Some(process) = x {
-                if !process.is_prelaunch && process.mode == RunDebugMode::Debug {
-                    return Some(process.config.dap_id);
-                }
-            }
-            None
-        }) {
-            self.common.proxy.dap_stop(dap_id);
-        }
+        self.activity.set(None);
         self.common.proxy.terminal_close(self.term_id);
     }
 }

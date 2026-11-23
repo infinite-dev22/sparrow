@@ -1,5 +1,4 @@
 pub mod about;
-pub mod alert;
 pub mod app;
 pub mod code_action;
 pub mod code_lens;
@@ -8,12 +7,13 @@ pub mod completion;
 pub mod config;
 pub mod db;
 pub mod debug;
+mod debug_settings;
+mod debug_evaluate;
 pub mod doc;
 pub mod editor;
 pub mod editor_tab;
 pub mod file_explorer;
 pub mod find;
-pub mod focus_text;
 pub mod global_search;
 pub mod history;
 pub mod hover;
@@ -26,25 +26,21 @@ pub mod lsp;
 pub mod main_split;
 pub mod markdown;
 pub mod menus;
-pub mod modal_focus;
 pub mod palette;
 pub mod panel;
 pub mod plugin;
 pub mod proxy;
 pub mod rename;
 pub mod workspace_undo;
+pub(crate) mod project_appearance;
 pub mod settings;
 pub mod snippet;
 pub mod source_control;
 pub mod status;
 pub mod terminal;
-pub mod text_area;
-pub mod text_input;
 pub mod title;
 pub mod tracing;
 pub mod update;
-pub mod wave;
-pub mod web_link;
 pub mod window;
 pub mod window_tab;
 pub mod workspace;
@@ -60,7 +56,6 @@ mod persistence;
 
 pub mod code_action_preview;
 
-pub mod popup_menu;
 
 pub mod project_session;
 
@@ -73,5 +68,17 @@ pub mod scaffold;
 pub mod formatting;
 
 pub mod project_search;
+pub mod search_everywhere;
 
 pub mod git_actions;
+
+pub mod background_tasks;
+
+mod ui_test_guard;
+pub mod widgets;
+
+// Keep the original module paths available to existing callers.
+pub use widgets::{
+    alert, divider, dropdown, focus_text, modal_focus, popup_menu, text_area,
+    text_input, wave, web_link,
+};

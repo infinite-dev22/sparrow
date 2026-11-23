@@ -78,15 +78,14 @@ sparrow-rpc   = { path = "./sparrow-rpc" }
 sparrow-proxy = { path = "./sparrow-proxy" }
 
 [workspace.dependencies.floem]
-# path = "../floem"
+# Linux application identity and launcher activation from https://github.com/lapce/floem/pull/1085.
 git = "https://github.com/lapce/floem"
-rev = "31fa8f444c37f4c314f47d88c23ffdbc25f2ab53"
+rev = "b0a2f3e542585ee5c23ebbc798c6132663e7065e"
 features = ["editor", "serde", "default-image-formats", "rfd-async-std"]
 
 [workspace.dependencies.floem-editor-core]
-# path = "../floem/editor-core/"
 git = "https://github.com/lapce/floem"
-rev = "31fa8f444c37f4c314f47d88c23ffdbc25f2ab53"
+rev = "b0a2f3e542585ee5c23ebbc798c6132663e7065e"
 features = ["serde"]
 
 [patch.crates-io]

@@ -206,6 +206,7 @@ impl FlutterHotReloadData {
             DaemonNotification::AppStarting { app_id, .. } => {
                 self.active_app_id.set(Some(app_id));
                 self.state.set(FlutterRunState::Running);
+                self.progress_message.set(Some("Launching application…".into()));
                 self.add_log("⚡ Launching Flutter application...");
             }
             DaemonNotification::AppStarted { app_id } => {
@@ -247,10 +248,13 @@ impl FlutterHotReloadData {
                 self.add_log(format!("{prefix}{log}"));
             }
             DaemonNotification::Error(err) => {
+                self.progress_message.set(None);
                 self.message.set(Some(err.clone()));
                 self.add_log(format!("❌ Error: {err}"));
             }
             DaemonNotification::Exited => {
+                self.progress_message.set(None);
+                self.is_fetching_devices.set(false);
                 self.daemon.set(None);
                 self.add_log("⏹ Flutter daemon exited.");
             }
@@ -258,19 +262,12 @@ impl FlutterHotReloadData {
     }
 
     pub fn add_log(&self, line: impl Into<String>) {
-        self.run_logs.update(|l| l.push_back(line.into()));
-    }
-
-    pub fn clear_logs(&self) {
-        self.run_logs.set(im::Vector::new());
-        if let Some(terminal) = self.active_term.get_untracked().and_then(|id| self.terminal.get_terminal(&id)) {
-            use alacritty_terminal::vte::ansi::{Handler, ClearMode};
-            let raw = terminal.raw.get_untracked();
-            let mut raw = raw.write();
-            raw.term.clear_screen(ClearMode::All);
-            raw.term.clear_screen(ClearMode::Saved);
-            self.common.view_id.get_untracked().request_paint();
-        }
+        self.run_logs.update(|logs| {
+            logs.push_back(line.into());
+            while logs.len() > 5000 {
+                logs.pop_front();
+            }
+        });
     }
 
     /// True when the manifest identifies a Flutter project. Plain Dart
@@ -419,17 +416,32 @@ impl FlutterHotReloadData {
     }
 
     pub fn hot_reload(&self) {
-        if self.reload_debug_session(false) { return; }
-        if self.state.get_untracked() != FlutterRunState::Running { return; }
-        if let Some(id) = self.active_term.get_untracked() {
-            self.common.proxy.terminal_write(id, "r".into());
+        if !self.reload_debug_session(false) {
+            if let Some(id) = self.active_term.get_untracked() {
+                self.reload_run_session(id, false);
+            }
         }
     }
+
     pub fn hot_restart(&self) {
-        if self.reload_debug_session(true) { return; }
-        if self.state.get_untracked() != FlutterRunState::Running { return; }
-        if let Some(id) = self.active_term.get_untracked() {
-            self.common.proxy.terminal_write(id, "R".into());
+        if !self.reload_debug_session(true) {
+            if let Some(id) = self.active_term.get_untracked() {
+                self.reload_run_session(id, true);
+            }
+        }
+    }
+
+    pub fn reload_run_session(&self, id: TermId, restart: bool) {
+        if self.state.get_untracked() != FlutterRunState::Running
+            || self.active_term.get_untracked() != Some(id)
+        {
+            return;
+        }
+        if let Some(terminal) = self.terminal.console_terminal(id, false) {
+            terminal.begin_reload_progress(restart);
+            self.common
+                .proxy
+                .terminal_write(id, if restart { "R" } else { "r" }.into());
         }
     }
 

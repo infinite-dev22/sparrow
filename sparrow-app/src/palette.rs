@@ -1,3 +1,5 @@
+pub(crate) mod view;
+
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
@@ -1248,7 +1250,7 @@ impl PaletteData {
             match &item.content {
                 PaletteItemContent::PubPackage { name, .. } => {
                     self.common.internal_command.send(
-                        InternalCommand::RunProcessInTerminal {
+                        InternalCommand::RunProjectTask {
                             program: "flutter".to_string(),
                             args: vec![
                                 "pub".to_string(),
@@ -1256,6 +1258,7 @@ impl PaletteData {
                                 name.clone(),
                             ],
                             name: format!("pub add {name}"),
+                            cwd: None,
                         },
                     );
                 }
@@ -1628,7 +1631,7 @@ impl PaletteData {
                 PaletteItemContent::TerminalProfile { .. } => {}
                 PaletteItemContent::PubPackage { name, .. } => {
                     self.common.internal_command.send(
-                        InternalCommand::RunProcessInTerminal {
+                        InternalCommand::RunProjectTask {
                             program: "flutter".to_string(),
                             args: vec![
                                 "pub".to_string(),
@@ -1636,6 +1639,7 @@ impl PaletteData {
                                 name.clone(),
                             ],
                             name: format!("pub add {name}"),
+                            cwd: None,
                         },
                     );
                 }

@@ -1,4 +1,5 @@
 use std::{
+    io::Write,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -25,6 +26,8 @@ const WINDOW: &str = "window";
 const WORKSPACE_INFO: &str = "workspace_info";
 const WORKSPACE_FILES: &str = "workspace_files";
 const PANEL_ORDERS: &str = "panel_orders";
+const SETTINGS_SIDEBAR_PROPORTION: &str = "settings_sidebar_proportion";
+const SETTINGS_PAGE: &str = "settings_page";
 const DISABLED_VOLTS: &str = "disabled_volts";
 const RECENT_WORKSPACES: &str = "recent_workspaces";
 
@@ -36,6 +39,8 @@ pub enum SaveEvent {
     DisabledVolts(Vec<VoltID>),
     WorkspaceDisabledVolts(Arc<SparrowWorkspace>, Vec<VoltID>),
     PanelOrder(PanelOrder),
+    SettingsSidebarProportion(f64),
+    SettingsPage(&'static str),
 }
 
 #[derive(Clone)]
@@ -103,6 +108,21 @@ impl SparrowDb {
                                 .insert_workspace_disabled_volts(workspace, volts)
                             {
                                 tracing::error!("{:?}", err);
+                            }
+                        }
+                        SaveEvent::SettingsPage(page) => {
+                            if let Err(err) =
+                                local_db.write_settings_ui_value(SETTINGS_PAGE, page)
+                            {
+                                tracing::error!("{err:?}");
+                            }
+                        }
+                        SaveEvent::SettingsSidebarProportion(proportion) => {
+                            if let Err(err) = local_db.write_settings_ui_value(
+                                SETTINGS_SIDEBAR_PROPORTION,
+                                &proportion.to_string(),
+                            ) {
+                                tracing::error!("{err:?}");
                             }
                         }
                         SaveEvent::PanelOrder(order) => {
@@ -228,7 +248,7 @@ impl SparrowDb {
     }
     pub fn save_window_tab(&self, data: Rc<WindowTabData>) -> Result<()> {
         let workspace = (*data.workspace).clone();
-        let workspace_info = data.workspace_info();
+        let Some(workspace_info) = data.workspace_info() else { return Ok(()); };
 
         self.save_tx
             .send(SaveEvent::Workspace(workspace, workspace_info))?;
@@ -377,12 +397,48 @@ impl SparrowDb {
 
     pub fn insert_window_tab(&self, data: Rc<WindowTabData>) -> Result<()> {
         let workspace = (*data.workspace).clone();
-        let workspace_info = data.workspace_info();
+        let Some(workspace_info) = data.workspace_info() else { return Ok(()); };
 
         self.insert_workspace(&workspace, &workspace_info)?;
         // self.insert_unsaved_buffer(main_split)?;
 
         Ok(())
+    }
+
+    pub(crate) fn settings_sidebar_proportion(&self) -> Result<f64> {
+        let value =
+            std::fs::read_to_string(self.folder.join(SETTINGS_SIDEBAR_PROPORTION))?;
+        let proportion = value.trim().parse::<f64>()?;
+        if !proportion.is_finite() || proportion <= 0.0 || proportion >= 1.0 {
+            return Err(anyhow!("invalid Settings sidebar proportion"));
+        }
+        Ok(proportion)
+    }
+
+    pub(crate) fn settings_page(&self) -> Result<String> {
+        Ok(std::fs::read_to_string(self.folder.join(SETTINGS_PAGE))?)
+    }
+
+    pub(crate) fn save_settings_page(&self, page: &'static str) {
+        if let Err(err) = self.save_tx.send(SaveEvent::SettingsPage(page)) {
+            tracing::error!("{err:?}");
+        }
+    }
+
+    fn write_settings_ui_value(&self, name: &str, value: &str) -> Result<()> {
+        let mut temp = tempfile::NamedTempFile::new_in(&self.folder)?;
+        temp.write_all(value.as_bytes())?;
+        temp.persist(self.folder.join(name))?;
+        Ok(())
+    }
+
+    pub(crate) fn save_settings_sidebar_proportion(&self, proportion: f64) {
+        if let Err(err) = self
+            .save_tx
+            .send(SaveEvent::SettingsSidebarProportion(proportion))
+        {
+            tracing::error!("{err:?}");
+        }
     }
 
     pub fn get_panel_orders(&self) -> Result<PanelOrder> {

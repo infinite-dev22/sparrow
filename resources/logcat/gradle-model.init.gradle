@@ -1,0 +1,37 @@
+// Query AGP's finalized variant providers without compiling or installing an app.
+import groovy.json.JsonOutput
+
+def variants = Collections.synchronizedList([])
+gradle.beforeProject { project ->
+    project.pluginManager.withPlugin('com.android.application') {
+        def components = project.extensions.findByName('androidComponents')
+        if (components == null) {
+            throw new GradleException('Logcat variant discovery requires Android Gradle Plugin 7 or later')
+        }
+        components.onVariants(components.selector().all()) { variant ->
+            variants.add([
+                module: project.path,
+                name: variant.name,
+                build_type: variant.buildType ?: '',
+                flavor: variant.flavorName ?: '',
+                flavors: variant.productFlavors.collect { [dimension: it.first, name: it.second] },
+                application_id: variant.applicationId
+            ])
+        }
+    }
+}
+gradle.projectsEvaluated {
+    gradle.rootProject.tasks.register('sparrowLogcatVariantModel') {
+        description = 'Report resolved Android application IDs for Sparrow Logcat'
+        doLast {
+            def rows = variants.collect { row ->
+                def result = new LinkedHashMap(row)
+                result.application_id = row.application_id.get()
+                result
+            }.sort { a, b -> (a.module + '/' + a.name) <=> (b.module + '/' + b.name) }
+            def output = System.getProperty('sparrow.logcat.model')
+            if (output == null) throw new GradleException('Missing Sparrow model output path')
+            new File(output).setText(JsonOutput.toJson([schema: 1, variants: rows]), 'UTF-8')
+        }
+    }
+}

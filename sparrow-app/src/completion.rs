@@ -1,3 +1,5 @@
+pub(crate) mod view;
+
 use std::{borrow::Cow, path::PathBuf, str::FromStr, sync::Arc};
 
 use floem::{

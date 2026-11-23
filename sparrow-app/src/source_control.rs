@@ -2,11 +2,16 @@ use sparrow_core::buffer::rope_text::RopeText;
 use std::{path::PathBuf, rc::Rc};
 
 use floem::{
+    ViewId,
     keyboard::Modifiers,
     reactive::{RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
 };
 use indexmap::IndexMap;
 use sparrow_core::mode::Mode;
+use sparrow_proxy::dispatch::{
+    AmendLeaseError, AmendPushLease, SelectedCommitResult, commit_selected,
+    push_amend_with_lease, recover_amend_push,
+};
 use sparrow_rpc::source_control::FileDiff;
 
 use crate::{
@@ -23,13 +28,49 @@ pub struct SourceControlData {
     pub amend: RwSignal<bool>,
     pub busy: RwSignal<bool>,
     pub status: RwSignal<String>,
+    pub(crate) pending_amend_push: RwSignal<Option<PendingAmendPush>>,
     pub untracked: RwSignal<std::collections::HashSet<PathBuf>>,
     pub file_diffs: RwSignal<IndexMap<PathBuf, (FileDiff, bool)>>,
     pub branch: RwSignal<String>,
     pub branches: RwSignal<im::Vector<String>>,
     pub tags: RwSignal<im::Vector<String>>,
     pub editor: EditorData,
+    pub(crate) commit_action: RwSignal<Option<ViewId>>,
     pub common: Rc<CommonData>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PendingAmendPush {
+    Force(AmendPushLease),
+    Recover(AmendPushLease),
+}
+
+impl PendingAmendPush {
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            Self::Force(_) => "Force Push with Lease",
+            Self::Recover(_) => "Merge Remote Changes and Push",
+        }
+    }
+
+    pub(crate) fn confirmation(&self) -> String {
+        match self {
+            Self::Force(lease) => {
+                let destination = lease.destination();
+                let expected = lease.expected_tip();
+                let expected = expected.get(..12).unwrap_or(expected);
+                format!(
+                    "Replace the published commit on {destination}? The push will proceed only if the remote still points to {expected}."
+                )
+            }
+            Self::Recover(lease) => {
+                let destination = lease.destination();
+                format!(
+                    "Fetch and merge the latest changes on {destination} with your amendment, then push the merge? Both commits will stay in the branch history. Conflicts must be resolved before pushing."
+                )
+            }
+        }
+    }
 }
 
 impl KeyPressFocus for SourceControlData {
@@ -71,12 +112,14 @@ impl SourceControlData {
             amend: cx.create_rw_signal(false),
             busy: cx.create_rw_signal(false),
             status: cx.create_rw_signal(String::new()),
+            pending_amend_push: cx.create_rw_signal(None),
             untracked: cx.create_rw_signal(Default::default()),
             file_diffs: cx.create_rw_signal(IndexMap::new()),
             branch: cx.create_rw_signal("".to_string()),
             branches: cx.create_rw_signal(im::Vector::new()),
             tags: cx.create_rw_signal(im::Vector::new()),
             editor: editors.make_local(cx, common.clone()),
+            commit_action: cx.create_rw_signal(None),
             common,
         }
     }
@@ -158,28 +201,104 @@ impl SourceControlData {
             self.status.set("Select changes to commit.".into());
             return;
         }
+        self.pending_amend_push.set(None);
         self.busy.set(true);
         self.status.set("Committing…".into());
         let data = self.clone();
         let send = floem::ext_event::create_ext_action(
             self.common.scope,
-            move |result: Result<String, String>| {
+            move |result: Result<SelectedCommitResult, String>| {
                 data.busy.set(false);
                 data.refresh();
                 match result {
-                    Ok(message) => {
+                    Ok(result) => {
                         data.editor.reset();
                         data.amend.set(false);
-                        data.status.set(message);
+                        data.pending_amend_push
+                            .set(result.lease.map(PendingAmendPush::Force));
+                        data.status.set(result.status);
                     }
                     Err(error) => data.status.set(error),
                 }
             },
         );
+        let task = self.common.background_tasks.begin(
+            if push {
+                "Committing and pushing changes"
+            } else {
+                "Committing changes"
+            },
+            None,
+        );
         std::thread::spawn(move || {
-            send(sparrow_proxy::dispatch::commit_selected(
-                &root, &message, diffs, amend, push,
-            ))
+            let _task = task;
+            send(commit_selected(&root, &message, diffs, amend, push))
+        });
+    }
+
+    pub(crate) fn push_pending_amend(&self, pending: PendingAmendPush) {
+        if self.busy.get_untracked()
+            || !self
+                .pending_amend_push
+                .with_untracked(|current| current.as_ref() == Some(&pending))
+        {
+            return;
+        }
+        let Some(root) = self.common.workspace.path.clone() else {
+            return;
+        };
+
+        self.busy.set(true);
+        let operation = match pending {
+            PendingAmendPush::Force(_) => "Force pushing with lease",
+            PendingAmendPush::Recover(_) => "Merging remote changes and pushing",
+        };
+        self.status.set(format!("{operation}…"));
+        let data = self.clone();
+        let send = floem::ext_event::create_ext_action(
+            self.common.scope,
+            move |(next, status): (Option<PendingAmendPush>, String)| {
+                data.pending_amend_push.set(next);
+                data.status.set(status);
+                data.busy.set(false);
+                data.refresh();
+            },
+        );
+        let task = self.common.background_tasks.begin(operation, None);
+        std::thread::spawn(move || {
+            let _task = task;
+            send(match pending {
+                PendingAmendPush::Force(lease) => {
+                    match push_amend_with_lease(&root, &lease) {
+                        Ok(output) => (
+                            None,
+                            format!("Force push with lease succeeded.\n{output}"),
+                        ),
+                        Err(AmendLeaseError::Stale(error)) => (
+                            Some(PendingAmendPush::Recover(lease)),
+                            format!(
+                                "The remote branch changed. Merge the remote changes and push to keep both commits.\n{error}"
+                            ),
+                        ),
+                        Err(AmendLeaseError::Other(error)) => (
+                            Some(PendingAmendPush::Force(lease)),
+                            format!("Force push with lease failed:\n{error}"),
+                        ),
+                    }
+                }
+                PendingAmendPush::Recover(mut lease) => {
+                    match recover_amend_push(&root, &mut lease) {
+                        Ok(output) => (
+                            None,
+                            format!("Remote changes merged and pushed.\n{output}"),
+                        ),
+                        Err(error) => (
+                            Some(PendingAmendPush::Recover(lease)),
+                            format!("Could not recover the push:\n{error}"),
+                        ),
+                    }
+                }
+            });
         });
     }
 }

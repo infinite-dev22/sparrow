@@ -2,11 +2,15 @@
 use crate::{command::InternalCommand, doc::Doc, editor::EditorData};
 use floem::reactive::{SignalGet, SignalUpdate, SignalWith, batch};
 use lapce_xi_rope::Rope;
+use lsp_types::TextEdit;
 use sparrow_core::{
     buffer::rope_text::RopeText,
     command::EditCommand,
     cursor::{Cursor, CursorMode},
     editor::EditType,
+    line_ending::LineEnding,
+    rope_text_pos::RopeTextPosition,
+    selection::Selection,
 };
 use sparrow_rpc::buffer::BufferId;
 use std::{
@@ -108,8 +112,17 @@ struct Entry {
     id: BufferId,
     path: PathBuf,
     marker: u64,
+    previous: Option<u64>,
+    detached_redo: bool,
+    edits: Vec<TextEdit>,
+    line_ending: LineEnding,
     before: Rope,
     after: Rope,
+}
+impl Entry {
+    fn can_restore_redo(&self, native: &NativeHistory) -> bool {
+        self.detached_redo && native.top(false) == self.previous
+    }
 }
 struct Group {
     label: String,
@@ -151,8 +164,22 @@ impl History {
             native.redo.clear();
             native.last = None;
         }
+        let previous_redo = native.top(true);
         native.observe(kind, count, &mut self.next);
         native.revision = revision;
+        if let Some(marker) = previous_redo
+            && !matches!(kind, ChangeKind::Undo | ChangeKind::Redo)
+            && native.redo.is_empty()
+        {
+            // A new native edit drops the redo stack. Retain the next linked
+            // redo so it can be rebuilt after the new edits are undone.
+            for entry in self.groups.iter_mut().flat_map(|group| &mut group.entries)
+            {
+                if entry.id == id && entry.marker == marker {
+                    entry.detached_redo = true;
+                }
+            }
+        }
     }
 }
 
@@ -161,19 +188,25 @@ pub struct Snapshot {
     text: Rope,
     depth: usize,
     top: Option<u64>,
+    edits: Vec<TextEdit>,
+    line_ending: LineEnding,
 }
-pub fn snapshot(doc: Rc<Doc>) -> Snapshot {
+pub fn snapshot(doc: Rc<Doc>, edits: &[TextEdit]) -> Snapshot {
     let history = doc.common.workspace_undo.borrow();
     let native = history.native.get(&doc.buffer_id);
     let depth = native.map_or(0, |n| n.undo.len());
     let top = native.and_then(|n| n.top(false));
-    let text = doc.buffer.with_untracked(|buffer| buffer.text().clone());
+    let (text, line_ending) = doc
+        .buffer
+        .with_untracked(|buffer| (buffer.text().clone(), buffer.line_ending()));
     drop(history);
     Snapshot {
         doc,
         text,
         depth,
         top,
+        edits: edits.to_vec(),
+        line_ending,
     }
 }
 pub fn record(history: &SharedHistory, label: String, snapshots: Vec<Snapshot>) {
@@ -204,6 +237,10 @@ pub fn record(history: &SharedHistory, label: String, snapshots: Vec<Snapshot>) 
             id: doc.buffer_id,
             path,
             marker: native.top(false).unwrap(),
+            previous: snapshot.top,
+            detached_redo: false,
+            edits: snapshot.edits,
+            line_ending: snapshot.line_ending,
             before: snapshot.text,
             after,
         });
@@ -223,19 +260,23 @@ pub fn replay(editor: &EditorData, redo: bool) -> bool {
         show_error(editor,"Document history changed outside the editor. Reopen the project before undoing this refactoring.".into());
         return true;
     }
-    let Some(marker) = history
-        .native
-        .get(&current.buffer_id)
-        .and_then(|native| native.top(redo))
-    else {
+    let Some(native) = history.native.get(&current.buffer_id) else {
         return false;
     };
-    let Some(group) = history.groups.iter().rev().find(|group| {
-        group
-            .entries
-            .iter()
-            .any(|e| e.id == current.buffer_id && e.marker == marker)
-    }) else {
+    let group_for = |matches: &dyn Fn(&Entry) -> bool| {
+        history.groups.iter().enumerate().rev().find(|(_, group)| {
+            group
+                .entries
+                .iter()
+                .any(|entry| entry.id == current.buffer_id && matches(entry))
+        })
+    };
+    let Some((group_index, group)) =
+        group_for(&|entry| native.top(redo) == Some(entry.marker)).or_else(|| {
+            redo.then(|| group_for(&|entry| entry.can_restore_redo(native)))
+                .flatten()
+        })
+    else {
         return false;
     };
     let result = (|| {
@@ -248,18 +289,21 @@ pub fn replay(editor: &EditorData, redo: bool) -> bool {
                 ));
             };
             let expected = if redo { &entry.before } else { &entry.after };
+            let native = history.native.get(&entry.id);
+            let restore = redo && native.is_some_and(|n| entry.can_restore_redo(n));
             let valid = doc.loaded()
                 && doc.content.with_untracked(|c| {
                     !c.read_only() && c.path() == Some(&entry.path)
                 })
                 && !history.blocked.contains(&entry.id)
-                && history.native.get(&entry.id).is_some_and(|native| {
-                    native.top(redo) == Some(entry.marker)
+                && native.is_some_and(|native| {
+                    (native.top(redo) == Some(entry.marker) || restore)
                         && native.revision == doc.rev()
                 })
-                && doc
-                    .buffer
-                    .with_untracked(|buffer| same_text(buffer.text(), expected));
+                && doc.buffer.with_untracked(|buffer| {
+                    same_text(buffer.text(), expected)
+                        && (!restore || buffer.line_ending() == entry.line_ending)
+                });
             if !valid {
                 return Err(format!(
                     "Cannot {} '{}': {} has newer edits, a different history, or is read-only. No files were changed.",
@@ -268,7 +312,22 @@ pub fn replay(editor: &EditorData, redo: bool) -> bool {
                     entry.path.display()
                 ));
             }
-            docs.push(doc);
+            let edits = restore.then(|| {
+                doc.buffer.with_untracked(|buffer| {
+                    entry
+                        .edits
+                        .iter()
+                        .map(|edit| {
+                            let selection = Selection::region(
+                                buffer.offset_of_position(&edit.range.start),
+                                buffer.offset_of_position(&edit.range.end),
+                            );
+                            (selection, edit.new_text.clone())
+                        })
+                        .collect::<Vec<_>>()
+                })
+            });
+            docs.push((doc, edits));
         }
         Ok(docs)
     })();
@@ -281,12 +340,20 @@ pub fn replay(editor: &EditorData, redo: bool) -> bool {
         }
     };
     batch(|| {
-        for doc in docs {
+        for (entry_index, (doc, edits)) in docs.into_iter().enumerate() {
             // UI-thread preflight above verifies the native group for every file.
             let (before, delta, inval, cursor_mode) = doc
                 .buffer
                 .try_update(|buffer| {
-                    if redo {
+                    if let Some(edits) = &edits {
+                        let (before, delta, inval) = buffer.edit(
+                            edits
+                                .iter()
+                                .map(|(selection, text)| (selection, text.as_str())),
+                            EditType::Other,
+                        );
+                        Some((before, delta, inval, None))
+                    } else if redo {
                         buffer.do_redo()
                     } else {
                         buffer.do_undo()
@@ -321,12 +388,21 @@ pub fn replay(editor: &EditorData, redo: bool) -> bool {
             }
             doc.apply_deltas_with_kind(
                 &[(before, delta, inval)],
-                if redo {
+                if edits.is_some() {
+                    ChangeKind::Other
+                } else if redo {
                     ChangeKind::Redo
                 } else {
                     ChangeKind::Undo
                 },
             );
+            if edits.is_some() {
+                let mut history = common.workspace_undo.borrow_mut();
+                let marker = history.native[&doc.buffer_id].top(false).unwrap();
+                let entry = &mut history.groups[group_index].entries[entry_index];
+                entry.marker = marker;
+                entry.detached_redo = false;
+            }
         }
     });
     true
@@ -351,7 +427,7 @@ fn same_text(a: &Rope, b: &Rope) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sparrow_core::{buffer::Buffer, selection::Selection};
+    use sparrow_core::buffer::Buffer;
     #[test]
     fn tracks_native_typing_cycles_undo_redo_and_branching() {
         let mut buffer = Buffer::new("old");
@@ -414,11 +490,52 @@ mod tests {
                 id,
                 path: PathBuf::from("a.dart"),
                 marker: 1,
+                previous: None,
+                detached_redo: false,
+                edits: Vec::new(),
+                line_ending: LineEnding::Lf,
                 before: Rope::from("a"),
                 after: Rope::from("b"),
             }],
         });
         history.observe(id, ChangeKind::Insert, 1, 3);
         assert!(history.blocked.contains(&id));
+    }
+
+    #[test]
+    fn displaced_linked_redo_requires_undoing_the_new_branch() {
+        let id = BufferId::next();
+        let mut history = History::default();
+        history.observe(id, ChangeKind::Other, 2, 2);
+        history.groups.push(Group {
+            label: "Quick Fix".into(),
+            entries: vec![Entry {
+                doc: Weak::new(),
+                id,
+                path: PathBuf::from("target.dart"),
+                marker: 2,
+                previous: Some(1),
+                detached_redo: false,
+                edits: Vec::new(),
+                line_ending: LineEnding::Lf,
+                before: Rope::from("before"),
+                after: Rope::from("after"),
+            }],
+        });
+        history.observe(id, ChangeKind::Undo, 1, 3);
+        assert_eq!(history.native[&id].top(true), Some(2));
+
+        history.observe(id, ChangeKind::Insert, 2, 5);
+        assert!(history.groups[0].entries[0].detached_redo);
+        assert!(
+            !history.groups[0].entries[0].can_restore_redo(&history.native[&id])
+        );
+
+        history.observe(id, ChangeKind::Undo, 1, 6);
+        assert!(history.groups[0].entries[0].can_restore_redo(&history.native[&id]));
+        history.observe(id, ChangeKind::Undo, 1, 7);
+        assert!(
+            !history.groups[0].entries[0].can_restore_redo(&history.native[&id])
+        );
     }
 }

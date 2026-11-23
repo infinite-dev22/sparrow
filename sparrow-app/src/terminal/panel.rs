@@ -22,8 +22,7 @@ use crate::{
     id::TerminalTabId,
     keypress::{EventRef, KeyPressData, KeyPressFocus, KeyPressHandle},
     main_split::MainSplitData,
-    panel::kind::PanelKind,
-    window_tab::{CommonData, Focus},
+    window_tab::CommonData,
     workspace::SparrowWorkspace,
 };
 
@@ -38,6 +37,8 @@ pub struct TerminalPanelData {
     pub cx: Scope,
     pub workspace: Arc<SparrowWorkspace>,
     pub tab_info: RwSignal<TerminalTabInfo>,
+    console_processes: RwSignal<im::HashMap<TermId, TerminalData>>,
+    pub active_run: RwSignal<Option<TermId>>,
     pub debug: RunDebugData,
     pub breakline: Memo<Option<(usize, PathBuf)>>,
     pub common: Rc<CommonData>,
@@ -61,6 +62,9 @@ impl TerminalPanelData {
         let tab_info = TerminalTabInfo { active: 0, tabs };
         let tab_info = cx.create_rw_signal(tab_info);
 
+        let console_processes =
+            cx.create_rw_signal(im::HashMap::<TermId, TerminalData>::new());
+        let active_run = cx.create_rw_signal(None);
         let debug = RunDebugData::new(cx, common.breakpoints);
 
         let breakline = {
@@ -80,20 +84,8 @@ impl TerminalPanelData {
                     None => return None,
                 };
 
-                let term = tab_info.with_untracked(|info| {
-                    for (_, tab) in &info.tabs {
-                        let terminal = tab.terminals.with_untracked(|terminals| {
-                            terminals
-                                .iter()
-                                .find(|(_, t)| t.term_id == active_term)
-                                .cloned()
-                        });
-                        if let Some(terminal) = terminal {
-                            return Some(terminal.1);
-                        }
-                    }
-                    None
-                });
+                let term = console_processes
+                    .with(|processes| processes.get(&active_term).cloned());
                 let term = match term {
                     Some(term) => term,
                     None => return None,
@@ -112,15 +104,35 @@ impl TerminalPanelData {
             })
         };
 
-        Self {
+        let panel = Self {
             cx,
             workspace,
             tab_info,
+            console_processes,
+            active_run,
             debug,
             breakline,
             common,
             main_split,
-        }
+        };
+        let monitored = panel.clone();
+        floem::reactive::create_effect(move |previous: Option<(HashMap<std::path::PathBuf, Vec<dap_types::SourceBreakpoint>>, Vec<DapId>)>| {
+            monitored.debug.breakpoints.with(|_| ());
+            monitored.debug.muted.get();
+            let current = monitored.debug.source_breakpoints();
+            let mut adapters = monitored.run_debug_process(true).into_iter()
+                .filter(|(_, p)| p.mode == RunDebugMode::Debug && !p.stopped).map(|(_, p)|p.config.dap_id).collect::<Vec<_>>();
+            adapters.sort_by_key(|id|id.0);
+            if previous.as_ref() != Some(&(current.clone(), adapters.clone())) {
+                let mut paths = current.keys().cloned().collect::<std::collections::BTreeSet<_>>();
+                if let Some((old, _)) = &previous { paths.extend(old.keys().cloned()); }
+                for dap_id in &adapters {
+                    for path in &paths { monitored.common.proxy.dap_set_breakpoints(*dap_id, path.clone(), current.get(path).cloned().unwrap_or_default()); }
+                }
+            }
+            (current, adapters)
+        });
+        panel
     }
 
     pub fn active_tab(&self, tracked: bool) -> Option<TerminalTabData> {
@@ -154,45 +166,60 @@ impl TerminalPanelData {
 
         let tab = self.active_tab(false);
         let terminal = tab.and_then(|tab| tab.active_terminal(false));
-        if let Some(terminal) = terminal {
-            let handle = keypress.key_down(event, &terminal);
-            let mode = terminal.get_mode();
+        Self::process_key_down(terminal?, event, keypress)
+    }
 
-            if !handle.handled && mode == Mode::Terminal {
-                if let EventRef::Keyboard(key_event) = event.into() {
-                    if terminal.send_keypress(key_event) {
-                        return Some(KeyPressHandle {
-                            handled: true,
-                            keymatch: handle.keymatch,
-                            keypress: handle.keypress,
-                        });
-                    }
+    pub fn console_key_down<'a>(
+        &self,
+        id: TermId,
+        event: impl Into<EventRef<'a>> + Copy,
+        keypress: &KeyPressData,
+    ) -> Option<KeyPressHandle> {
+        let terminal = self.console_terminal(id, false)?;
+        Self::process_key_down(terminal, event, keypress)
+    }
+
+    fn process_key_down<'a>(
+        terminal: TerminalData,
+        event: impl Into<EventRef<'a>> + Copy,
+        keypress: &KeyPressData,
+    ) -> Option<KeyPressHandle> {
+        let handle = keypress.key_down(event, &terminal);
+        if !handle.handled && terminal.get_mode() == Mode::Terminal {
+            if let EventRef::Keyboard(key_event) = event.into() {
+                if terminal.send_keypress(key_event) {
+                    return Some(KeyPressHandle {
+                        handled: true,
+                        keymatch: handle.keymatch,
+                        keypress: handle.keypress,
+                    });
                 }
             }
-            Some(handle)
-        } else {
-            None
         }
+        Some(handle)
+    }
+
+    pub fn start_console(&self, process: RunDebugProcess) -> TermId {
+        let terminal = TerminalData::new_run_debug(
+            self.cx,
+            self.workspace.clone(),
+            Some(process),
+            None,
+            self.common.clone(),
+        );
+        let id = terminal.term_id;
+        self.console_processes.update(|processes| {
+            processes.insert(id, terminal);
+        });
+        id
     }
 
     pub fn new_tab(&self, profile: Option<TerminalProfile>) {
-        self.new_tab_run_debug(None, profile);
-    }
-
-    /// Create a new terminal tab with the given run debug process.  
-    /// Errors if expanding out the run debug process failed.
-    pub fn new_tab_run_debug(
-        &self,
-        run_debug: Option<RunDebugProcess>,
-        profile: Option<TerminalProfile>,
-    ) -> TerminalTabData {
-        let terminal_tab = TerminalTabData::new_run_debug(
+        let terminal_tab = TerminalTabData::new(
             self.workspace.clone(),
-            run_debug,
             profile,
             self.common.clone(),
         );
-
         self.tab_info.update(|info| {
             info.tabs.insert(
                 if info.tabs.is_empty() {
@@ -205,8 +232,6 @@ impl TerminalPanelData {
             let new_active = (info.active + 1).min(info.tabs.len() - 1);
             info.active = new_active;
         });
-
-        terminal_tab
     }
 
     pub fn next_tab(&self) {
@@ -217,7 +242,6 @@ impl TerminalPanelData {
                 info.active += 1;
             }
         });
-        self.update_debug_active_term();
     }
 
     pub fn previous_tab(&self) {
@@ -228,7 +252,6 @@ impl TerminalPanelData {
                 info.active -= 1;
             }
         });
-        self.update_debug_active_term();
     }
 
     pub fn close_tab(&self, terminal_tab_id: Option<TerminalTabId>) {
@@ -246,14 +269,12 @@ impl TerminalPanelData {
                             }
                         })
                     {
-                        close_tab = Some(
-                            info.tabs.remove(index).1.terminals.get_untracked(),
-                        );
+                        close_tab = Some(info.tabs.remove(index).1);
                     }
                 } else {
                     let active = info.active.min(info.tabs.len().saturating_sub(1));
                     if !info.tabs.is_empty() {
-                        close_tab = Some(info.tabs.remove(active).1.terminals.get_untracked());
+                        close_tab = Some(info.tabs.remove(active).1);
                     }
                 }
                 let new_active = info.active.min(info.tabs.len().saturating_sub(1));
@@ -262,11 +283,13 @@ impl TerminalPanelData {
             })
             .flatten()
         {
-            for (_, data) in close_tab {
-                data.stop();
-            }
+            close_tab.terminals.with_untracked(|terminals| {
+                for (_, data) in terminals {
+                    data.stop();
+                }
+            });
+            dispose_after_view_update(close_tab.scope);
         }
-        self.update_debug_active_term();
     }
 
     pub fn set_title(&self, term_id: &TermId, title: &str) {
@@ -276,6 +299,12 @@ impl TerminalPanelData {
     }
 
     pub fn get_terminal(&self, term_id: &TermId) -> Option<TerminalData> {
+        if let Some(terminal) = self
+            .console_processes
+            .with_untracked(|terms| terms.get(term_id).cloned())
+        {
+            return Some(terminal);
+        }
         self.tab_info.with_untracked(|info| {
             for (_, tab) in &info.tabs {
                 let terminal = tab.terminals.with_untracked(|terminals| {
@@ -290,6 +319,76 @@ impl TerminalPanelData {
             }
             None
         })
+    }
+
+    pub fn console_terminal(
+        &self,
+        session_id: TermId,
+        tracked: bool,
+    ) -> Option<TerminalData> {
+        let adapter = |sessions: &HashMap<DapId, (TermId, RunDebugProcess)>| {
+            sessions
+                .iter()
+                .find_map(|(dap, (id, _))| (*id == session_id).then_some(*dap))
+        };
+        let dap_id = if tracked {
+            self.debug.adapter_sessions.with(adapter)
+        } else {
+            self.debug.adapter_sessions.with_untracked(adapter)
+        };
+        let find = |terminals: &im::HashMap<TermId, TerminalData>| {
+            if let Some(dap_id) = dap_id {
+                // An adapter session keeps its identity even when it requests a PTY.
+                terminals
+                    .values()
+                    .find(|terminal| {
+                        let matches = |process: &Option<RunDebugProcess>| {
+                            process.as_ref().is_some_and(|p| {
+                                p.config.dap_id == dap_id
+                                    && p.config.debug_command.is_some()
+                            })
+                        };
+                        if tracked {
+                            terminal.run_debug.with(matches)
+                        } else {
+                            terminal.run_debug.with_untracked(matches)
+                        }
+                    })
+                    .cloned()
+            } else {
+                terminals.get(&session_id).cloned()
+            }
+        };
+        if tracked {
+            self.console_processes.with(find)
+        } else {
+            self.console_processes.with_untracked(find)
+        }
+    }
+
+    fn remove_console(&self, session_id: TermId) {
+        let pty = self
+            .console_terminal(session_id, false)
+            .map(|terminal| terminal.term_id);
+        for id in [Some(session_id), pty].into_iter().flatten() {
+            let terminal = self
+                .console_processes
+                .try_update(|terms| terms.remove(&id))
+                .flatten();
+            if let Some(terminal) = terminal {
+                terminal.stop();
+                dispose_after_view_update(terminal.scope);
+            }
+        }
+        if self.active_run.get_untracked() == Some(session_id) {
+            let next = self
+                .run_debug_process(false)
+                .into_iter()
+                .rev()
+                .find(|(_, process)| process.mode == RunDebugMode::Run)
+                .map(|(id, _)| id);
+            self.active_run.set(next);
+        }
     }
 
     fn get_terminal_in_tab(
@@ -334,7 +433,6 @@ impl TerminalPanelData {
             let new_index = (index + 1).min(max);
             if new_index != index {
                 tab.active.set(new_index);
-                self.update_debug_active_term();
             }
         }
     }
@@ -344,7 +442,6 @@ impl TerminalPanelData {
             let new_index = index.saturating_sub(1);
             if new_index != index {
                 tab.active.set(new_index);
-                self.update_debug_active_term();
             }
         }
     }
@@ -356,7 +453,6 @@ impl TerminalPanelData {
                 tab.terminals.update(|terminals| {
                     terminals.swap(index, index + 1);
                 });
-                self.update_debug_active_term();
             }
         }
     }
@@ -375,10 +471,10 @@ impl TerminalPanelData {
             if len == 0 {
                 self.close_tab(Some(tab.terminal_tab_id));
             } else {
+                dispose_after_view_update(terminal.scope);
                 let new_active = active.min(len.saturating_sub(1));
                 if new_active != active {
                     tab.active.set(new_active);
-                    self.update_debug_active_term();
                 }
             }
         }
@@ -386,12 +482,20 @@ impl TerminalPanelData {
 
     pub fn launch_failed(&self, term_id: &TermId, error: &str) {
         if let Some(terminal) = self.get_terminal(term_id) {
+            terminal.activity.set(None);
             terminal.launch_error.set(Some(error.to_string()));
+            terminal.run_debug.update(|process| {
+                if let Some(process) = process {
+                    process.stopped = true;
+                    process.is_prelaunch = false;
+                }
+            });
         }
     }
 
     pub fn terminal_stopped(&self, term_id: &TermId, exit_code: Option<i32>) {
         if let Some(terminal) = self.get_terminal(term_id) {
+            terminal.activity.set(None);
             if terminal.run_debug.with_untracked(|r| r.is_some()) {
                 let was_prelaunch = terminal
                     .run_debug
@@ -423,6 +527,7 @@ impl TerminalPanelData {
                             });
                             self.debug.active_term.set(Some(*term_id));
                             self.debug.active_dap.set(Some(run_debug.config.dap_id));
+                            crate::background_tasks::debug_launch(&self.common.background_tasks.reporter(), run_debug.config.dap_id, &run_debug.config.name);
                             self.common.proxy.dap_start(
                                 run_debug.config,
                                 self.debug.source_breakpoints(),
@@ -443,86 +548,133 @@ impl TerminalPanelData {
         mode: &RunDebugMode,
         config: &RunDebugConfig,
     ) -> Option<TerminalData> {
-        self.tab_info.with_untracked(|info| {
-            for (_, tab) in &info.tabs {
-                let terminal = tab.terminals.with_untracked(|terminals| {
-                    for (_, terminal) in terminals {
-                        if let Some(run_debug) =
-                            terminal.run_debug.get_untracked().as_ref()
-                        {
-                            if run_debug.stopped && &run_debug.mode == mode {
-                                match run_debug.mode {
+        self.console_processes.with_untracked(|terminals| {
+            terminals
+                .values()
+                .find(|terminal| {
+                    terminal.run_debug.with_untracked(|process| {
+                        process.as_ref().is_some_and(|process| {
+                            process.stopped
+                                && &process.mode == mode
+                                && match mode {
                                     RunDebugMode::Run => {
-                                        if run_debug.config.name == config.name {
-                                            return Some(terminal.clone());
-                                        }
+                                        process.config.name == config.name
+                                            && process.config.cwd == config.cwd
                                     }
                                     RunDebugMode::Debug => {
-                                        if run_debug.config.dap_id == config.dap_id {
-                                            return Some(terminal.clone());
-                                        }
+                                        process.config.dap_id == config.dap_id
                                     }
                                 }
-                            }
-                        }
-                    }
-                    None
-                });
-                if let Some(terminal) = terminal {
-                    return Some(terminal);
-                }
-            }
-            None
+                        })
+                    })
+                })
+                .cloned()
         })
     }
 
-    /// Return whether it is in debug mode.
-    pub fn restart_run_debug(&self, term_id: TermId) -> Option<bool> {
-        let process = self.run_debug_process(false).into_iter().find(|(id,_)| *id==term_id)?.1;
-        let config = self.workspace.path.as_deref().and_then(crate::dart::run_config::load)
-            .and_then(|configs|configs.into_iter().find(|config|config.name==process.config.name)).unwrap_or(process.config);
-        self.stop_run_debug(term_id);
-        self.common.internal_command.send(crate::command::InternalCommand::RunAndDebug {mode:process.mode,config});
-        Some(process.mode==RunDebugMode::Debug)
-    }
-
-    pub fn focus_terminal(&self, term_id: TermId) {
-        self.focus_terminal_in_panel(term_id, PanelKind::Terminal);
-    }
-
-    pub fn focus_terminal_in_panel(&self, term_id: TermId, panel: PanelKind) {
-        if let Some((tab_index, terminal_tab, index, _terminal)) =
-            self.get_terminal_in_tab(&term_id)
+    pub fn close_run_debug_session(&self, id: TermId) {
+        if let Some((_, process)) = self
+            .run_debug_process(false)
+            .into_iter()
+            .find(|(session, _)| *session == id)
         {
-            self.tab_info.update(|info| {
-                info.active = tab_index;
-            });
-            terminal_tab.active.set(index);
-            self.common.focus.set(Focus::Panel(panel));
-
-            self.update_debug_active_term();
+            self.close_session(id, &process);
         }
     }
 
-    pub fn update_debug_active_term(&self) {
-        let tab = self.active_tab(false);
-        let terminal = tab.and_then(|tab| tab.active_terminal(false));
-        if let Some(terminal) = terminal {
-            let term_id = terminal.term_id;
-            let is_run_debug =
-                terminal.run_debug.with_untracked(|run| run.is_some());
-            let current_active = self.debug.active_term.get_untracked();
-            if is_run_debug {
-                if current_active != Some(term_id) {
-                    self.debug.active_term.set(Some(term_id));
-                }
-            } else if let Some(active) = current_active {
-                if self.get_terminal(&active).is_none() {
-                    self.debug.active_term.set(None);
-                }
-            }
+    fn close_session(&self, id: TermId, process: &RunDebugProcess) {
+        let dap_id = process.config.dap_id;
+        if process.mode == RunDebugMode::Debug
+            && !process.stopped
+            && self
+                .debug
+                .adapter_sessions
+                .with_untracked(|sessions| sessions.contains_key(&dap_id))
+        {
+            self.common.proxy.dap_stop(dap_id);
+        }
+        self.remove_console(id);
+        if process.mode != RunDebugMode::Debug {
+            return;
+        }
+
+        let dap = self
+            .debug
+            .daps
+            .try_update(|daps| daps.remove(&dap_id))
+            .flatten();
+        if let Some(dap) = dap {
+            dap.clear_pause();
+        }
+        self.debug.adapter_sessions.update(|sessions| {
+            sessions.remove(&dap_id);
+        });
+        self.debug.console_output.update(|logs| {
+            logs.remove(&dap_id);
+        });
+
+        if self.debug.active_term.get_untracked() == Some(id) {
+            let next = self
+                .run_debug_process(false)
+                .into_iter()
+                .rev()
+                .find(|(_, process)| process.mode == RunDebugMode::Debug);
+            self.debug.active_term.set(next.as_ref().map(|(id, _)| *id));
+            self.debug
+                .active_dap
+                .set(next.map(|(_, process)| process.config.dap_id));
+        }
+        if self
+            .common
+            .debugger_settings
+            .get_untracked()
+            .unmute_on_finish
+        {
+            self.debug.muted.set(false);
+        }
+        crate::debug_settings::refresh(self);
+    }
+
+    /// Return whether it is in debug mode.
+    pub fn restart_run_debug(&self, id: TermId) -> Option<bool> {
+        let (_, process) = self
+            .run_debug_process(false)
+            .into_iter()
+            .find(|(session, _)| *session == id)?;
+        self.close_session(id, &process);
+        let mode = process.mode;
+        let mut config = if process.config.config_source
+            == dap_types::ConfigSource::ProjectTask
+        {
+            process.config
         } else {
-            self.debug.active_term.set(None);
+            self.workspace
+                .path
+                .as_deref()
+                .and_then(crate::dart::run_config::load)
+                .and_then(|configs| {
+                    configs
+                        .into_iter()
+                        .find(|config| config.name == process.config.name)
+                })
+                .unwrap_or(process.config)
+        };
+        config.dap_id = DapId::next();
+        self.common
+            .internal_command
+            .send(crate::command::InternalCommand::RunAndDebug { mode, config });
+        Some(mode == RunDebugMode::Debug)
+    }
+
+    pub fn select_console(&self, id: TermId, mode: RunDebugMode) {
+        match mode {
+            RunDebugMode::Run => self.active_run.set(Some(id)),
+            RunDebugMode::Debug => {
+                self.debug.active_term.set(Some(id));
+                self.debug
+                    .active_dap
+                    .set(self.get_dap(id, false).map(|dap| dap.dap_id));
+            }
         }
     }
 
@@ -532,7 +684,7 @@ impl TerminalPanelData {
             self.common.proxy.dap_stop(id);
             return Some(());
         }
-        let terminal = self.get_terminal(&term_id)?;
+        let terminal = self.console_terminal(term_id, false)?;
         let run_debug = terminal.run_debug.get_untracked()?;
 
         if run_debug.is_prelaunch && run_debug.config.prelaunch.is_some() {
@@ -557,7 +709,6 @@ impl TerminalPanelData {
             }
         }
 
-        self.focus_terminal(term_id);
         Some(())
     }
 
@@ -565,33 +716,29 @@ impl TerminalPanelData {
         &self,
         tracked: bool,
     ) -> Vec<(TermId, RunDebugProcess)> {
-        let mut processes = Vec::new();
-        if tracked {
-            self.tab_info.with(|info| {
-                for (_, tab) in &info.tabs {
-                    tab.terminals.with(|terminals| {
-                        for (_, terminal) in terminals {
-                            if let Some(run_debug) = terminal.run_debug.get() {
-                                processes.push((terminal.term_id, run_debug));
-                            }
-                        }
-                    })
-                }
-            });
+        let collect = |terminals: &im::HashMap<TermId, TerminalData>| {
+            terminals
+                .values()
+                .filter_map(|terminal| {
+                    let process = if tracked {
+                        terminal.run_debug.get()
+                    } else {
+                        terminal.run_debug.get_untracked()
+                    };
+                    process.map(|process| (terminal.term_id, process))
+                })
+                .collect()
+        };
+        let processes = if tracked {
+            self.console_processes.with(collect)
         } else {
-            self.tab_info.with_untracked(|info| {
-                for (_, tab) in &info.tabs {
-                    tab.terminals.with_untracked(|terminals| {
-                        for (_, terminal) in terminals {
-                            if let Some(run_debug) = terminal.run_debug.get_untracked() {
-                                processes.push((terminal.term_id, run_debug));
-                            }
-                        }
-                    })
-                }
-            });
-        }
-        let adapters = if tracked { self.debug.adapter_sessions.get() } else { self.debug.adapter_sessions.get_untracked() };
+            self.console_processes.with_untracked(collect)
+        };
+        let adapters = if tracked {
+            self.debug.adapter_sessions.get()
+        } else {
+            self.debug.adapter_sessions.get_untracked()
+        };
         merge_processes(processes, adapters)
     }
 
@@ -616,9 +763,9 @@ impl TerminalPanelData {
             .daps
             .with_untracked(|daps| daps.get(dap_id).cloned());
         if let Some(dap) = dap {
-            dap.thread_id.set(None);
-            dap.stopped.set(false);
+            dap.clear_pause();
         }
+        crate::debug_settings::refresh(self);
     }
 
     pub fn dap_stopped(
@@ -633,8 +780,11 @@ impl TerminalPanelData {
             .daps
             .with_untracked(|daps| daps.get(dap_id).cloned());
         if let Some(dap) = dap {
+            self.debug.active_term.set(Some(dap.term_id));
+            self.debug.active_dap.set(Some(dap.dap_id));
             dap.stopped(self.cx, stopped, stack_frames, variables);
         }
+        crate::debug_settings::refresh(self);
         floem::action::focus_window();
     }
 
@@ -744,8 +894,30 @@ impl TerminalPanelData {
 
     pub fn dap_frame_scopes(&self, dap_id: DapId, frame_id: usize) {
         if let Some(dap) = self.debug.daps.get_untracked().get(&dap_id) {
+            if !dap.stopped.get_untracked() {
+                return;
+            }
+            let frame = dap.stack_traces.with_untracked(|traces| {
+                traces.values().find_map(|trace| {
+                    trace.frames.with_untracked(|frames| {
+                        frames.iter().find(|frame| frame.id == frame_id).cloned()
+                    })
+                })
+            });
+            let Some(frame) = frame else { return };
+            dap.variable_requests.invalidate();
+            dap.selected_frame.set(Some(frame));
+            let is_current = dap.variable_requests.capture();
             let variables = dap.variables;
+            // Clear the previous frame immediately while its replacement loads.
+            variables.set(DapVariable::default());
+            dap.refresh_watches();
+            let terminal = self.clone();
+            crate::debug_settings::refresh(self);
             let send = create_ext_action(self.common.scope, move |result| {
+                if !is_current() {
+                    return;
+                }
                 if let Ok(ProxyResponse::DapGetScopesResponse { scopes }) = result {
                     variables.update(|dap_var| {
                         dap_var.children = scopes
@@ -780,6 +952,7 @@ impl TerminalPanelData {
                             .map(|v| v.children_expanded_count + 1)
                             .sum::<usize>();
                     });
+                    crate::debug_settings::refresh(&terminal);
                 }
             });
 
@@ -790,6 +963,11 @@ impl TerminalPanelData {
                 });
         }
     }
+}
+
+fn dispose_after_view_update(scope: Scope) {
+    // A view can still be reacting to the removal of its process.
+    floem::action::exec_after(std::time::Duration::ZERO, move |_| scope.dispose());
 }
 
 fn merge_processes(mut terminals: Vec<(TermId, RunDebugProcess)>, adapters: HashMap<DapId, (TermId, RunDebugProcess)>) -> Vec<(TermId, RunDebugProcess)> {

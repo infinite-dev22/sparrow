@@ -15,6 +15,11 @@ pub struct TerminalConfig {
         desc = "Set the terminal font size, If 0, it uses editor font size."
     )]
     pub font_size: usize,
+    #[serde(default)]
+    #[field_names(
+        desc = "Set the terminal font weight (400 is regular, 500 is medium)."
+    )]
+    pub font_weight: u16,
     #[field_names(
         desc = "Set the terminal line height, If 0, it uses editor line height"
     )]

@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use indexmap::IndexMap;
 use sparrow_core::mode::Modes;
-use tracing::{debug, error};
+use tracing::error;
 
 use super::keymap::{KeyMap, KeyMapPress};
 
@@ -24,6 +24,8 @@ impl KeyMapLoader {
         modal: bool,
     ) -> Result<&'a mut Self> {
         let toml_keymaps: toml_edit::Document = s.parse()?;
+        // An empty personal keymap file means there are no overrides.
+        if toml_keymaps.as_table().is_empty() { return Ok(self); }
         let toml_keymaps = toml_keymaps
             .get("keymaps")
             .and_then(|v| v.as_array_of_tables())
@@ -107,7 +109,6 @@ impl KeyMapLoader {
             && !modes.contains(Modes::INSERT)
             && !modes.contains(Modes::TERMINAL)
         {
-            debug!("Keymap ignored: {}", key);
             return Ok(None);
         }
 
@@ -249,5 +250,18 @@ command = "goto_definition"
             keypress[0].key,
             KeyMapKey::Logical(Key::Character("+".into()))
         );
+    }
+}
+
+#[cfg(test)]
+mod optional_overrides_tests {
+    use super::*;
+    #[test]
+    fn empty_and_comment_only_personal_keymaps_are_valid() {
+        for source in ["", "# Personal keymap overrides\n"] {
+            assert!(KeyMapLoader::new().load_from_str(source, false).is_ok());
+        }
+        assert!(KeyMapLoader::new().load_from_str("[[keymaps]", false).is_err());
+        assert!(KeyMapLoader::new().load_from_str("unrelated = true", false).is_err());
     }
 }

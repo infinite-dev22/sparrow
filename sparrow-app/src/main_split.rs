@@ -1,16 +1,21 @@
+pub(crate) mod view;
+
+use crate::widgets::file_picker::{FileDialogOptions, save_as};
+
 use std::{
+    cell::Cell,
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 use floem::{
-    action::save_as,
+    action::exec_after,
     ext_event::create_ext_action,
-    file::{FileDialogOptions, FileInfo},
+    file::FileInfo,
     keyboard::Modifiers,
     peniko::kurbo::{Point, Rect, Vec2},
-    reactive::{Memo, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
+    reactive::{Memo, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, batch},
     views::editor::id::EditorId,
 };
 use itertools::Itertools;
@@ -34,7 +39,7 @@ use sparrow_rpc::{
 use tracing::{Level, event};
 
 use crate::{
-    alert::AlertButton,
+    widgets::alert::AlertButton,
     code_lens::CodeLensData,
     command::InternalCommand,
     doc::{DiagnosticData, Doc, DocContent, DocHistory, EditorDiagnostic},
@@ -96,18 +101,17 @@ impl SplitContent {
         }
     }
 
-    pub fn content_info(&self, data: &WindowTabData) -> SplitContentInfo {
-        match &self {
+    pub fn content_info(&self, data: &WindowTabData) -> Option<SplitContentInfo> {
+        Some(match &self {
             SplitContent::EditorTab(editor_tab_id) => {
                 let editor_tab_data = data
                     .main_split
                     .editor_tabs
                     .get_untracked()
                     .get(editor_tab_id)
-                    .cloned()
-                    .unwrap();
+                    .cloned()?;
                 SplitContentInfo::EditorTab(
-                    editor_tab_data.get_untracked().tab_info(data),
+                    editor_tab_data.get_untracked().tab_info(data)?,
                 )
             }
             SplitContent::Split(split_id) => {
@@ -116,11 +120,10 @@ impl SplitContent {
                     .splits
                     .get_untracked()
                     .get(split_id)
-                    .cloned()
-                    .unwrap();
-                SplitContentInfo::Split(split_data.get_untracked().split_info(data))
+                    .cloned()?;
+                SplitContentInfo::Split(split_data.get_untracked().split_info(data)?)
             }
-        }
+        })
     }
 }
 
@@ -206,15 +209,15 @@ impl SplitContentInfo {
 }
 
 impl SplitData {
-    pub fn split_info(&self, data: &WindowTabData) -> SplitInfo {
-        SplitInfo {
+    pub fn split_info(&self, data: &WindowTabData) -> Option<SplitInfo> {
+        Some(SplitInfo {
             direction: self.direction,
             children: self
                 .children
                 .iter()
                 .map(|(_, child)| child.content_info(data))
-                .collect(),
-        }
+                .collect::<Option<Vec<_>>>()?,
+        })
     }
 
     pub fn editor_tab_index(&self, editor_tab_id: EditorTabId) -> Option<usize> {
@@ -1463,6 +1466,31 @@ impl MainSplitData {
         direction: SplitDirection,
         editor_tab_id: EditorTabId,
     ) -> Option<()> {
+        self.split_tab(direction, editor_tab_id).map(|_| ())
+    }
+
+    pub(crate) fn jump_in_right_split(&self, mut location: EditorLocation) {
+        if let Some(current) = self.active_editor_tab.get_untracked() {
+            self.save_current_jump_location();
+            let right = self.split_move(SplitMoveDirection::Right, current)
+                .and_then(|_| self.active_editor_tab.get_untracked())
+                .filter(|right| *right != current)
+                .or_else(|| self.split_tab(SplitDirection::Vertical, current));
+            if let Some(right) = right {
+                self.active_editor_tab.set(Some(right));
+                location.same_editor_tab = true;
+                self.go_to_location(location, None);
+                return;
+            }
+        }
+        self.jump_to_location(location, None);
+    }
+
+    fn split_tab(
+        &self,
+        direction: SplitDirection,
+        editor_tab_id: EditorTabId,
+    ) -> Option<EditorTabId> {
         let editor_tabs = self.editor_tabs.get_untracked();
         let editor_tab = editor_tabs.get(&editor_tab_id).copied()?;
 
@@ -1479,7 +1507,7 @@ impl MainSplitData {
                 .map(|index| (index, split.children.len()))
         })?;
 
-        if split_direction == direction {
+        let created = if split_direction == direction {
             let new_editor_tab = editor_tab.with_untracked(|editor_tab| {
                 self.split_editor_tab(self.scope, split_id, editor_tab)
             })?;
@@ -1497,6 +1525,7 @@ impl MainSplitData {
                     ),
                 );
             });
+            new_editor_tab_id
         } else if children_len == 1 {
             let new_editor_tab = editor_tab.with_untracked(|editor_tab| {
                 self.split_editor_tab(self.scope, split_id, editor_tab)
@@ -1513,6 +1542,7 @@ impl MainSplitData {
                     SplitContent::EditorTab(new_editor_tab_id),
                 ));
             });
+            new_editor_tab_id
         } else {
             let new_split_id = SplitId::next();
 
@@ -1557,9 +1587,10 @@ impl MainSplitData {
                     SplitContent::Split(new_split_id),
                 );
             });
-        }
+            new_editor_tab_id
+        };
 
-        Some(())
+        Some(created)
     }
 
     fn split_editor_tab(
@@ -2091,6 +2122,7 @@ impl MainSplitData {
                             internal_command.send(InternalCommand::HideAlert);
                             save_as(
                                 FileDialogOptions::new().title("Save File"),
+                                main_split.common.config,
                                 move |file: Option<FileInfo>| {
                                     let main_split = main_split.clone();
                                     let child = child.clone();
@@ -2257,7 +2289,7 @@ impl MainSplitData {
             }
             CodeActionOrCommand::CodeAction(action) => {
                 if let Some(edit) = action.edit.as_ref() {
-                    self.apply_workspace_edit(edit);
+                    self.apply_code_action_edit(edit, action.title);
                 } else if action.command.is_none() {
                     self.resolve_code_action(plugin_id, action.clone());
                 }
@@ -2287,6 +2319,7 @@ impl MainSplitData {
 
     /// Resolve a code action and apply its held workspace edit
     fn resolve_code_action(&self, plugin_id: PluginId, action: CodeAction) {
+        let title = action.title.clone();
         // ── Dart fast path ─────────────────────────────────────────
         if plugin_id == PluginId(0) && self.common.dart_lsp.is_available() {
             let main_split = self.clone();
@@ -2294,7 +2327,7 @@ impl MainSplitData {
                 self.scope,
                 move |edit: Option<WorkspaceEdit>| {
                     if let Some(edit) = edit {
-                        main_split.apply_workspace_edit(&edit);
+                        main_split.apply_code_action_edit(&edit, title);
                     }
                 },
             );
@@ -2307,7 +2340,7 @@ impl MainSplitData {
         // ── Existing proxy path ────────────────────────────────────
         let main_split = self.clone();
         let send = create_ext_action(self.scope, move |edit| {
-            main_split.apply_workspace_edit(&edit);
+            main_split.apply_code_action_edit(&edit, title);
         });
         self.common
             .proxy
@@ -2318,6 +2351,128 @@ impl MainSplitData {
                     }
                 }
             });
+    }
+
+    fn apply_code_action_edit(&self, edit: &WorkspaceEdit, title: String) {
+        let alert = self.common.internal_command;
+        let report = move |msg: String| {
+            alert.send(InternalCommand::ShowAlert {
+                title: "Quick Fix".into(),
+                msg,
+                buttons: Vec::new(),
+            });
+        };
+        let files = match crate::code_action_preview::edit_files(edit) {
+            Ok(files) => files,
+            Err(error) => {
+                report(error);
+                return;
+            }
+        };
+        if files.len() <= 1 {
+            self.apply_workspace_edit(edit);
+            return;
+        }
+        let targets: Vec<_> = files
+            .into_iter()
+            .map(|file| {
+                let (doc, _) = self.get_doc(file.path.clone(), None);
+                let revision = Cell::new(doc.loaded().then(|| doc.rev()));
+                (file, doc, revision)
+            })
+            .collect();
+        let targets = Rc::new(targets);
+        let apply = {
+            let split = self.clone();
+            let targets = targets.clone();
+            move || {
+                for (file, doc, revision) in targets.iter() {
+                    if doc.content.with_untracked(|c| c.read_only())
+                        || revision.get() != Some(doc.rev())
+                        || file
+                            .version
+                            .is_some_and(|rev| u64::try_from(rev) != Ok(doc.rev()))
+                    {
+                        report(format!(
+                            "{} changed or is read-only. No files were edited.",
+                            file.path.display()
+                        ));
+                        return;
+                    }
+                    let source = doc.buffer.with_untracked(|buffer| buffer.to_string());
+                    if let Err(error) =
+                        crate::code_action_preview::edited(&source, &file.edits)
+                    {
+                        report(format!("{}: {error}", file.path.display()));
+                        return;
+                    }
+                }
+                batch(|| {
+                    let snapshots = targets
+                        .iter()
+                        .map(|(file, doc, _)| {
+                            crate::workspace_undo::snapshot(doc.clone(), &file.edits)
+                        })
+                        .collect();
+                    for (file, doc, _) in targets.iter() {
+                        split.apply_document_edits(doc, &file.edits);
+                    }
+                    crate::workspace_undo::record(
+                        &split.common.workspace_undo,
+                        title.clone(),
+                        snapshots,
+                    );
+                });
+            }
+        };
+        // Wait for all targets before applying or linking any of their edits.
+        if targets.iter().all(|(_, doc, _)| doc.loaded()) {
+            apply();
+        } else {
+            let scope = self.scope.create_child();
+            let pending = scope.create_rw_signal(true);
+            scope.create_effect(move |_| {
+                let mut all_loaded = true;
+                for (_, doc, revision) in targets.iter() {
+                    if !doc.loaded.get() {
+                        all_loaded = false;
+                    } else if revision.get().is_none() {
+                        revision.set(Some(doc.rev()));
+                    }
+                }
+                if all_loaded {
+                    apply();
+                    scope.dispose();
+                }
+            });
+            exec_after(std::time::Duration::from_secs(5), move |_| {
+                if pending.try_get_untracked().is_some() {
+                    scope.dispose();
+                    report(
+                        "Could not load all Quick Fix targets. No files were edited.".into(),
+                    );
+                }
+            });
+        }
+    }
+
+    fn apply_document_edits(&self, doc: &Rc<Doc>, edits: &[TextEdit]) {
+        let editor = self.editors.with_editors_untracked(|editors| {
+            editors
+                .values()
+                .find(|editor| {
+                    editor
+                        .doc_signal()
+                        .try_get_untracked()
+                        .is_some_and(|current| Rc::ptr_eq(&current, doc))
+                })
+                .cloned()
+        });
+        if let Some(editor) = editor {
+            editor.do_text_edit(edits);
+        } else {
+            doc.do_text_edit(edits);
+        }
     }
 
     /// Perform a workspace edit, which are from the LSP (such as code actions, or symbol renaming)
@@ -2348,27 +2503,10 @@ impl MainSplitData {
             for (url, edits) in edits {
                 if let Ok(path) = url.to_file_path() {
                     let (doc, _) = self.get_doc(path, None);
-                    let editors = self.editors;
+                    let split = self.clone();
                     let target = doc.clone();
                     let apply = move || {
-                        let editor = editors.with_editors_untracked(|editors| {
-                            editors
-                                .values()
-                                .find(|editor| {
-                                    editor
-                                        .doc_signal()
-                                        .try_get_untracked()
-                                        .is_some_and(|current| {
-                                            Rc::ptr_eq(&current, &doc)
-                                        })
-                                })
-                                .cloned()
-                        });
-                        if let Some(editor) = editor {
-                            editor.do_text_edit(&edits);
-                        } else {
-                            doc.do_text_edit(&edits);
-                        }
+                        split.apply_document_edits(&doc, &edits);
                     };
                     // Previewed edits are already loaded. Other LSP edits may need
                     // a buffer first, without opening a tab or moving the caret.
@@ -2525,30 +2663,23 @@ impl MainSplitData {
                 doc.handle_file_changed(Rope::from(content));
             }
             FileChanged::Delete => {
-                if self.docs.with_untracked(|x| x.get(path).is_none()) {
-                    return;
-                }
-                let Some(editor_id) = self.editors.get_editor_id_by_path(path)
-                else {
-                    return;
-                };
-                let id = editor_id.to_raw();
-                if let Some(tab_id) = self.editor_tabs.with_untracked(|x| {
-                    for (tab_id, tab_data) in x {
-                        if tab_data.with_untracked(|x| {
-                            x.children.iter().any(|(_, _, child)| child.id() == id)
-                        }) {
-                            return Some(*tab_id);
-                        }
-                    }
-                    None
-                }) {
-                    self.editor_tab_close(tab_id);
-                }
-                self.editors.remove(editor_id);
-                self.docs.update(|x| {
-                    x.remove(path);
+                let Some(doc) = self.docs.with_untracked(|docs| docs.get(path).cloned()) else { return; };
+                // An external deletion must not discard unsaved edits, or close
+                // unrelated files in the same tab group. Use normal child-close
+                // cleanup so tabs and editor storage stay consistent.
+                if !doc.is_pristine() { return; }
+                let targets = self.editor_tabs.with_untracked(|tabs| {
+                    tabs.iter().flat_map(|(tab_id, tab)| {
+                        tab.with_untracked(|tab| tab.children.iter().filter_map(|(_, _, child)| {
+                            let EditorTabChild::Editor(id) = child else { return None; };
+                            let editor = self.editors.editor_untracked(*id)?;
+                            editor.doc().content.with_untracked(|content| (content.path().is_some_and(|p| p.as_path() == path))
+                                .then(|| (*tab_id, child.clone())))
+                        }).collect::<Vec<_>>())
+                    }).collect::<Vec<_>>()
                 });
+                for (tab, child) in targets { self.editor_tab_child_close(tab, child, false); }
+                self.docs.update(|docs| { docs.remove(path); });
             }
         }
     }
@@ -2749,6 +2880,7 @@ impl MainSplitData {
         let main_split = self.clone();
         save_as(
             FileDialogOptions::new().title("Save File"),
+            self.common.config,
             move |file: Option<FileInfo>| {
                 if let Some(mut file) = file {
                     main_split.save_as(
@@ -2770,6 +2902,7 @@ impl MainSplitData {
         let main_split = self.clone();
         save_as(
             FileDialogOptions::new().title("Save File"),
+            self.common.config,
             move |file: Option<FileInfo>| {
                 if let Some(mut file) = file {
                     main_split.save_as2(

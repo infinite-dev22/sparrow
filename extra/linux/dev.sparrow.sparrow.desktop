@@ -6,7 +6,7 @@ Name=Sparrow
 Comment=Dart and Flutter IDE
 Categories=Development;IDE;
 GenericName=Dart and Flutter IDE
-StartupWMClass=sparrow
+StartupWMClass=dev.sparrow.sparrow
 
 Icon=dev.sparrow.sparrow
 Exec=sparrow %F

@@ -1,1 +1,6 @@
-<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 1h12l.5.5v12l-.5.5h-12l-.5-.5v-12l.5-.5zM2 13h11V2H2v11z"/><path fill-rule="evenodd" clip-rule="evenodd" d="M8 4H7v3H4v1h3v3h1V8h3V7H8V4z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+     stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-square-plus preview-icon">
+    <rect width="18" height="18" x="3" y="3" rx="2"/>
+    <path d="M8 12h8"/>
+    <path d="M12 8v8"/>
+</svg>

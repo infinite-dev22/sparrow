@@ -8,19 +8,20 @@ use floem::{
     reactive::{ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
     views::{
-        Decorators, VirtualVector, empty, label, scroll, stack, svg, virtual_stack,
+        Decorators, VirtualVector, empty, label, stack, svg, virtual_stack,
     },
 };
 
 use super::position::PanelPosition;
 use crate::{
-    app::clickable_icon,
+    widgets::clickable_icon,
     command::InternalCommand,
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     editor::location::{EditorLocation, EditorPosition},
     widget_tree::WidgetNodeData,
     window_tab::WindowTabData,
 };
+use crate::widgets::sparrow_scroll;
 
 pub fn widget_tree_panel(
     window_tab_data: Rc<WindowTabData>,
@@ -38,7 +39,7 @@ pub fn widget_tree_panel(
         super::kind::PanelKind::WidgetTree.title(),
         empty(),
     );
-    let content = scroll(
+    let content = sparrow_scroll(
         virtual_stack(
             move || WidgetList::new(data.roots.get()),
             move |(i, _, node)| (*i, node.get_untracked().info.class_name.clone()),

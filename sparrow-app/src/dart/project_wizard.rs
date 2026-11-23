@@ -1,12 +1,12 @@
-use crate::text_input::modal_text_input as text_input;
-use crate::{config::color::SparrowColor, window_tab::WindowTabData};
-use floem::{
-    View,
-    reactive::{RwSignal, Scope, SignalGet, SignalUpdate},
-    views::{Decorators, container, dyn_stack, label, stack},
-};
+mod view;
+
+pub use view::view;
+
+use crate::window_tab::WindowTabData;
+use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate};
 use std::{path::PathBuf, rc::Rc};
 const PLATFORMS: [&str; 6] = ["android", "ios", "web", "linux", "macos", "windows"];
+const TEMPLATES: [&str; 5] = ["app", "package", "plugin", "module", "package_ffi"];
 #[derive(Clone)]
 pub struct ProjectWizard {
     pub active: RwSignal<bool>,
@@ -31,7 +31,7 @@ pub fn arguments(
     {
         return Err("Use a lowercase Dart package name, such as my_app.".into());
     }
-    if !["app", "package", "plugin", "module", "package_ffi"].contains(&template) {
+    if !TEMPLATES.contains(&template) {
         return Err("Choose a project type.".into());
     }
     let parent = PathBuf::from(parent);
@@ -97,6 +97,7 @@ impl ProjectWizard {
                 return;
             }
         };
+        let task = window.common.background_tasks.begin("Creating Flutter project", None);
         self.busy.set(true);
         self.message.set("Creating Flutter project…".into());
         let this = self.clone();
@@ -126,6 +127,7 @@ impl ProjectWizard {
             },
         );
         std::thread::spawn(move || {
+            let _task = task;
             let result = program
                 .ok_or_else(|| "Flutter SDK not found.".to_string())
                 .and_then(|program| {
@@ -148,108 +150,6 @@ impl ProjectWizard {
             send(result);
         });
     }
-}
-pub fn view(window: Rc<WindowTabData>) -> impl View {
-    let wizard = window.flutter_project.clone();
-    let active = wizard.active;
-    let busy = wizard.busy;
-    let template = wizard.template;
-    let platforms = wizard.platforms;
-    let empty = wizard.empty;
-    let message = wizard.message;
-    let config = window.common.config;
-    let name = text_input(wizard.name);
-    let name_id = name.id();
-    floem::reactive::create_effect(move |_| {
-        if active.get() {
-            floem::action::exec_after(std::time::Duration::from_millis(30), move |_| {
-                if active.get_untracked() { name_id.request_focus(); }
-            });
-        }
-    });
-    container(
-        container(
-            stack((
-                label(|| "New Flutter Project").style(|s| s.font_bold()),
-                label(|| "Project name"),
-                name,
-                label(|| "Parent directory (absolute path)"),
-                text_input(wizard.parent),
-                label(|| "Project type"),
-                dyn_stack(
-                    || vec!["app", "package", "plugin", "module", "package_ffi"],
-                    |s| *s,
-                    move |kind| {
-                        label(move || {
-                            format!(
-                                "{} {kind}",
-                                if template.get() == kind { "●" } else { "○" }
-                            )
-                        })
-                        .on_click_stop(move |_| template.set(kind.into()))
-                    },
-                ),
-                label(move || {
-                    format!(
-                        "{} Empty skeleton (apps); otherwise counter template",
-                        if empty.get() { "☑" } else { "☐" }
-                    )
-                })
-                .on_click_stop(move |_| empty.update(|x| *x = !*x)),
-                label(|| "Platforms (apps and plugins; packages choose their native targets)"),
-                dyn_stack(
-                    || PLATFORMS.to_vec(),
-                    |s| *s,
-                    move |platform| {
-                        label(move || {
-                            format!(
-                                "{} {platform}",
-                                if platforms.get().iter().any(|p| p == platform) {
-                                    "☑"
-                                } else {
-                                    "☐"
-                                }
-                            )
-                        })
-                        .on_click_stop(move |_| {
-                            platforms.update(|items| {
-                                if items.iter().any(|p| p == platform) {
-                                    items.retain(|p| p != platform);
-                                } else {
-                                    items.push(platform.into());
-                                }
-                            })
-                        })
-                    },
-                ),
-                label(move || message.get())
-                    .style(|s| s.max_width(600.0).selectable(true)),
-                label(|| "Create")
-                    .on_click_stop(move |_| wizard.create(window.clone()))
-                    .disabled(move || busy.get()),
-                label(|| "Cancel")
-                    .on_click_stop(move |_| active.set(false))
-                    .disabled(move || busy.get()),
-            ))
-            .disabled(move || busy.get())
-            .style(|s| s.flex_col().gap(8.0)),
-        )
-        .style(move |s| {
-            s.width(640.0)
-                .padding(24.0)
-                .background(config.get().color(SparrowColor::PANEL_BACKGROUND))
-        }),
-    )
-    .on_event_stop(floem::event::EventListener::PointerDown, |_| {})
-    .style(move |s| {
-        s.absolute()
-            .z_index(200)
-            .size_full()
-            .items_center()
-            .justify_center()
-            .background(config.get().color(SparrowColor::SPARROW_DROPDOWN_SHADOW))
-            .apply_if(!active.get(), |s| s.hide())
-    })
 }
 #[cfg(test)]
 mod tests {

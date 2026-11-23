@@ -1,16 +1,13 @@
 //! Git command review and execution without shell interpolation.
+mod view;
+
+pub use view::view;
+
 use crate::{
-    config::color::SparrowColor,
-    popup_menu::{Menu, MenuItem, PopupMenuExt},
+    widgets::popup_menu::{Menu, MenuItem},
     window_tab::WindowTabData,
 };
-use floem::{
-    View,
-    event::{Event, EventListener, EventPropagation},
-    keyboard::{Key, NamedKey},
-    reactive::{RwSignal, Scope, SignalGet, SignalUpdate},
-    views::{Decorators, container, label, scroll, stack},
-};
+use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate};
 use std::{
     rc::Rc,
     sync::{
@@ -22,6 +19,7 @@ use std::{
 pub struct State {
     pub active: RwSignal<bool>,
     title: RwSignal<String>,
+    cloning: RwSignal<bool>,
     args: RwSignal<String>,
     output: RwSignal<String>,
     busy: RwSignal<bool>,
@@ -36,16 +34,26 @@ impl State {
         Self {
             active: cx.create_rw_signal(false),
             title: cx.create_rw_signal(String::new()),
+            cloning: cx.create_rw_signal(false),
             args: cx.create_rw_signal(String::new()),
             output: cx.create_rw_signal(String::new()),
             busy: cx.create_rw_signal(false),
             cancel: Arc::new(AtomicBool::new(false)),
         }
     }
+    pub fn open_clone(&self) {
+        if !self.busy.get_untracked() {
+            self.open("Clone Repository".into(), vec!["clone".into()]);
+            self.cloning.set(true);
+            self.output.set("Add a repository URL and an optional destination after clone. Use an absolute path to choose the destination.".into());
+        }
+    }
+
     pub fn open(&self, title: String, args: Vec<String>) {
         if self.busy.get_untracked() {
             return;
         }
+        self.cloning.set(false);
         self.title.set(title);
         self.args.set(crate::dart::run_config::join_args(&args));
         self.output.set(String::new());
@@ -64,7 +72,17 @@ impl State {
                     return;
                 }
             };
-        let Some(root) = window.workspace.path.clone() else {
+        let root = if self.cloning.get_untracked() {
+            window.workspace.path.as_deref()
+                .filter(|_| window.workspace.kind.is_local())
+                .and_then(std::path::Path::parent)
+                .map(std::path::Path::to_path_buf)
+                .or_else(sparrow_core::directory::Directory::home_dir)
+        } else {
+            window.workspace.path.clone()
+        };
+        let Some(root) = root else {
+            self.output.set("No working directory is available.".into());
             return;
         };
         self.busy.set(true);
@@ -86,7 +104,9 @@ impl State {
                 );
             },
         );
+        let task = window.common.background_tasks.begin(format!("Git · {}", self.title.get_untracked()), Some(cancel.clone()));
         std::thread::spawn(move || {
+            let _task = task;
             let result = (|| -> Result<String, String> {
                 use std::io::{Read, Seek};
                 let mut log = tempfile::tempfile().map_err(|e| e.to_string())?;
@@ -211,44 +231,4 @@ pub fn menu(
         }));
     }
     menu
-}
-pub fn view(window: Rc<WindowTabData>) -> impl View {
-    let state = window.git_actions.clone();
-    let active = state.active;
-    crate::modal_focus::restore_workbench_on_close(active, window.common.clone());
-    let title = state.title;
-    let args = state.args;
-    let output = state.output;
-    let busy = state.busy;
-    let cancel = state.cancel.clone();
-    let cleanup_cancel = state.cancel.clone();
-    let config = window.common.config;
-    let run = state.clone();
-    let w = window.clone();
-    let focus = crate::modal_focus::ModalFocus::default();
-    let submit = state.clone();
-    let w2 = window.clone();
-    focus.set_submit(move || submit.run(w2.clone()));
-    let input = focus.input(args).style(move |s| {
-        s.width_full()
-            .height(30.0)
-            .padding_horiz(6.0)
-            .border(1.0)
-            .border_color(config.get().color(SparrowColor::EDITOR_FOCUS))
-    });
-    let id = input.id();
-    floem::reactive::create_effect(move |_| {
-        if active.get() {
-            floem::action::exec_after(
-                std::time::Duration::from_millis(30),
-                move |_| id.request_focus(),
-            );
-        }
-    });
-    let commands = window.common.internal_command;
-    let body=stack((label(move ||format!("Git · {}",title.get())).style(|s|s.font_bold()),label(||"git").ide_popout_menu(move ||menu(commands,None)),input,label(move ||{let a=args.get();if a.contains("--hard"){"Hard reset discards tracked working-tree and staged changes."}else if a.starts_with("rebase"){"Rebase rewrites commit history. Resolve conflicts before continuing."}else{"Review the Git arguments above, then run. Output and errors appear below."}}).style(|s|s.width_full()),scroll(label(move ||output.get()).style(|s|s.width_full())).style(|s|s.width_full().height(300.0)),stack((focus.control(label(move ||if busy.get(){"Running…"}else{"Run"}).on_click_stop(move |_|run.run(w.clone())).disabled(move ||busy.get())),focus.control(label(||"Copy output").on_click_stop(move |_|crate::menus::copy_text(&output.get_untracked()))),focus.control(label(move ||if busy.get(){"Cancel command"}else{"Close"}).on_click_stop(move |_|{if busy.get_untracked(){cancel.store(true,Ordering::Relaxed);}else{active.set(false);}})))).style(|s|s.gap(20.0)))).style(move |s|s.flex_col().width(720.0).max_width_pct(95.0).gap(12.0).padding(18.0).border_radius(6.0).border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER)).box_shadow_blur(16.0).box_shadow_color(config.get().color(SparrowColor::SPARROW_DROPDOWN_SHADOW)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).color(config.get().color(SparrowColor::EDITOR_FOREGROUND)));
-    let dialog=container(body).style(move |s|s.absolute().size_full().items_center().justify_center().z_index(100).apply_if(!active.get(),|s|s.hide())).on_event_stop(EventListener::PointerDown, |_|{}).on_event(EventListener::KeyDown,move |e|{if matches!(e,Event::KeyDown(k)if k.key.logical_key==Key::Named(NamedKey::Escape))&&!busy.get_untracked(){active.set(false);EventPropagation::Stop}else{EventPropagation::Continue}});
-    focus
-        .bind_root(dialog, active, config)
-        .on_cleanup(move || cleanup_cancel.store(true, Ordering::Relaxed))
 }

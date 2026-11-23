@@ -1,7 +1,7 @@
-//! pub.dev completion and conservative dependency checks, all off the UI thread.
-//! Pub remains authoritative for transitive solving; this module never runs pub
-//! or writes a manifest/lockfile. It uses only public, documented registry APIs.
+//! Registry completion and SDK/direct checks, augmented by isolated Pub solves.
+//! All work runs off the UI thread; workspace edits are previewed and undoable.
 mod constraint;
+pub(crate) mod solver;
 use super::yaml_schema::{self, Part};
 use constraint::Constraint;
 use lsp_types::{
@@ -54,6 +54,7 @@ struct Registry {
     client: reqwest::blocking::Client,
     memory: Mutex<HashMap<String, Cached>>,
     gate: Mutex<()>,
+    retry_after: Mutex<Option<Instant>>,
     disk: Option<PathBuf>,
 }
 static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
@@ -83,6 +84,7 @@ impl Registry {
                 .expect("HTTP client"),
             memory: Mutex::new(HashMap::new()),
             gate: Mutex::new(()),
+            retry_after: Mutex::new(None),
             disk,
         }
     }
@@ -164,6 +166,9 @@ impl Registry {
         reply
     }
     fn fetch(&self, endpoint: &str) -> Reply {
+        if self.retry_after.lock().unwrap().is_some_and(|until| Instant::now() < until) {
+            return Reply::Failed;
+        }
         let result = (|| -> Result<Vec<u8>, String> {
             let mut response = self
                 .client
@@ -206,10 +211,14 @@ impl Registry {
             Ok(bytes)
         })();
         match result {
-            Ok(bytes) => Reply::Data(Arc::new(bytes)),
+            Ok(bytes) => {
+                *self.retry_after.lock().unwrap() = None;
+                Reply::Data(Arc::new(bytes))
+            },
             Err(e) if e == "404" => Reply::Missing,
             Err(e) => {
-                tracing::debug!("pub.dev unavailable: {e}");
+                *self.retry_after.lock().unwrap() = Some(Instant::now() + Duration::from_secs(60));
+                tracing::debug!("pub.dev temporarily unavailable; using cached metadata and pausing registry requests for 60s: {e}");
                 Reply::Failed
             }
         }
@@ -817,26 +826,18 @@ pub(crate) fn diagnostics(
     let Ok(doc) = serde_yaml::from_str::<Yaml>(text) else {
         return vec![];
     };
-    if dependencies(&doc).is_empty() || cancelled() {
-        return vec![];
-    }
-    let env = environment(&doc, path.parent().unwrap_or(Path::new(".")));
-    reports(&doc, text, &env, |name| {
-        if cancelled() {
-            Err(())
-        } else {
-            REGISTRY.package(name)
-        }
-    })
-    .into_iter()
-    .map(|r| Diagnostic {
-        range: r.range,
-        message: r.message,
-        severity: Some(r.severity),
-        source: Some(super::yaml::SOURCE.into()),
-        ..Default::default()
-    })
-    .collect()
+    if cancelled() { return vec![]; }
+    let mut diagnostics = if dependencies(&doc).is_empty() { vec![] } else {
+        let env = environment(&doc, path.parent().unwrap_or(Path::new(".")));
+        reports(&doc, text, &env, |name| {
+            if cancelled() { Err(()) } else { REGISTRY.package(name) }
+        }).into_iter().map(|r| Diagnostic {
+            range: r.range, message: r.message, severity: Some(r.severity),
+            source: Some(super::yaml::SOURCE.into()), ..Default::default()
+        }).collect::<Vec<_>>()
+    };
+    diagnostics.extend(solver::diagnostics(path, text, &cancelled));
+    diagnostics
 }
 pub(crate) fn code_actions(
     path: &Path,
@@ -846,6 +847,7 @@ pub(crate) fn code_actions(
     if !is_pubspec(path) {
         return vec![];
     }
+    if let Some(actions) = solver::code_actions(path, text) { return actions; }
     let Ok(doc) = serde_yaml::from_str::<Yaml>(text) else {
         return vec![];
     };
@@ -1025,6 +1027,28 @@ mod tests {
             })
             .is_empty()
         }
+    }
+    #[test]
+    fn registry_failure_pauses_other_requests_and_preserves_stale_metadata() {
+        use std::{io::Write, net::TcpListener};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = listener.try_clone().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = server.accept().unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).unwrap();
+            stream.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let cache = tempfile::tempdir().unwrap();
+        std::fs::write(cache.path().join("old.json"), b"{\"name\":\"old\"}").unwrap();
+        let registry = Registry::new(format!("http://{address}"), Some(cache.path().to_path_buf()));
+        assert!(matches!(registry.get("old", "/old", Duration::ZERO), Reply::Data(_)));
+        worker.join().unwrap();
+        assert!(matches!(registry.get("other", "/other", PACKAGE_TTL), Reply::Failed));
+        listener.set_nonblocking(true).unwrap();
+        assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        assert!(cache.path().join("old.json").is_file());
     }
     #[test]
     fn documented_gzip_names_api_is_cached_in_memory_and_on_disk() {

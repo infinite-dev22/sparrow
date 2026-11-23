@@ -645,6 +645,11 @@ impl Doc {
         let deltas = self.syntax.with_untracked(|syntax| {
             self.buffer
                 .try_update(|buffer| {
+                    if *cmd == EditCommand::NormalizeLineEndings
+                        && !needs_line_ending_normalization(buffer)
+                    {
+                        return Vec::new();
+                    }
                     Action::do_edit(
                         cursor,
                         buffer,
@@ -775,6 +780,7 @@ impl Doc {
                     package_doc.clear_code_actions();
                 }
             });
+            let progress = doc.common.background_tasks.reporter();
             let publish = create_ext_action(scope, move |diagnostics| {
                 if doc.buffer.try_with_untracked(|b| b.as_ref().map(|b| b.rev())) == Some(revision)
                     && doc.syntax.try_with_untracked(|s| s.as_ref().map(|s| s.language)) == Some(SparrowLanguage::Yaml)
@@ -784,6 +790,7 @@ impl Doc {
                 }
             });
             rayon::spawn(move || {
+                let task = progress.begin("Validating YAML and dependency compatibility");
                 let mut diagnostics = yaml::diagnostics(&text);
                 let syntax_valid = diagnostics.is_empty();
                 if syntax_valid {
@@ -791,9 +798,14 @@ impl Doc {
                         diagnostics.extend(yaml_schema::diagnostics(path, &text));
                     }
                 }
-                publish(diagnostics.clone());
+                let mut immediate = diagnostics.clone();
+                if syntax_valid && path.as_ref().is_some_and(|p| p.file_name().is_some_and(|n| n == "pubspec.yaml")) {
+                    immediate.push(Diagnostic { range: Default::default(), severity: Some(lsp_types::DiagnosticSeverity::HINT), source: Some(yaml::SOURCE.into()), message: "Pub is checking the complete dependency graph…".into(), ..Default::default() });
+                }
+                publish(immediate);
                 if syntax_valid {
                     if let Some(path) = path {
+                        task.report("Checking Pub dependency compatibility", None);
                         diagnostics.extend(pubdev::diagnostics(&path, &text, || atomic_revision.load(atomic::Ordering::Acquire) != revision));
                     }
                 }
@@ -1981,6 +1993,16 @@ impl DocumentPhantom for Doc {
         // this later has the diagnostics added onto it, but that's still likely to be below six
         // overall.
         let mut text: SmallVec<[PhantomText; 6]> = hints.collect();
+        if let Some(values) = self.common.debug_inline_values.get_untracked() {
+            if values.line == line && self.content.with_untracked(|c|c.path() == Some(&values.path)) {
+                let col = self.buffer.with_untracked(|b| b.line_content(line).trim_end_matches(['\r','\n']).len());
+                text.push(PhantomText { kind: PhantomTextKind::InlayHint, col,
+                    text:format!("  {}", values.text), affinity:Some(CursorAffinity::Forward),
+                    fg:Some(config.color(SparrowColor::INLAY_HINT_FOREGROUND)),
+                    font_size:Some(config.editor.inlay_hint_font_size()), bg:None, under_line:None });
+            }
+        }
+
 
         // If error lens is enabled, and the diagnostics field is filled, then get the diagnostics
         // that end on this line which have a severity worse than HINT and convert them into
@@ -2615,9 +2637,33 @@ fn saved_revision_result(
     }
 }
 
+fn needs_line_ending_normalization(buffer: &Buffer) -> bool {
+    // Floem can return an identity delta when all line endings already match.
+    // Applying it would create an undo group and discard pending redos.
+    buffer
+        .line_ending()
+        .normalize_delta(buffer.text())
+        .is_some_and(|delta| !delta.is_identity())
+}
+
 #[cfg(test)]
 mod save_result_tests {
     use super::*;
+
+    #[test]
+    fn normalizing_matching_line_endings_preserves_redo() {
+        let mut buffer = Buffer::new("original\n");
+        buffer.edit(&[(Selection::caret(0), "// suppression\n")], EditType::Other);
+        buffer.do_undo().unwrap();
+
+        assert!(!needs_line_ending_normalization(&buffer));
+        buffer.set_pristine();
+        assert!(buffer.do_redo().is_some());
+        assert_eq!(buffer.text().to_string(), "// suppression\noriginal\n");
+
+        buffer.set_line_ending(LineEnding::CrLf);
+        assert!(needs_line_ending_normalization(&buffer));
+    }
 
     #[test]
     fn workflow_save_requires_matching_revision_and_propagates_disk_errors() {

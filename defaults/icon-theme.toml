@@ -4,12 +4,20 @@
 name = "sparrow Modern"
 
 [icon-theme.ui]
+"logcat.filter" = "filter.svg"
+"logcat.clear" = "trash-2.svg"
+"logcat.refresh" = "refresh-cw.svg"
+"logcat.copy" = "copy.svg"
+"logcat.export" = "download.svg"
+"logcat.device" = "smartphone.svg"
+"logcat.wrap" = "logcat-wrap.svg"
 # ── Branding ─────────────────────────────────────────────────────────────
 "logo"           = "sparrow_logo.svg"
 "menu"           = "menu.svg"                    # Lucide: menu
 "link"           = "link.svg"                    # Lucide: link
 "remote"         = "radio-tower.svg"             # Lucide: radio-tower
 "error"          = "circle-alert.svg"            # Lucide: circle-alert
+"info"           = "info.svg"
 "add"            = "plus.svg"                    # Lucide: plus
 "minus"          = "remove.svg"                # Lucide: remove
 "close"          = "x.svg"                       # Lucide: x
@@ -23,15 +31,16 @@ name = "sparrow Modern"
 "debug_small"        = "bug.svg"                 # Tabler: bug
 "debug_breakpoint"   = "circle-dot.svg"          # Lucide: circle-dot
 "debug_restart"      = "player-track-next.svg"   # Tabler
-"debug_continue"     = "player-play.svg"         # Tabler
-"debug_step_over"    = "step-forward.svg"        # Lucide (exact name)
+"debug_continue"     = "step-forward.svg"                # Lucide
+"debug_step_over"    = "step-over.svg"        # Lucide (exact name)
 "debug_step_into"    = "step-into.svg"           # Tabler
 "debug_step_out"     = "step-out.svg"            # Tabler
-"debug_pause"        = "player-pause.svg"        # Tabler
+"debug_pause"        = "pause.svg"        # Tabler
 "debug_stop"         = "player-stop.svg"         # Tabler
 "debug_console"      = "terminal.svg"            # Lucide: terminal
+"toolbox"            = "toolbox.svg"             # Lucide: toolbox
 "debug_disconnect"   = "unplug.svg"              # Lucide: unplug
-"start"              = "player-play.svg"         # Tabler
+"start"              = "play.svg"         # Tabler
 "run_errors"         = "circle-x.svg"            # Lucide: circle-x
 
 # ── Flutter / Dart execution & devices ─────────────────────────────────────
@@ -52,6 +61,7 @@ name = "sparrow Modern"
 "window.restore"   = "chrome-restore.svg"        # Lucide: square (restore variant)
 "window.maximize"  = "chrome-maximize.svg"       # Lucide: maximize
 "window.minimize"  = "chrome-minimize.svg"       # Lucide: minimize
+"window.more"      = "more.svg"                  # Lucide: minimize
 
 # ── Files / Explorer ─────────────────────────────────────────────────────
 "file"            = "file.svg"                   # Lucide: file
@@ -61,7 +71,8 @@ name = "sparrow Modern"
 "image_error"     = "circle-alert.svg"           # Lucide: circle-alert
 
 # ── Source control ───────────────────────────────────────────────────────
-"scm.icon"           = "git-branch.svg"          # Lucide: git-branch
+"scm.icon"           = "git.svg"                 # Lucide: git
+"scm.branch"         = "git-branch.svg"          # Lucide: git-branch
 "scm.diff.modified"  = "diff-modified.svg"       # Lucide: pencil-line
 "scm.diff.added"     = "diff-added.svg"          # Lucide: plus
 "scm.diff.removed"   = "diff-removed.svg"        # Lucide: minus
@@ -72,6 +83,7 @@ name = "sparrow Modern"
 # ── Panels / folding ─────────────────────────────────────────────────────
 "palette.menu"       = "chevron-down.svg"        # Lucide
 "fold"               = "chevrons-down-up.svg"    # Lucide
+"unfold"               = "chevrons-up-down.svg"    # Lucide
 "fold.up"            = "chevrons-up.svg"         # Lucide
 "fold.down"          = "chevrons-down.svg"       # Lucide
 "dropdown.arrow"     = "chevron-down.svg"        # Lucide
@@ -181,9 +193,9 @@ name = "sparrow Modern"
 "CMakeLists.txt" = "filetype-cmake.svg"
 ".env" = "filetype-env.svg"
 ".env.*" = "filetype-env.svg"
-".gitignore" = "filetype-git.svg"
-".gitattributes" = "filetype-git.svg"
-".gitmodules" = "filetype-git.svg"
+".gitignore" = "filetype-gitignore.svg"
+".gitattributes" = "filetype-gitattributes.svg"
+".gitmodules" = "filetype-gitmodules.svg"
 "AndroidManifest.xml" = "filetype-xml.svg"
 "Info.plist" = "filetype-plist.svg"
 "GoogleService-Info.plist" = "filetype-plist.svg"
@@ -289,6 +301,7 @@ name = "sparrow Modern"
 [icon-theme.foldername]
 "test" = "foldertype-test.svg"
 ".sparrow" = "foldertype-config.svg"
+".github" = "foldertype-git.svg"
 "build" = "foldertype-build.svg"
 ".xcassets" = "filetype-apple-assets.svg"
 ".xcodeproj" = "filetype-xcode.svg"

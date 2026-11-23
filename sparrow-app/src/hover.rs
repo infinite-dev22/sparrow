@@ -1,3 +1,5 @@
+pub(crate) mod view;
+
 use floem::{
     peniko::kurbo::Rect,
     reactive::{RwSignal, Scope},

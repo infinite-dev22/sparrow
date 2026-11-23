@@ -5,7 +5,7 @@ use std::{ops::Range, rc::Rc, sync::Arc};
 
 use super::position::PanelPosition;
 use crate::{
-    app::clickable_icon,
+    widgets::clickable_icon,
     command::InternalCommand,
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     editor::location::{EditorLocation, EditorPosition},
@@ -18,9 +18,10 @@ use floem::{
     reactive::{ReadSignal, RwSignal, SignalGet, SignalUpdate},
     style::CursorStyle,
     views::{
-        Decorators, VirtualVector, empty, label, scroll, stack, svg, virtual_stack,
+        Decorators, VirtualVector, empty, label, stack, svg, virtual_stack,
     },
 };
+use crate::widgets::sparrow_scroll;
 
 pub fn dart_outline_panel(
     window_tab_data: Rc<WindowTabData>,
@@ -38,7 +39,7 @@ pub fn dart_outline_panel(
         super::kind::PanelKind::DartOutline.title(),
         empty(),
     );
-    let content = scroll(
+    let content = sparrow_scroll(
         virtual_stack(
             move || OutlineList::new(data.roots.get()),
             move |(i, _, node)| (*i, node.get_untracked().symbol.name.clone()),

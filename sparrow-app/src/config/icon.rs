@@ -5,6 +5,7 @@ impl SparrowIcons {
     pub const WINDOW_RESTORE: &'static str = "window.restore";
     pub const WINDOW_MAXIMIZE: &'static str = "window.maximize";
     pub const WINDOW_MINIMIZE: &'static str = "window.minimize";
+    pub const WINDOW_MORE: &'static str = "window.more";
 
     pub const LOGO: &'static str = "logo";
     pub const MENU: &'static str = "menu";
@@ -14,6 +15,7 @@ impl SparrowIcons {
     pub const REMOVE: &'static str = "minus";
     pub const CLOSE: &'static str = "close";
     pub const REMOTE: &'static str = "remote";
+    pub const INFO: &'static str = "info";
     pub const PROBLEM: &'static str = "error";
     pub const DEBUG: &'static str = "debug";
     pub const DEBUG_ALT: &'static str = "debug_alt";
@@ -28,6 +30,7 @@ impl SparrowIcons {
     pub const DEBUG_STOP: &'static str = "debug_stop";
     pub const DEBUG_CONSOLE: &'static str = "debug_console";
     pub const DEBUG_DISCONNECT: &'static str = "debug_disconnect";
+    pub const TOOLBOX: &'static str = "toolbox";
     pub const START: &'static str = "start";
     pub const RUN_ERRORS: &'static str = "run_errors";
     pub const UNSAVED: &'static str = "unsaved";
@@ -49,6 +52,7 @@ impl SparrowIcons {
     pub const IMAGE_ERROR: &'static str = "image_error";
 
     pub const SCM: &'static str = "scm.icon";
+    pub const SCM_BRANCH: &'static str = "scm.branch";
     pub const SCM_DIFF_MODIFIED: &'static str = "scm.diff.modified";
     pub const SCM_DIFF_ADDED: &'static str = "scm.diff.added";
     pub const SCM_DIFF_REMOVED: &'static str = "scm.diff.removed";
@@ -56,7 +60,8 @@ impl SparrowIcons {
     pub const SCM_CHANGE_ADD: &'static str = "scm.change.add";
     pub const SCM_CHANGE_REMOVE: &'static str = "scm.change.remove";
 
-    pub const FOLD: &'static str = "fold";
+    pub const FOLD_CLOSE: &'static str = "fold";
+    pub const FOLD_OPEN: &'static str = "unfold";
     pub const FOLD_UP: &'static str = "fold.up";
     pub const FOLD_DOWN: &'static str = "fold.down";
 
@@ -90,6 +95,14 @@ impl SparrowIcons {
 
     pub const LAYOUT_PANEL: &'static str = "layout.panel.on";
     pub const LAYOUT_PANEL_OFF: &'static str = "layout.panel.off";
+
+    pub const LOGCAT_FILTER: &'static str = "logcat.filter";
+    pub const LOGCAT_CLEAR: &'static str = "logcat.clear";
+    pub const LOGCAT_REFRESH: &'static str = "logcat.refresh";
+    pub const LOGCAT_COPY: &'static str = "logcat.copy";
+    pub const LOGCAT_EXPORT: &'static str = "logcat.export";
+    pub const LOGCAT_DEVICE: &'static str = "logcat.device";
+    pub const LOGCAT_WRAP: &'static str = "logcat.wrap";
 
     pub const SEARCH: &'static str = "search.icon";
     pub const SEARCH_CLEAR: &'static str = "search.clear";
@@ -170,47 +183,47 @@ impl SparrowIcons {
         "completion_item_kind.variable";
 
     // ── Dart / Flutter branding ──
-    pub const DART:              &'static str = "dart_logo";
-    pub const FLUTTER:           &'static str = "flutter_logo";
-    pub const PUB:               &'static str = "pub_logo";
-    pub const MATERIAL:          &'static str = "material_logo";
-    pub const CUPERTINO:         &'static str = "cupertino_logo";
+    pub const DART: &'static str = "dart_logo";
+    pub const FLUTTER: &'static str = "flutter_logo";
+    pub const PUB: &'static str = "pub_logo";
+    pub const MATERIAL: &'static str = "material_logo";
+    pub const CUPERTINO: &'static str = "cupertino_logo";
 
     // ── Widget tree ──
-    pub const WIDGET:            &'static str = "widget";
-    pub const WIDGET_STATEFUL:   &'static str = "widget_stateful";
-    pub const WIDGET_STATELESS:  &'static str = "widget_stateless";
-    pub const WIDGET_INHERITED:  &'static str = "widget_inherited";
-    pub const WIDGET_BUILDER:    &'static str = "widget_builder";
-    pub const WIDGET_KEY:        &'static str = "widget_key";
-    pub const WIDGET_LIST:       &'static str = "widget_list";
-    pub const WIDGET_GRID:       &'static str = "widget_grid";
-    pub const WIDGET_LAYOUT:     &'static str = "widget_layout";
+    pub const WIDGET: &'static str = "widget";
+    pub const WIDGET_STATEFUL: &'static str = "widget_stateful";
+    pub const WIDGET_STATELESS: &'static str = "widget_stateless";
+    pub const WIDGET_INHERITED: &'static str = "widget_inherited";
+    pub const WIDGET_BUILDER: &'static str = "widget_builder";
+    pub const WIDGET_KEY: &'static str = "widget_key";
+    pub const WIDGET_LIST: &'static str = "widget_list";
+    pub const WIDGET_GRID: &'static str = "widget_grid";
+    pub const WIDGET_LAYOUT: &'static str = "widget_layout";
 
     // ── Dart language features ──
-    pub const DART_MIXIN:        &'static str = "dart_mixin";
-    pub const DART_EXTENSION:    &'static str = "dart_extension";
-    pub const DART_TOPLEVEL_FN:  &'static str = "dart_toplevel_fn";
-    pub const DART_CONSTRUCTOR:  &'static str = "dart_constructor";
-    pub const DART_GETTER:       &'static str = "dart_getter";
-    pub const DART_SETTER:       &'static str = "dart_setter";
-    pub const DART_FUTURE:       &'static str = "dart_future";
-    pub const DART_STREAM:       &'static str = "dart_stream";
-    pub const DART_ISOLATE:      &'static str = "dart_isolate";
+    pub const DART_MIXIN: &'static str = "dart_mixin";
+    pub const DART_EXTENSION: &'static str = "dart_extension";
+    pub const DART_TOPLEVEL_FN: &'static str = "dart_toplevel_fn";
+    pub const DART_CONSTRUCTOR: &'static str = "dart_constructor";
+    pub const DART_GETTER: &'static str = "dart_getter";
+    pub const DART_SETTER: &'static str = "dart_setter";
+    pub const DART_FUTURE: &'static str = "dart_future";
+    pub const DART_STREAM: &'static str = "dart_stream";
+    pub const DART_ISOLATE: &'static str = "dart_isolate";
 
     // ── Flutter dev tools & devices ──
-    pub const FLUTTER_HOT_RELOAD:  &'static str = "flutter_hot_reload";
+    pub const FLUTTER_HOT_RELOAD: &'static str = "flutter_hot_reload";
     pub const FLUTTER_HOT_RESTART: &'static str = "flutter_hot_restart";
-    pub const FLUTTER_STOP:        &'static str = "flutter_stop";
-    pub const FLUTTER_ATTACH:      &'static str = "flutter_attach";
-    pub const FLUTTER_DEVICE:      &'static str = "flutter_device";
-    pub const FLUTTER_INSPECTOR:   &'static str = "flutter_inspector";
-    pub const FLUTTER_OUTLINE:     &'static str = "flutter_outline";
+    pub const FLUTTER_STOP: &'static str = "flutter_stop";
+    pub const FLUTTER_ATTACH: &'static str = "flutter_attach";
+    pub const FLUTTER_DEVICE: &'static str = "flutter_device";
+    pub const FLUTTER_INSPECTOR: &'static str = "flutter_inspector";
+    pub const FLUTTER_OUTLINE: &'static str = "flutter_outline";
     pub const FLUTTER_PERFORMANCE: &'static str = "flutter_performance";
-    pub const FLUTTER_RUN:         &'static str = "flutter_run";
-    pub const DEVICE_MANAGER:      &'static str = "device_manager";
+    pub const FLUTTER_RUN: &'static str = "flutter_run";
+    pub const DEVICE_MANAGER: &'static str = "device_manager";
 
-    pub const DEVICE_MOBILE:       &'static str = "device.mobile";
-    pub const DEVICE_DESKTOP:      &'static str = "device.desktop";
-    pub const DEVICE_WEB:          &'static str = "device.web";
+    pub const DEVICE_MOBILE: &'static str = "device.mobile";
+    pub const DEVICE_DESKTOP: &'static str = "device.desktop";
+    pub const DEVICE_WEB: &'static str = "device.web";
 }

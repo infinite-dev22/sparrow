@@ -1,13 +1,11 @@
 use std::{
+    cell::Cell,
     collections::{BTreeMap, HashMap},
     path::PathBuf,
     rc::Rc,
     time::Instant,
 };
 
-use floem::reactive::create_memo;
-use floem::style::Display;
-use floem::views::{Decorators, container, empty, stack};
 use floem::{
     ext_event::create_ext_action,
     reactive::{Memo, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
@@ -23,14 +21,15 @@ use sparrow_rpc::{
     terminal::TermId,
 };
 
-use crate::app::clickable_icon;
-use crate::config::color::SparrowColor;
-use crate::config::icon::SparrowIcons;
 use crate::{
     command::InternalCommand,
     editor::location::{EditorLocation, EditorPosition},
     window_tab::CommonData,
 };
+
+mod floating_toolbar;
+
+pub use floating_toolbar::debug_floating_toolbar;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RunDebugMode {
@@ -62,8 +61,47 @@ pub struct RunDebugConfigs {
     pub configs: Vec<RunDebugConfig>,
 }
 
+/// Bounded output buffer. Adapter events may contain partial lines.
+#[derive(Clone, Default)]
+pub struct DebugConsole {
+    pub lines: im::Vector<String>,
+    partial: String,
+}
+
+impl DebugConsole {
+    pub fn append(&mut self, output: &str) {
+        for segment in output.split_inclusive('\n') {
+            self.partial.push_str(segment);
+            if self.partial.ends_with('\n') {
+                self.lines.push_back(std::mem::take(&mut self.partial)
+                    .trim_end_matches(['\r', '\n']).to_owned());
+            }
+        }
+        // Bound both completed lines and output without line breaks.
+        if self.partial.len() > 64 * 1024 {
+            self.lines.push_back(std::mem::take(&mut self.partial));
+        }
+        while self.lines.len() > 5000 { self.lines.pop_front(); }
+    }
+
+    pub fn rows(&self) -> im::Vector<String> {
+        let mut rows = self.lines.clone();
+        if !self.partial.is_empty() { rows.push_back(self.partial.clone()); }
+        rows
+    }
+
+    pub fn text(&self) -> String {
+        let mut lines = self.lines.iter().cloned().collect::<Vec<_>>();
+        if !self.partial.is_empty() { lines.push(self.partial.clone()); }
+        lines.join("\n")
+    }
+}
+
 #[derive(Clone)]
 pub struct RunDebugData {
+    /// Console output is isolated by adapter session, including completed sessions.
+    pub console_output: RwSignal<im::HashMap<DapId, DebugConsole>>,
+    pub muted: RwSignal<bool>,
     pub active_term: RwSignal<Option<TermId>>,
     /// Stable UI session IDs for adapters that launch without a PTY.
     pub adapter_sessions: RwSignal<HashMap<DapId, (TermId, RunDebugProcess)>>,
@@ -84,6 +122,8 @@ impl RunDebugData {
 
         Self {
             active_term,
+            muted: cx.create_rw_signal(false),
+            console_output: cx.create_rw_signal(im::HashMap::new()),
             adapter_sessions: cx.create_rw_signal(HashMap::new()),
             active_dap: cx.create_rw_signal(None),
             daps,
@@ -101,7 +141,7 @@ impl RunDebugData {
                     breakpoints
                         .iter()
                         .filter_map(|(_, b)| {
-                            if b.active {
+                            if b.active && !self.muted.get_untracked() {
                                 Some(SourceBreakpoint {
                                     line: b.line + 1,
                                     column: None,
@@ -191,14 +231,34 @@ pub struct DapVariable {
     pub children_expanded_count: usize,
 }
 
+/// Invalidates outstanding variable reads when the selected frame or session changes.
+#[derive(Clone, Default)]
+pub(crate) struct VariableRequests(Rc<Cell<u64>>);
+
+impl VariableRequests {
+    pub(crate) fn invalidate(&self) {
+        self.0.set(self.0.get().wrapping_add(1));
+    }
+
+    pub(crate) fn capture(&self) -> impl Fn() -> bool + use<> {
+        let epoch = self.0.clone();
+        let expected = epoch.get();
+        move || epoch.get() == expected
+    }
+}
+
 #[derive(Clone)]
 pub struct DapData {
     pub term_id: TermId,
     pub dap_id: DapId,
     pub stopped: RwSignal<bool>,
     pub thread_id: RwSignal<Option<ThreadId>>,
+    pub selected_frame: RwSignal<Option<StackFrame>>,
+    pub pause_generation: RwSignal<u64>,
     pub stack_traces: RwSignal<BTreeMap<ThreadId, StackTraceData>>,
+    pub evaluation: crate::debug_evaluate::Evaluations,
     pub variables_id: RwSignal<usize>,
+    pub(crate) variable_requests: VariableRequests,
     pub variables: RwSignal<DapVariable>,
     pub breakline: Memo<Option<(usize, PathBuf)>>,
     pub common: Rc<CommonData>,
@@ -213,9 +273,14 @@ impl DapData {
     ) -> Self {
         let stopped = cx.create_rw_signal(false);
         let thread_id = cx.create_rw_signal(None);
+        let selected_frame: RwSignal<Option<StackFrame>> = cx.create_rw_signal(None);
         let stack_traces: RwSignal<BTreeMap<ThreadId, StackTraceData>> =
             cx.create_rw_signal(BTreeMap::new());
         let breakline = cx.create_memo(move |_| {
+            if let Some(frame) = selected_frame.get() {
+                return frame.source.and_then(|source| source.path)
+                    .map(|path| (frame.line.saturating_sub(1), path));
+            }
             let thread_id = thread_id.get();
             if let Some(thread_id) = thread_id {
                 let trace = stack_traces
@@ -243,8 +308,12 @@ impl DapData {
             dap_id,
             stopped,
             thread_id,
+            selected_frame,
+            pause_generation: cx.create_rw_signal(0),
             stack_traces,
+            evaluation: crate::debug_evaluate::Evaluations::new(cx),
             variables_id: cx.create_rw_signal(0),
+            variable_requests: VariableRequests::default(),
             variables: cx.create_rw_signal(DapVariable {
                 item: ScopeOrVar::Scope(dap_types::Scope::default()),
                 parent: Vec::new(),
@@ -265,6 +334,9 @@ impl DapData {
         stack_traces: &HashMap<ThreadId, Vec<StackFrame>>,
         variables: &[(dap_types::Scope, Vec<Variable>)],
     ) {
+        self.variable_requests.invalidate();
+        self.selected_frame.set(None);
+        self.pause_generation.update(|value| *value = value.wrapping_add(1));
         self.stopped.set(true);
         self.thread_id.update(|thread_id| {
             *thread_id = Some(stopped.thread_id.unwrap_or_default());
@@ -281,7 +353,7 @@ impl DapData {
                         frame.source.as_ref().and_then(|source| source.path.clone())
                     {
                         self.common.internal_command.send(
-                            InternalCommand::JumpToLocation {
+                            InternalCommand::DebugJumpToLocation {
                                 location: EditorLocation {
                                     path,
                                     position: Some(EditorPosition::Line(
@@ -342,6 +414,16 @@ impl DapData {
                 .map(|v| v.children_expanded_count + 1)
                 .sum::<usize>();
         });
+        self.refresh_watches();
+    }
+
+    /// Retire suspended state and all pending reads without changing other sessions.
+    pub(crate) fn clear_pause(&self) {
+        self.variable_requests.invalidate();
+        self.evaluation.clear_results();
+        self.stopped.set(false);
+        self.thread_id.set(None);
+        self.selected_frame.set(None);
     }
 
     pub fn toggle_expand(&self, parent: Vec<usize>, reference: usize) {
@@ -370,8 +452,12 @@ impl DapData {
         let root = self.variables;
         let parent = parent.to_vec();
         let variables_id = self.variables_id;
+        let is_current = self.variable_requests.capture();
 
         let send = create_ext_action(self.common.scope, move |result| {
+            if !is_current() {
+                return;
+            }
             if let Ok(ProxyResponse::DapVariableResponse { variables }) = result {
                 variables_id.update(|id| {
                     *id += 1;
@@ -528,7 +614,36 @@ impl DapVariable {
 mod tests {
     use sparrow_rpc::dap_types::{Scope, Variable};
 
-    use super::{DapVariable, ScopeOrVar};
+    use super::{DapVariable, ScopeOrVar, VariableRequests};
+
+    #[test]
+    fn variable_reads_reject_out_of_order_frames_and_retired_pauses() {
+        let requests = VariableRequests::default();
+        let first_frame = requests.capture();
+        let first_child = requests.capture();
+        requests.invalidate(); // Selecting a second stack frame.
+        let second_frame = requests.capture();
+        assert!(!first_frame());
+        assert!(!first_child());
+        assert!(second_frame());
+        requests.invalidate(); // Resume, stop, close, or rerun.
+        assert!(!second_frame());
+        let next_pause = requests.capture();
+        assert!(next_pause());
+        assert!(!first_frame());
+    }
+
+    #[test]
+    fn variable_reads_are_independent_between_sessions() {
+        let first = VariableRequests::default();
+        let second = VariableRequests::default();
+        let first_reply = first.capture();
+        let second_reply = second.capture();
+        first.invalidate();
+        assert!(!first_reply());
+        assert!(second_reply());
+    }
+
 
     #[test]
     fn test_update_count() {
@@ -654,148 +769,30 @@ pub fn run_config_modal(window: Rc<crate::window_tab::WindowTabData>) -> impl fl
     crate::dart::run_config_view::view(window)
 }
 
-pub fn debug_floating_toolbar(
-    window_tab_data: Rc<crate::window_tab::WindowTabData>,
-) -> impl floem::View {
-    let config = window_tab_data.common.config;
-    let terminal = window_tab_data.terminal.clone();
+#[cfg(test)]
+mod console_tests {
+    use super::DebugConsole;
 
-    let is_active = create_memo(move |_| {
-        terminal
-            .debug
-            .daps
-            .with(|daps| daps.values().any(|dap| dap.stopped.get()))
-    });
+    #[test]
+    fn joins_partial_output_and_preserves_blank_lines() {
+        let mut console = DebugConsole::default();
+        console.append("Build");
+        console.append("ing...\r\n\nLaun");
+        console.append("ched\n");
+        assert_eq!(console.text(), "Building...\n\nLaunched");
+    }
 
-    let icon_btn =
-        |icon: &'static str, action: Box<dyn Fn()>, tooltip: &'static str| {
-            clickable_icon(
-                move || icon,
-                move || action(),
-                || false,
-                || false,
-                move || tooltip,
-                config,
-            )
-        };
-
-    container(
-        stack((
-            icon_btn(
-                SparrowIcons::DEBUG_CONTINUE,
-                Box::new({
-                    let term = terminal.clone();
-                    move || {
-                        if let Some(id) = term.debug.active_term.get_untracked() {
-                            term.dap_continue(id);
-                        }
-                    }
-                }),
-                "Continue",
-            ),
-            icon_btn(
-                SparrowIcons::DEBUG_PAUSE,
-                Box::new({
-                    let term = terminal.clone();
-                    move || {
-                        if let Some(id) = term.debug.active_term.get_untracked() {
-                            term.dap_pause(id);
-                        }
-                    }
-                }),
-                "Pause",
-            ),
-            icon_btn(
-                SparrowIcons::DEBUG_STEP_OVER,
-                Box::new({
-                    let term = terminal.clone();
-                    move || {
-                        if let Some(id) = term.debug.active_term.get_untracked() {
-                            term.dap_step_over(id);
-                        }
-                    }
-                }),
-                "Step Over",
-            ),
-            icon_btn(
-                SparrowIcons::DEBUG_STEP_INTO,
-                Box::new({
-                    let term = terminal.clone();
-                    move || {
-                        if let Some(id) = term.debug.active_term.get_untracked() {
-                            term.dap_step_into(id);
-                        }
-                    }
-                }),
-                "Step Into",
-            ),
-            icon_btn(
-                SparrowIcons::DEBUG_STEP_OUT,
-                Box::new({
-                    let term = terminal.clone();
-                    move || {
-                        if let Some(id) = term.debug.active_term.get_untracked() {
-                            term.dap_step_out(id);
-                        }
-                    }
-                }),
-                "Step Out",
-            ),
-            empty().style(move |s| {
-                s.width(1.0)
-                    .height(16.0)
-                    .background(config.get().color(SparrowColor::SPARROW_BORDER))
-            }),
-            icon_btn(
-                SparrowIcons::DEBUG_RESTART,
-                Box::new({
-                    let term = terminal.clone();
-                    move || {
-                        if let Some(id) = term.debug.active_term.get_untracked() {
-                            term.restart_run_debug(id);
-                        }
-                    }
-                }),
-                "Restart",
-            ),
-            icon_btn(
-                SparrowIcons::DEBUG_STOP,
-                Box::new({
-                    let term = terminal.clone();
-                    move || {
-                        if let Some(id) = term.debug.active_term.get_untracked() {
-                            term.stop_run_debug(id);
-                        }
-                    }
-                }),
-                "Stop",
-            ),
-        ))
-        .style(move |s| {
-            let c = config.get();
-            s.items_center()
-                .padding_horiz(8.0)
-                .padding_vert(4.0)
-                .gap(4.0)
-                .background(c.color(SparrowColor::PANEL_BACKGROUND))
-                .border(1.0)
-                .border_radius(6.0)
-                .border_color(c.color(SparrowColor::SPARROW_BORDER))
-                .box_shadow_blur(5.0)
-                .box_shadow_color(c.color(SparrowColor::SPARROW_DROPDOWN_SHADOW))
-                .pointer_events_auto() // <--- CRITICAL: Enables clicks on the pill
-        }),
-    )
-    .style(move |s| {
-        s.absolute()
-            .inset_top(60.0)
-            .justify_center()
-            .width_full()
-            .display(if is_active.get() {
-                Display::Flex
-            } else {
-                Display::None
-            })
-            .pointer_events_none() // Let clicks pass through the empty space around the pill
-    })
+    #[test]
+    fn output_is_bounded_and_sessions_are_independent() {
+        let mut first = DebugConsole::default();
+        let mut second = DebugConsole::default();
+        for i in 0..5010 { first.append(&format!("{i}\n")); }
+        second.append("other session\n");
+        assert_eq!(first.lines.len(), 5000);
+        assert_eq!(first.lines.front().map(String::as_str), Some("10"));
+        assert_eq!(second.text(), "other session");
+        first = DebugConsole::default();
+        assert!(first.text().is_empty());
+        assert_eq!(second.text(), "other session");
+    }
 }

@@ -1,8 +1,5 @@
-use crate::popup_menu::PopupMenuExt;
-use std::{
-    rc::Rc,
-    sync::{Arc, atomic::AtomicU64},
-};
+use crate::widgets::popup_menu::PopupMenuExt;
+use std::{rc::Rc, sync::Arc};
 
 use floem::{
     View,
@@ -10,14 +7,12 @@ use floem::{
         Memo, ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo,
     },
     style::{AlignItems, CursorStyle, Display},
-    views::{Decorators, dyn_stack, label, stack, svg},
+    views::{Decorators, label, stack, svg},
 };
-use indexmap::IndexMap;
-use lsp_types::{DiagnosticSeverity, ProgressToken};
+use lsp_types::DiagnosticSeverity;
 use sparrow_core::mode::{Mode, VisualMode};
 
 use crate::{
-    app::tooltip_label,
     command::SparrowWorkbenchCommand,
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     editor::EditorData,
@@ -25,8 +20,13 @@ use crate::{
     palette::kind::PaletteKind,
     panel::kind::PanelKind,
     source_control::SourceControlData,
-    window_tab::{WindowTabData, WorkProgress},
+    widgets::tooltip_label,
+    window_tab::WindowTabData,
 };
+
+mod breadcrumbs;
+
+use breadcrumbs::status_breadcrumbs;
 
 #[allow(unused_variables)]
 pub fn status(
@@ -57,7 +57,7 @@ pub fn status(
         }
         (errors, warnings)
     });
-    let progresses = window_tab_data.progresses;
+    let background_progress = crate::background_tasks::status(window_tab_data.clone());
     let tab_data = window_tab_data.mode().clone();
     let mode = create_memo(move |_| tab_data);
 
@@ -237,8 +237,8 @@ pub fn status(
                     .unwrap_or_default()
             })
             .ide_popout_menu(move || {
-                crate::popup_menu::Menu::new("").entry(
-                    crate::popup_menu::MenuItem::new("Editor Settings...").action(
+                crate::widgets::popup_menu::Menu::new("").entry(
+                    crate::widgets::popup_menu::MenuItem::new("Editor Settings...").action(
                         move || {
                             workbench_command
                                 .send(SparrowWorkbenchCommand::OpenSettings)
@@ -276,7 +276,7 @@ pub fn status(
             );
             let encoding_info = status_text(config, editor, || "UTF-8");
             (
-                progress_view(config, progresses),
+                background_progress,
                 cursor_info,
                 line_ending_info,
                 encoding_info,
@@ -309,129 +309,6 @@ pub fn status(
 }
 
 /// Islands style breadcrumb trail: `project > dir > dir > file`.
-fn status_breadcrumbs(
-    window: Rc<WindowTabData>,
-    editor: Memo<Option<EditorData>>,
-    config: ReadSignal<Arc<SparrowConfig>>,
-) -> impl View {
-    let workspace = window.workspace.clone();
-    dyn_stack(
-        move || {
-            let Some(editor) = editor.get() else {
-                return Vec::new().into_iter().enumerate();
-            };
-            // Preview tabs can change documents while retaining the editor ID.
-            let doc = editor.doc_signal().get();
-            let path = doc.content.with(|content| match content {
-                crate::doc::DocContent::History(history) => {
-                    Some(history.path.clone())
-                }
-                content => content.path().cloned(),
-            });
-            path.map(|path| breadcrumb_paths(workspace.path.as_deref(), &path))
-                .unwrap_or_default()
-                .into_iter()
-                .enumerate()
-        },
-        |(i, path)| (*i, path.clone()),
-        move |(i, path)| {
-            let is_file = editor.get_untracked().is_some_and(|editor| {
-                editor
-                    .doc()
-                    .content
-                    .with_untracked(|content| content.path() == Some(&path))
-            });
-            let name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
-            let icon_path = path.clone();
-            let icon_color_path = path.clone();
-            let window = window.clone();
-            stack((
-                svg(move || config.get().ui_svg(SparrowIcons::BREADCRUMB_SEPARATOR))
-                    .style(move |s| {
-                        s.size(12.0, 12.0).apply_if(i == 0, |s| s.hide()).color(
-                            config.get().color(SparrowColor::SPARROW_ICON_INACTIVE),
-                        )
-                    }),
-                svg(move || config.get().files_svg(&[&icon_path]).0).style(
-                    move |s| {
-                        s.size(14.0, 14.0)
-                            .margin_right(4.0)
-                            .apply_if(!is_file, |s| s.hide())
-                            .apply_opt(
-                                config.get().files_svg(&[&icon_color_path]).1,
-                                |s, color| s.color(color),
-                            )
-                    },
-                ),
-                label(move || name.clone())
-                    .style(|s| s.selectable(false).margin_horiz(2.0)),
-            ))
-            .on_click_stop(move |_| {
-                window.file_explorer.reveal_in_file_tree(path.clone());
-                window.show_panel(PanelKind::FileExplorer);
-            })
-            .style(move |s| {
-                s.items_center().cursor(CursorStyle::Pointer).hover(|s| {
-                    s.background(
-                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-            })
-        },
-    )
-    .style(|s| s.padding_left(10.0).items_center().min_width(0.0))
-}
-
-fn breadcrumb_paths(
-    root: Option<&std::path::Path>,
-    file: &std::path::Path,
-) -> Vec<std::path::PathBuf> {
-    let mut paths: Vec<_> = file
-        .ancestors()
-        .take_while(|path| Some(*path) != root)
-        .filter(|path| path.file_name().is_some())
-        .map(std::path::Path::to_path_buf)
-        .collect();
-    if let Some(root) = root.filter(|root| file.starts_with(root)) {
-        paths.push(root.to_path_buf());
-    }
-    paths.reverse();
-    paths
-}
-
-fn progress_view(
-    config: ReadSignal<Arc<SparrowConfig>>,
-    progresses: RwSignal<IndexMap<ProgressToken, WorkProgress>>,
-) -> impl View {
-    let id = AtomicU64::new(0);
-    dyn_stack(
-        move || progresses.get(),
-        move |_| id.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        move |(_, p)| {
-            let progress = match p.message {
-                Some(message) if !message.is_empty() => {
-                    format!("{}: {}", p.title, message)
-                }
-                _ => p.title,
-            };
-            label(move || progress.clone()).style(move |s| {
-                s.height_pct(100.0)
-                    .min_width(0.0)
-                    .margin_left(10.0)
-                    .text_ellipsis()
-                    .selectable(false)
-                    .items_center()
-                    .color(config.get().color(SparrowColor::STATUS_FOREGROUND))
-            })
-        },
-    )
-    .style(move |s| s.flex_row().height_pct(100.0).min_width(0.0))
-}
-
 fn status_text<S: std::fmt::Display + 'static>(
     config: ReadSignal<Arc<SparrowConfig>>,
     editor: Memo<Option<EditorData>>,
@@ -465,27 +342,4 @@ fn status_text<S: std::fmt::Display + 'static>(
             })
             .selectable(false)
     })
-}
-
-#[cfg(test)]
-mod breadcrumb_tests {
-    use super::*;
-    use std::path::{Path, PathBuf};
-    #[test]
-    fn workspace_crumbs_have_real_navigation_paths() {
-        let paths = breadcrumb_paths(
-            Some(Path::new("/work/app")),
-            Path::new("/work/app/lib/my file.dart"),
-        );
-        assert_eq!(
-            paths,
-            ["/work/app", "/work/app/lib", "/work/app/lib/my file.dart"]
-                .map(PathBuf::from)
-        );
-        let outside = breadcrumb_paths(
-            Some(Path::new("/work/app")),
-            Path::new("/work/app_other/main.dart"),
-        );
-        assert!(!outside.contains(&PathBuf::from("/work/app")));
-    }
 }

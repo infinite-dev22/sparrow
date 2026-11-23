@@ -11,7 +11,7 @@ use lsp_types::{
 };
 use sparrow_rpc::{
     RpcError,
-    dap_types::{self, DapId, DapServer, SetBreakpointsResponse},
+    dap_types::{self, DapId, DapServer},
     plugin::{PluginId, VoltID, VoltInfo},
     style::LineStyle,
 };
@@ -328,6 +328,9 @@ impl PluginCatalog {
                     dap.step_out(thread_id);
                 }
             }
+            DapAdvanced { dap_id, action } => {
+                if let Some(dap) = self.daps.get(&dap_id) { dap.advanced(action); }
+            }
             DapHotReload { dap_id, restart } => {
                 if let Some(dap) = self.daps.get(&dap_id).cloned() {
                     thread::spawn(move || dap.hot_reload(restart));
@@ -361,25 +364,7 @@ impl PluginCatalog {
                 breakpoints,
             } => {
                 if let Some(dap) = self.daps.get(&dap_id) {
-                    let core_rpc = self.plugin_rpc.core_rpc.clone();
-                    dap.set_breakpoints_async(
-                        path.clone(),
-                        breakpoints,
-                        move |result: Result<SetBreakpointsResponse, RpcError>| {
-                            match result {
-                                Ok(resp) => {
-                                    core_rpc.dap_breakpoints_resp(
-                                        dap_id,
-                                        path,
-                                        resp.breakpoints.unwrap_or_default(),
-                                    );
-                                }
-                                Err(err) => {
-                                    tracing::error!("{:?}", err);
-                                }
-                            }
-                        },
-                    );
+                    dap.update_breakpoints(path, breakpoints);
                 }
             }
             Shutdown => {

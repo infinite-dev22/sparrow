@@ -22,7 +22,7 @@ use strum::{EnumMessage, IntoEnumIterator};
 use strum_macros::{Display, EnumIter, EnumString, IntoStaticStr};
 
 use crate::{
-    alert::AlertButton,
+    widgets::alert::AlertButton,
     debug::RunDebugMode,
     doc::Doc,
     editor::location::EditorLocation,
@@ -270,7 +270,7 @@ pub enum SparrowWorkbenchCommand {
     OpenKeyboardShortcutsFile,
 
     #[strum(serialize = "open_log_file")]
-    #[strum(message = "Open Log File")]
+    #[strum(message = "Show IDE Logs")]
     OpenLogFile,
 
     #[strum(serialize = "open_logs_directory")]
@@ -356,6 +356,18 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "New File")]
     #[strum(serialize = "new_file")]
     NewFile,
+
+    #[strum(message = "Project: New File")]
+    #[strum(serialize = "project_new_file")]
+    ProjectNewFile,
+
+    #[strum(message = "Project: New Directory")]
+    #[strum(serialize = "project_new_directory")]
+    ProjectNewDirectory,
+
+    #[strum(message = "Clone Repository")]
+    #[strum(serialize = "project_clone_repository")]
+    CloneRepository,
     #[strum(message = "Scaffold: New Feature…")]
     #[strum(serialize = "scaffold_new_feature")]
     ScaffoldNewFeature,
@@ -577,6 +589,9 @@ pub enum SparrowWorkbenchCommand {
         serialize = "activate_debug_tool_window"
     )]
     ActivateDebugToolWindow,
+    #[strum(serialize = "inspect_code")]
+    #[strum(message = "Inspect Code")]
+    InspectCode,
     #[strum(
         message = "Activate Problems Tool Window",
         serialize = "activate_problems_tool_window"
@@ -817,10 +832,6 @@ pub enum InternalCommand {
         path: PathBuf,
     },
     ReloadFileExplorer,
-    /// Test whether a file/directory can be created at that path
-    TestPathCreation {
-        new_path: PathBuf,
-    },
     FinishRenamePath {
         current_path: PathBuf,
         new_path: PathBuf,
@@ -836,6 +847,7 @@ pub enum InternalCommand {
     GoToLocation {
         location: EditorLocation,
     },
+    DebugJumpToLocation { location: EditorLocation },
     JumpToLocation {
         location: EditorLocation,
     },
@@ -916,10 +928,11 @@ pub enum InternalCommand {
         mode: RunDebugMode,
         config: RunDebugConfig,
     },
-    RunProcessInTerminal {
+    RunProjectTask {
         program: String,
         args: Vec<String>,
         name: String,
+        cwd: Option<PathBuf>,
     },
     RequestSymbolRename { token:u64, preview:bool },
     PreparedRename {
@@ -999,19 +1012,8 @@ pub enum InternalCommand {
         program: String,
         arguments: Vec<String>,
     },
-    ClearTerminalBuffer {
-        view_id: ViewId,
-        tab_index: usize,
-        terminal_index: usize,
-    },
     CallHierarchyIncoming {
         item_id: ViewId,
-    },
-    StopTerminal {
-        term_id: TermId,
-    },
-    RestartTerminal {
-        term_id: TermId,
     },
     FlutterRunTestAtCursor {
         term_id: TermId,
@@ -1043,6 +1045,7 @@ pub enum WindowCommand {
         workspace: SparrowWorkspace,
         end: bool,
     },
+    OpenProjectTab { workspace: SparrowWorkspace },
     NextWorkspaceTab,
     PreviousWorkspaceTab,
     NewWindow,

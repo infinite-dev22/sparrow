@@ -1,8 +1,8 @@
 # Android Studio reference layout
 
-The reference is the supplied 1920×1048 Android Studio screenshot. The layout uses a 34 px main toolbar, 32 px editor/tool headers, 35 px side stripes, 400 px Project panel, 24 px status bar, and a Run panel spanning below both Project and editor. Run has a process tab, a left-aligned action toolbar, and a separate scrollable console.
+The reference is the supplied 1920×1048 Android Studio screenshot. The layout uses a 34 px main toolbar, 32 px editor/tool headers, 35 px side stripes, 420 px Project panel, 24 px status bar, and a Run panel spanning below both Project and editor. Run has a process tab, a left-aligned action toolbar, and a separate scrollable console.
 
-For existing installations, run **Appearance: Apply Android Studio Reference Layout** from the command palette. This deliberately replaces saved theme, font, spacing, and panel placement overrides with the reference preset. It opens Project, hides the right panels, and opens Run only when a Flutter app is running. Idle workspaces use the full editor height. Existing source files and run configurations are preserved.
+The reference layout is the default. Existing workspaces receive a one-time upgrade of theme, font, spacing and panel placement; later personal layout changes are preserved. **Appearance: Apply Android Studio Reference Layout** remains available to reset those changes. It opens Project, hides the right panels, and opens Run only when a Flutter app is running. Idle workspaces use the full editor height. Existing source files and run configurations are preserved.
 
 Inter Regular/Semibold and JetBrains Mono Regular/Italic are bundled under their SIL Open Font Licenses in `extra/fonts`. The standard `vendored-fonts` build feature loads them into Floem's font database. Built-in Dart and Flutter file icons resolve from the embedded icon assets.
 
@@ -27,3 +27,62 @@ Native before/after captures and interaction results for Dart Analysis, Device M
 Problems, Logcat, and Git History now have separate bottom tool-stripe entries. Their real-data behavior, native captures, validation, and remaining limitations are documented in [the additional tool-window check](visual-checks/tools.md).
 
 Notifications, Pull Requests and Running Devices now use real Dart/Flutter IDE events, GitHub repository data, and Flutter device discovery. Shared file icons distinguish Flutter project file types in Project and editor tabs. See [workflow captures, checks and limitations](visual-checks/workflows.md).
+
+
+Project source, test and excluded scopes now inherit through descendants. The
+`build`, `.dart_tool`, `.sparrow`, `target`, `.gradle` and `out` scopes carry a muted
+brown background and orange labels and folder icons (file icons keep their normal artwork); `test` and `integration_test` carry a
+green scope background. Git changes retain their foreground status colors.
+Scope matching uses path components, so `test_helpers` does not inherit `test`.
+
+Project identity is painted once beneath the main workbench. The title bar and
+both tool-window stripes expose this shared directional glow while editor and panel
+surfaces remain opaque. The frame has a solid base; native vector painting
+provides a horizontal amber peak near the project chip and a vertical fade ending
+at 300 px. It uses two-stop linear brushes, avoiding radial brushes and the GPU SVG icon atlas. Color comes from `.sparrow/workspace.xml`'s
+`ProjectColorInfo` (custom hex color or associated palette index), including
+JSON/CDATA and legacy XML representations. Changes refresh through the project
+metadata watcher. Projects without valid color metadata receive a stable
+path-derived palette color; no JetBrains configuration is written.
+
+The earlier software-rendered directional glow was checked against the supplied
+2026-11-18 16:44 reference. At (100, 1), reference RGB is (94, 67, 49)
+and Sparrow is (94, 67, 50); at (500, 1), they are (56, 49, 45) and
+(56, 49, 46). Both return to frame RGB (38, 40, 44) at (700, 1)
+and (30, 300). These samples check the backdrop, not a pixel-perfect match
+of the entire IDE. Custom project colors use the same directional falloff.
+
+The earlier isolated preview selected a CPU adapter and silently fell back to
+Tiny Skia; it did not establish GPU correctness. The glow now uses native canvas
+rectangles and two-stop linear brushes rather than an SVG texture. This also
+avoids texture-atlas pressure from a large SVG at high display scales.
+
+The vector replacement was checked on the Intel i915 hardware adapter at
+100% and 200% X11 display scale. The isolated process's DRM render engine
+reported submitted GPU work, confirming this check did not use the earlier CPU
+fallback. The 200% capture is `target/appearance-hardware-2x.png`.
+
+Project appearance now reads `[project] color = "#b46a38"` from
+`.sparrow/settings.toml`, or `appearance.color` / `appearance.palette_index`
+from `.sparrow/workspace.json`. The TOML setting is preferred because session
+snapshots rewrite workspace.json. XML is no longer used for this metadata.
+
+The Project header provides a dropdown for Open Editors and refresh, New (the
+same creation/scaffold catalog as the tree context menu), Select Opened File,
+Expand Loaded Folders, Collapse All, docking options and Hide. Expanding loaded
+folders deliberately does not recursively enumerate unvisited build directories.
+The selected Project tool-window stripe uses the primary blue background.
+
+Native Wayland verification connected to `wayland-0` with no DISPLAY, renderer,
+or scale override. The compositor reported 1920x1080, 60.052 Hz, scale 1 and
+1920x1048 usable bounds. The process submitted Intel i915 render work.
+GNOME denied the automated screenshot API; no Wayland visual screenshot or
+pointer interaction verification is claimed. The preview used temporary app
+settings to avoid changing the user's normal session state.
+
+The final Wayland glow uses a Rust-generated 180×80 opaque image scaled to the
+700×300 backdrop region, with padding clipped out to avoid atlas-edge seams.
+This replaces native gradient brushes that appeared flat in portal captures.
+Active stripe icons keep their blue background for hover and press states.
+The completed native portal verification and pixel samples are documented in
+[the Wayland Project header report](visual-checks/wayland-project-header.md).

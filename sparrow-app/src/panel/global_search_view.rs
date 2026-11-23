@@ -5,23 +5,24 @@ use floem::{
     event::EventListener,
     reactive::{ReadSignal, SignalGet, SignalUpdate},
     style::{CursorStyle, Style},
-    views::{Decorators, container, label, scroll, stack, svg, virtual_stack},
+    views::{Decorators, container, label, stack, svg, virtual_stack},
 };
 use lapce_xi_rope::find::CaseMatching;
 
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
-    app::clickable_icon,
+    widgets::clickable_icon,
     command::InternalCommand,
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     editor::location::{EditorLocation, EditorPosition},
-    focus_text::focus_text,
+    widgets::focus_text::focus_text,
     global_search::{GlobalSearchData, SearchMatchData},
     listener::Listener,
-    text_input::TextInputBuilder,
+    widgets::text_input::TextInputBuilder,
     window_tab::{Focus, WindowTabData},
     workspace::SparrowWorkspace,
 };
+use crate::widgets::sparrow_scroll;
 
 pub fn global_search_panel(
     window_tab_data: Rc<WindowTabData>,
@@ -115,7 +116,7 @@ fn search_result(
 ) -> impl View {
     let ui_line_height = global_search_data.common.ui_line_height;
     container({
-        scroll({
+        sparrow_scroll({
             virtual_stack(
                 move || global_search_data.clone(),
                 move |(path, _)| path.to_owned(),

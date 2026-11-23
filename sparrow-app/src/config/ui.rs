@@ -5,6 +5,10 @@ use structdesc::FieldNames;
 #[derive(FieldNames, Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct UIConfig {
+    /// Ordered workbench command IDs for the Quick Actions menu.
+    #[serde(default)]
+    pub quick_actions: Vec<String>,
+
     #[field_names(desc = "Set the UI scale. Defaults to 1.0")]
     scale: f64,
 

@@ -1,6 +1,9 @@
 pub mod call_hierarchy_view;
 pub mod data;
 pub mod debug_view;
+mod debug_session;
+mod debug_inspector;
+mod debug_console;
 pub mod global_search_view;
 pub mod implementation_view;
 pub mod kind;
@@ -24,6 +27,7 @@ pub mod chrome;
 pub mod dart_analysis_view;
 
 pub mod reference_tools;
+mod logcat;
 
 pub mod workflow_tools;
 

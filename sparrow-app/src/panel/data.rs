@@ -80,9 +80,10 @@ pub enum PanelSection {
     Variable,
     StackFrame,
     Breakpoint,
+    ProblemsSidebar,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct PanelSize {
     pub left: f64,
     pub left_split: f64,
@@ -94,10 +95,47 @@ pub struct PanelSize {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PanelInfo {
+    #[serde(default)]
+    pub layout_version: u32,
     pub panels: PanelOrder,
     pub styles: im::HashMap<PanelPosition, PanelStyle>,
     pub size: PanelSize,
     pub sections: im::HashMap<PanelSection, bool>,
+}
+
+const PANEL_LAYOUT_VERSION: u32 = 2;
+
+impl PanelInfo {
+    pub fn upgrade_reference_layout(&mut self) -> bool {
+        if self.layout_version >= PANEL_LAYOUT_VERSION {
+            return false;
+        }
+        if self.layout_version == 0 {
+            self.size.left = 420.0;
+            self.size.right = 466.0;
+            self.size.bottom = 342.0;
+            self.panels = default_panel_order();
+            self.styles.clear();
+            self.styles.insert(
+                PanelPosition::LeftTop,
+                PanelStyle {
+                    active: 0,
+                    shown: true,
+                    maximized: false,
+                },
+            );
+        } else {
+            // Old layouts cannot distinguish a drag-triggered maximize from an
+            // explicit one. Restore the editor once when upgrading them.
+            for position in [PanelPosition::BottomLeft, PanelPosition::BottomRight] {
+                if let Some(style) = self.styles.get_mut(&position) {
+                    style.maximized = false;
+                }
+            }
+        }
+        self.layout_version = PANEL_LAYOUT_VERSION;
+        true
+    }
 }
 
 #[derive(Clone)]
@@ -105,6 +143,7 @@ pub struct PanelData {
     pub panels: RwSignal<PanelOrder>,
     pub styles: RwSignal<im::HashMap<PanelPosition, PanelStyle>>,
     pub size: RwSignal<PanelSize>,
+    pub(crate) resizing: RwSignal<bool>,
     pub(crate) hidden_styles:
         RwSignal<Option<im::HashMap<PanelPosition, PanelStyle>>>,
     pub last_opened: RwSignal<Option<PanelKind>>,
@@ -192,6 +231,7 @@ impl PanelData {
             panels,
             styles,
             size,
+            resizing: cx.create_rw_signal(false),
             hidden_styles: cx.create_rw_signal(None),
             last_opened: cx.create_rw_signal(Some(PanelKind::FileExplorer)),
             available_size,
@@ -210,6 +250,7 @@ impl PanelData {
 
     pub fn panel_info(&self) -> PanelInfo {
         PanelInfo {
+            layout_version: PANEL_LAYOUT_VERSION,
             panels: self.panels.get_untracked(),
             styles: self.styles.get_untracked(),
             size: self.size.get_untracked(),
@@ -780,5 +821,59 @@ mod tool_window_tests {
                 (expected.active, expected.shown, expected.maximized)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reference_layout_tests {
+    use super::*;
+    #[test]
+    fn upgrading_a_saved_dock_restores_the_editor_once() {
+        let mut info = PanelInfo {
+            layout_version: 1,
+            panels: default_panel_order(),
+            styles: im::hashmap! {
+                PanelPosition::BottomLeft => PanelStyle {
+                    active: 1, shown: true, maximized: true,
+                },
+            },
+            size: PanelSize {
+                left: 220.0,
+                left_split: 0.5,
+                bottom: 350.0,
+                bottom_split: 0.5,
+                right: 180.0,
+                right_split: 0.5,
+            },
+            sections: im::HashMap::new(),
+        };
+        assert!(info.upgrade_reference_layout());
+        let bottom = info.styles.get_mut(&PanelPosition::BottomLeft).unwrap();
+        assert!(bottom.shown);
+        assert_eq!(bottom.active, 1);
+        assert!(!bottom.maximized);
+        assert_eq!(info.size.bottom, 350.0);
+
+        bottom.maximized = true;
+        assert!(!info.upgrade_reference_layout());
+        assert!(info.styles[&PanelPosition::BottomLeft].maximized);
+    }
+
+    #[test]
+    fn legacy_layout_migrates_once_then_preserves_resizing() {
+        let legacy = serde_json::json!({
+            "panels": {}, "styles": {}, "sections": {},
+            "size": {"left":250.0,"right":250.0,"bottom":250.0,
+                "left_split":0.5,"right_split":0.5,"bottom_split":0.5}
+        });
+        let mut info: PanelInfo = serde_json::from_value(legacy).unwrap();
+        assert!(info.upgrade_reference_layout());
+        assert_eq!(info.size.left, 420.0);
+        assert!(info.styles[&PanelPosition::LeftTop].shown);
+        info.size.left = 510.0;
+        let mut restored: PanelInfo = serde_json::from_str(
+            &serde_json::to_string(&info).unwrap()).unwrap();
+        assert!(!restored.upgrade_reference_layout());
+        assert_eq!(restored.size.left, 510.0);
     }
 }

@@ -242,6 +242,14 @@ pub(crate) fn bootstrap_workspace_observed(
     workspace_root: &Path,
     on_complete: Option<ResolutionCallback>,
 ) {
+    bootstrap_workspace_with_progress(workspace_root, on_complete, None);
+}
+
+pub(crate) fn bootstrap_workspace_with_progress(
+    workspace_root: &Path,
+    on_complete: Option<ResolutionCallback>,
+    on_start: Option<Box<dyn FnOnce() + Send>>,
+) {
     let project_type = classify_project(workspace_root);
     if !project_type.is_dart() {
         return;
@@ -270,6 +278,7 @@ pub(crate) fn bootstrap_workspace_observed(
     }
 
     if is_package_resolution_needed(workspace_root) {
+        if let Some(start) = on_start { start(); }
         tracing::info!(
             "Dependencies outdated or missing for {}; running background pub get...",
             workspace_root.display()

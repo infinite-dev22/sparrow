@@ -1,7 +1,7 @@
 //! Device Manager using live daemon devices and installed emulator metadata.
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
-    app::clickable_icon,
+    widgets::clickable_icon,
     config::{color::SparrowColor, icon::SparrowIcons},
     dart::hot_reload::device_platform_icon,
     window_tab::WindowTabData,
@@ -9,9 +9,11 @@ use crate::{
 use floem::{
     View,
     reactive::{SignalGet, SignalUpdate, SignalWith},
-    views::{Decorators, dyn_stack, empty, label, scroll, stack, svg},
+    views::{Decorators, dyn_stack, empty, label, stack, svg},
 };
 use std::rc::Rc;
+use crate::widgets::sparrow_scroll;
+
 pub fn device_manager_panel(
     window: Rc<WindowTabData>,
     _position: PanelPosition,
@@ -77,7 +79,7 @@ pub fn device_manager_panel(
                     |s| s.hide(),
                 )
         }),
-        scroll(
+        sparrow_scroll(
             stack((
                 dyn_stack(
                     move || devices.get(),

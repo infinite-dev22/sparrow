@@ -1,5 +1,5 @@
-use crate::popup_menu::show_context_menu;
-use crate::popup_menu::{Menu, MenuItem};
+use crate::widgets::popup_menu::show_context_menu;
+use crate::widgets::popup_menu::{Menu, MenuItem};
 use floem::{
     ViewId,
     action::{TimerToken, exec_after},
@@ -27,9 +27,9 @@ use floem::{
 use itertools::Itertools;
 use lapce_xi_rope::{Rope, RopeDelta, Transformer};
 use lsp_types::{
-    CompletionItem, CompletionTextEdit, GotoDefinitionResponse,
-    HoverContents, InlayHint, InlayHintLabel, InlineCompletionTriggerKind, Location,
-    MarkedString, MarkupKind, Range, TextEdit,
+    CompletionItem, CompletionTextEdit, GotoDefinitionResponse, HoverContents,
+    InlayHint, InlayHintLabel, InlineCompletionTriggerKind, Location, MarkedString,
+    MarkupKind, Range, TextEdit,
 };
 use nucleo::Utf32Str;
 use serde::{Deserialize, Serialize};
@@ -96,6 +96,8 @@ use crate::{
 pub mod diff;
 pub mod gutter;
 pub mod location;
+pub(crate) mod signature_help;
+pub(crate) mod tab_view;
 pub mod view;
 
 #[derive(Clone, Debug)]
@@ -357,7 +359,7 @@ impl EditorData {
         self.editor.id()
     }
 
-    pub fn editor_info(&self, _data: &WindowTabData) -> EditorInfo {
+    pub fn editor_info(&self) -> EditorInfo {
         let offset = self.cursor().get_untracked().offset();
         let scroll_offset = self.viewport().get_untracked().origin();
         let doc = self.doc();

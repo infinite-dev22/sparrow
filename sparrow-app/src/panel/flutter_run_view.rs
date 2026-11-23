@@ -1,168 +1,262 @@
-//! Dedicated Flutter Run & Console panel for logs, progress, and actions.
+//! Run sessions, project task output, and Flutter run actions.
 
 use std::rc::Rc;
 
 use floem::{
-    View, IntoView,
-    reactive::{SignalGet, SignalUpdate},
+    IntoView, View,
+    event::EventListener,
+    reactive::{SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
-    views::{
-        Decorators, dyn_container, empty, label, stack,
-    },
+    views::{Decorators, dyn_container, dyn_stack, empty, label, stack},
 };
 
-use super::position::PanelPosition;
+use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
-    app::clickable_icon,
     command::InternalCommand,
     config::{color::SparrowColor, icon::SparrowIcons},
     dart::FlutterRunState,
+    debug::RunDebugMode,
     editor::location::{EditorLocation, EditorPosition},
-    window_tab::WindowTabData,
+    widgets::{clickable_icon, panel_title_bar, tab_strip},
+    window_tab::{Focus, WindowTabData},
 };
 
 pub fn flutter_run_panel(
-    window_tab_data: Rc<WindowTabData>,
+    window: Rc<WindowTabData>,
     _position: PanelPosition,
 ) -> impl View {
-    let devtools_window = window_tab_data.clone();
-    let hot_reload = window_tab_data.flutter_hot_reload.clone();
-    let config = window_tab_data.common.config;
+    let config = window.common.config;
+    let terminal = window.terminal.clone();
+    let active = terminal.active_run;
+    let panel = window.panel.clone();
+    let focus = window.common.focus;
 
-    let state = hot_reload.state;
+    let sessions = terminal.clone();
+    let tab_terminal = terminal.clone();
+    let tabs = tab_strip(|strip| {
+        dyn_stack(
+            move || {
+                sessions
+                    .run_debug_process(true)
+                    .into_iter()
+                    .filter(|(_, process)| process.mode == RunDebugMode::Run)
+                    .collect::<Vec<_>>()
+            },
+            |(id, process)| (*id, process.config.name.clone(), process.stopped),
+            move |(id, process)| {
+                let close = tab_terminal.clone();
+                strip.button(
+                    stack((
+                        label(move || process.config.name.clone())
+                            .style(|s| s.max_width(220.0).text_ellipsis()),
+                        clickable_icon(
+                            || SparrowIcons::CLOSE,
+                            move || close.close_run_debug_session(id),
+                            || false,
+                            || false,
+                            || "Close run session",
+                            config,
+                        )
+                        .style(|s| s.size(18.0, 18.0).padding(2.0).margin_left(6.0)),
+                    ))
+                    .style(|s| s.items_center()),
+                    move || active.get() == Some(id),
+                    move || active.set(Some(id)),
+                    config,
+                )
+            },
+        )
+        .style(|s| s.items_center().height_full())
+    })
+    .style(|s| s.flex_grow(1.0_f32).min_width(0.0));
 
-    let run_name = window_tab_data.run_configs;
-    let run_index = window_tab_data.active_run_config_idx;
-    let device = hot_reload.selected_device;
-    let run_sessions = window_tab_data.terminal.clone();
-    let console_window = window_tab_data.clone();
-    let tracked = hot_reload.active_term;
+    let header = panel_title_bar(
+        "Run",
+        tabs,
+        clickable_icon(
+            || SparrowIcons::REMOVE,
+            move || panel.hide_panel(&PanelKind::FlutterRun),
+            || false,
+            || false,
+            || "Hide Run",
+            config,
+        ),
+    );
+
+    let actions = terminal.clone();
+    let monitor = terminal.clone();
+    let hot_reload = window.flutter_hot_reload.clone();
+    let flutter_session = hot_reload.active_term;
+    let flutter_state = hot_reload.state;
+    let progress = hot_reload.progress_message;
     let logs = hot_reload.run_logs;
-    let console = dyn_container(move || tracked.get(), move |id| {
-        let window = console_window.clone();
-        if let Some(terminal) = id.and_then(|id| window.terminal.get_terminal(&id)) {
-            let panel = window.terminal.clone();
-            let focus = window.common.focus;
-            let id = terminal.term_id;
-            crate::terminal::view::terminal_view(id, terminal.raw.read_only(),
-                terminal.mode.read_only(), terminal.run_debug.read_only(), panel.clone(),
-                terminal.launch_error, window.common.internal_command, window.workspace.clone(), super::kind::PanelKind::FlutterRun)
-                .on_event_cont(floem::event::EventListener::PointerDown, move |_| {
-                    panel.focus_terminal_in_panel(id, super::kind::PanelKind::FlutterRun);
-                    focus.set(crate::window_tab::Focus::Panel(super::kind::PanelKind::FlutterRun));
-                }).style(|s| s.size_full()).into_any()
-        } else if id.is_some() {
-            floem::views::scroll(floem::views::dyn_stack(
-                move || logs.get().into_iter().enumerate().collect::<Vec<_>>(),
-                |(index, line)| (*index, line.clone()),
-                move |(_, line)| label(move || line.clone()).style(move |s| {
-                    let c = config.get();
-                    s.font_family(c.terminal_font_family().to_owned())
-                        .font_size(c.terminal_font_size() as f32).min_width_full()
-                }),
-            ).style(|s| s.flex_col().width_full()))
-                .style(|s| s.size_full()).into_any()
-        } else { label(|| "Run a Flutter configuration to start a session.")
-            .style(|s| s.padding(12.0)).into_any() }
-    }).style(|s| s.flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0).width_full());
-    stack((
-        stack((
-            label(|| "Run").style(|s| s.height_full().items_center().margin_horiz(12.0).font_bold()),
-            label(move || {
-                let name = tracked.get().and_then(|id| run_sessions.run_debug_process(true).into_iter()
-                    .find(|(term, _)| *term == id).map(|(_, process)| process.config.name))
-                    .or_else(|| run_name.get().get(run_index.get()).map(|c| c.name.clone()))
-                    .unwrap_or_else(|| "Flutter".into());
-                device.get().map(|d| format!("{name} ({})", d.name)).unwrap_or(name)
-            }).style(move |s| s.padding_horiz(10.0).padding_vert(3.0).border_radius(4.0)
-                .border(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
-        )).style(|s| s.height(32.0).items_center().flex_shrink(0.0_f32)),
-        // Header toolbar with quick actions
-        stack((
-            clickable_icon(
-                || SparrowIcons::FLUTTER_HOT_RELOAD,
-                {
-                    let hr = hot_reload.clone();
-                    move || hr.common.workbench_command.send(crate::command::SparrowWorkbenchCommand::FlutterHotReload)
-                },
-                || false,
-                move || state.get() != FlutterRunState::Running,
-                || "Hot Reload",
-                config,
-            ),
-            clickable_icon(
-                || SparrowIcons::FLUTTER_HOT_RESTART,
-                {
-                    let hr = hot_reload.clone();
-                    move || hr.common.workbench_command.send(crate::command::SparrowWorkbenchCommand::FlutterHotRestart)
-                },
-                || false,
-                move || state.get() != FlutterRunState::Running,
-                || "Hot Restart",
-                config,
-            ),
-            clickable_icon(
-                || SparrowIcons::FLUTTER_STOP,
-                {
-                    let hr = hot_reload.clone();
-                    move || hr.stop()
-                },
-                || false,
-                move || state.get() != FlutterRunState::Running,
-                || "Stop Application",
-                config,
-            ),
-            clickable_icon(
-                || SparrowIcons::DEBUG_CONSOLE,
-                move || devtools_window.open_devtools(crate::dart::devtools::DevToolsPage::Home),
-                || false, || false, || "Open DevTools", config,
-            ),
-            clickable_icon(
-                || SparrowIcons::CLOSE,
-                {
-                    let hr = hot_reload.clone();
-                    move || hr.clear_logs()
-                },
-                || false,
-                || false,
-                || "Clear Console",
-                config,
-            )
-            .style(|s| s.margin_right(4.0)),
-            empty().style(|s| s.flex_grow(1.0_f32)),
-            label(move || match state.get() {
-                FlutterRunState::Idle => "Flutter: Idle".to_string(),
-                FlutterRunState::Running => {
-                    if let Some(msg) = hot_reload.progress_message.get() {
-                        format!("Flutter: {msg}")
+    let controls = dyn_container(
+        move || {
+            let id = active.get()?;
+            let process = monitor.console_terminal(id, true)?.run_debug.get()?;
+            Some((
+                id,
+                process.stopped,
+                crate::dart::run_config::is_flutter_run(&process.config),
+            ))
+        },
+        move |session| {
+            let Some((id, stopped, flutter)) = session else {
+                return empty().into_any();
+            };
+            let rerun = actions.clone();
+            let stop = actions.clone();
+            let clear = actions.clone();
+            let tools = window.clone();
+            let reload = window.clone();
+            let restart = window.clone();
+            let can_reload = move || {
+                !stopped
+                    && flutter_session.get() == Some(id)
+                    && flutter_state.get() == FlutterRunState::Running
+            };
+            stack((
+                clickable_icon(
+                    || SparrowIcons::DEBUG_RESTART,
+                    move || {
+                        rerun.restart_run_debug(id);
+                    },
+                    || false,
+                    || false,
+                    || "Rerun",
+                    config,
+                ),
+                clickable_icon(
+                    || SparrowIcons::DEBUG_STOP,
+                    move || {
+                        stop.stop_run_debug(id);
+                    },
+                    || false,
+                    move || stopped,
+                    || "Stop",
+                    config,
+                ),
+                clickable_icon(
+                    || SparrowIcons::FLUTTER_HOT_RELOAD,
+                    move || reload.reload_run_session_after_saving(id, false),
+                    || false,
+                    move || !can_reload(),
+                    || "Hot Reload",
+                    config,
+                )
+                .style(move |s| s.apply_if(!flutter, |s| s.hide())),
+                clickable_icon(
+                    || SparrowIcons::FLUTTER_HOT_RESTART,
+                    move || restart.reload_run_session_after_saving(id, true),
+                    || false,
+                    move || !can_reload(),
+                    || "Hot Restart",
+                    config,
+                )
+                .style(move |s| s.apply_if(!flutter, |s| s.hide())),
+                clickable_icon(
+                    || SparrowIcons::TOOLBOX,
+                    move || {
+                        tools
+                            .open_devtools(crate::dart::devtools::DevToolsPage::Home)
+                    },
+                    || false,
+                    move || !can_reload(),
+                    || "Open DevTools",
+                    config,
+                )
+                .style(move |s| s.apply_if(!flutter, |s| s.hide())),
+                clickable_icon(
+                    || SparrowIcons::SEARCH_CLEAR,
+                    move || {
+                        if let Some(terminal) = clear.console_terminal(id, false) {
+                            terminal.clear_buffer();
+                        }
+                    },
+                    || false,
+                    || false,
+                    || "Clear Console",
+                    config,
+                ),
+                label(move || {
+                    if stopped {
+                        "Stopped".to_owned()
+                    } else if can_reload() {
+                        progress.get().unwrap_or_else(|| "Running".to_owned())
                     } else {
-                        "Flutter: Running".to_string()
+                        "Running".to_owned()
                     }
-                }
-                FlutterRunState::Error => "Flutter: Stopped / Error".to_string(),
-            })
+                })
+                .style(move |s| {
+                    s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+                        .margin_left(8.0)
+                        .min_width(0.0)
+                        .text_ellipsis()
+                }),
+            ))
             .style(move |s| {
-                let c = config.get();
-                s.color(c.color(SparrowColor::PANEL_FOREGROUND_DIM))
-                    .font_size(11.0)
-                    .margin_left(10.0)
-                    .selectable(false)
-            }),
+                s.height(26.0)
+                    .items_center()
+                    .width_full()
+                    .border_bottom(1.0)
+                    .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+            })
+            .into_any()
+        },
+    );
 
-        ))
-        .style(move |s| {
-            let c = config.get();
-            s.height(26.0)
-                .items_center()
-                .border_bottom(1.0)
-                .border_color(c.color(SparrowColor::SPARROW_BORDER))
-        }),
+    let console = dyn_container(
+        move || active.get(),
+        move |id| {
+            let Some((id, terminal)) = id.and_then(|id| {
+                terminal.console_terminal(id, false).map(|t| (id, t))
+            }) else {
+                return dyn_container(
+                    move || logs.with(|logs| logs.is_empty()),
+                    move |empty| {
+                        if empty {
+                            return label(
+                                || "Run a project configuration to start a session.",
+                            )
+                            .style(|s| s.padding(12.0))
+                            .into_any();
+                        }
+                        crate::widgets::sparrow_scroll(
+                            dyn_stack(
+                                move || logs.get().into_iter().enumerate(),
+                                |(index, line)| (*index, line.clone()),
+                                move |(_, line)| label(move || line.clone()),
+                            )
+                            .style(|s| s.flex_col().width_full()),
+                        )
+                        .style(|s| s.size_full())
+                        .into_any()
+                    },
+                )
+                .style(|s| s.size_full())
+                .into_any();
+            };
+            crate::terminal::view::terminal_view(terminal, move || {
+                focus.get() == Focus::Panel(PanelKind::FlutterRun)
+                    && active.get() == Some(id)
+            })
+            .on_event_cont(EventListener::PointerDown, move |_| {
+                focus.set(Focus::Panel(PanelKind::FlutterRun));
+            })
+            .style(|s| s.size_full())
+            .into_any()
+        },
+    )
+    .style(|s| {
+        s.flex_grow(1.0_f32)
+            .flex_basis(0.0)
+            .min_height(0.0)
+            .width_full()
+    });
 
-        console,
-
-    ))
-    .style(|s| s.absolute().size_full().flex_col())
-    .debug_name("Flutter Run Panel")
+    stack((header, controls, console))
+        .style(|s| s.absolute().size_full().flex_col())
+        .debug_name("Run Panel")
 }
 
 pub(super) fn log_line_row(
@@ -180,26 +274,24 @@ pub(super) fn log_line_row(
     let display_text = line.clone();
     let is_err = line.starts_with('⚠') || line.starts_with('❌');
 
-    stack((
-        label(move || display_text.clone()).style(move |s| {
-            let c = config.get();
-            let base_color = if is_err {
-                c.color(SparrowColor::SPARROW_ERROR)
-            } else {
-                c.color(SparrowColor::EDITOR_FOREGROUND)
-            };
-            s.selectable(true)
-                .color(base_color)
-                .min_width(0.0)
-                .font_family(c.terminal_font_family().to_string())
-                .apply_if(has_link, |s| {
-                    s.hover(|s| {
-                        s.cursor(CursorStyle::Pointer)
-                            .color(c.color(SparrowColor::EDITOR_LINK))
-                    })
+    stack((label(move || display_text.clone()).style(move |s| {
+        let c = config.get();
+        let base_color = if is_err {
+            c.color(SparrowColor::SPARROW_ERROR)
+        } else {
+            c.color(SparrowColor::EDITOR_FOREGROUND)
+        };
+        s.selectable(true)
+            .color(base_color)
+            .min_width(0.0)
+            .font_family(c.terminal_font_family().to_string())
+            .apply_if(has_link, |s| {
+                s.hover(|s| {
+                    s.cursor(CursorStyle::Pointer)
+                        .color(c.color(SparrowColor::EDITOR_LINK))
                 })
-        }),
-    ))
+            })
+    }),))
     .on_click_stop(move |_| {
         if let Some(loc) = &link_target {
             internal_command.send(InternalCommand::JumpToLocation {
@@ -211,7 +303,7 @@ pub(super) fn log_line_row(
 }
 
 /// Helper to parse paths from flutter error logs: e.g. "package:flutter/... or lib/main.dart:12:5"
-fn parse_stack_trace_link(
+pub(super) fn parse_stack_trace_link(
     line: &str,
     workspace_root: Option<&std::path::Path>,
 ) -> Option<EditorLocation> {

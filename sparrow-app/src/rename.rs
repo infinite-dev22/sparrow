@@ -1,3 +1,5 @@
+pub(crate) mod view;
+
 use std::{path::PathBuf, rc::Rc};
 
 use floem::{
