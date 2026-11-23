@@ -105,7 +105,7 @@ impl WindowData {
         let window_tabs = cx.create_rw_signal(im::Vector::new());
         let num_window_tabs =
             cx.create_memo(move |_| window_tabs.with(|tabs| tabs.len()));
-        let active = info.tabs.active_tab;
+
         let window_command = Listener::new_empty(cx);
         let ime_allowed = cx.create_rw_signal(false);
         let window_maximized = cx.create_rw_signal(false);
@@ -129,26 +129,27 @@ impl WindowData {
             extra_plugin_paths,
         });
 
-        for w in info.tabs.workspaces {
-            let window_tab =
-                Rc::new(WindowTabData::new(cx, Arc::new(w), common.clone()));
-            window_tabs.update(|window_tabs| {
-                window_tabs.push_back((cx.create_rw_signal(0), window_tab));
-            });
+        let workspace = info
+            .tabs
+            .workspaces
+            .into_iter()
+            .nth(info.tabs.active_tab)
+            .unwrap_or_default();
+        crate::widgets::file_picker::set_project(
+            workspace
+                .path
+                .clone()
+                .filter(|_| !workspace.kind.is_remote()),
+        );
+        if let Some(db) = use_context::<Arc<SparrowDb>>() {
+            let _ = db.update_recent_workspace(&workspace);
         }
+        let window_tab =
+            Rc::new(WindowTabData::new(cx, Arc::new(workspace), common.clone()));
+        window_tabs
+            .update(|tabs| tabs.push_back((cx.create_rw_signal(0), window_tab)));
 
-        if window_tabs.with_untracked(|window_tabs| window_tabs.is_empty()) {
-            let window_tab = Rc::new(WindowTabData::new(
-                cx,
-                Arc::new(SparrowWorkspace::default()),
-                common.clone(),
-            ));
-            window_tabs.update(|window_tabs| {
-                window_tabs.push_back((cx.create_rw_signal(0), window_tab));
-            });
-        }
-
-        let active = cx.create_rw_signal(active);
+        let active = cx.create_rw_signal(0);
         let position = cx.create_rw_signal(info.pos);
 
         let window_data = Self {
@@ -202,119 +203,135 @@ impl WindowData {
         }
     }
 
+    pub(crate) fn request_workspace(
+        &self,
+        workspace: SparrowWorkspace,
+        files: Vec<sparrow_rpc::file::PathObject>,
+    ) {
+        let Some(current) = self.active_window_tab() else {
+            return;
+        };
+        if current.workspace.kind == workspace.kind
+            && current.workspace.path == workspace.path
+        {
+            current.open_paths(&files);
+            return;
+        }
+        let opening = workspace.path.is_some() || workspace.kind.is_remote();
+        let project_name = workspace.display().unwrap_or_default();
+        let switch = {
+            let window = self.clone();
+            move || {
+                window.replace_workspace(workspace.clone());
+                if let Some(tab) = window.active_window_tab() {
+                    tab.open_paths(&files);
+                }
+            }
+        };
+        let has_project =
+            current.workspace.path.is_some() || current.workspace.kind.is_remote();
+        let dirty = current
+            .main_split
+            .editors
+            .with_editors_untracked(|editors| {
+                editors.values().any(|editor| !editor.doc().is_pristine())
+            });
+        if !has_project && !dirty {
+            switch();
+            return;
+        }
+        let title = if opening {
+            "Switch Project"
+        } else {
+            "Close Project"
+        };
+        let message = if opening {
+            format!("Open {project_name} and close the current workspace?")
+        } else {
+            "Close the current project?".into()
+        };
+        let message = if dirty {
+            format!("{message} Unsaved changes will be discarded.")
+        } else {
+            message
+        };
+        let text = match (opening, dirty) {
+            (true, true) => "Discard Changes and Open",
+            (false, true) => "Discard Changes and Close",
+            (true, false) => "Open Project",
+            (false, false) => "Close Project",
+        };
+        let active = current.alert_data.active;
+        current.alert_data.title.set(title.into());
+        current.alert_data.msg.set(message);
+        current
+            .alert_data
+            .buttons
+            .set(vec![crate::widgets::alert::AlertButton {
+                text: text.into(),
+                action: Rc::new(move || {
+                    active.set(false);
+                    switch();
+                }),
+            }]);
+        active.set(true);
+    }
+
+    fn replace_workspace(&self, workspace: SparrowWorkspace) {
+        crate::widgets::file_picker::close_active();
+        crate::widgets::file_picker::set_project(
+            workspace
+                .path
+                .clone()
+                .filter(|_| !workspace.kind.is_remote()),
+        );
+        let db: Arc<SparrowDb> = use_context().unwrap();
+        if let Some(old) = self.active_window_tab() {
+            if let Err(error) = db.insert_window_tab(old.clone()) {
+                tracing::error!(%error, "Could not save workspace state");
+            }
+            old.proxy.shutdown();
+        }
+        let _ = db.update_recent_workspace(&workspace);
+        let tab = Rc::new(WindowTabData::new(
+            self.scope,
+            Arc::new(workspace),
+            self.common.clone(),
+        ));
+        self.window_tabs
+            .set(im::vector![(self.scope.create_rw_signal(0), tab)]);
+        self.active.set(0);
+        self.app_command.send(AppCommand::SaveApp);
+    }
+
     pub fn run_window_command(&self, cmd: WindowCommand) {
         match cmd {
-            WindowCommand::SetWorkspace { workspace } => {
-                let db: Arc<SparrowDb> = use_context().unwrap();
-                if let Err(err) = db.update_recent_workspace(&workspace) {
-                    tracing::error!("{:?}", err);
-                }
-
-                let active = self.active.get_untracked();
-                self.window_tabs.with_untracked(|window_tabs| {
-                    if !window_tabs.is_empty() {
-                        let active = window_tabs.len().saturating_sub(1).min(active);
-                        if let Err(err) =
-                            db.insert_window_tab(window_tabs[active].1.clone())
-                        {
-                            tracing::error!("{:?}", err);
-                        }
-                    }
-                });
-
-                let window_tab = Rc::new(WindowTabData::new(
-                    self.scope,
-                    Arc::new(workspace),
-                    self.common.clone(),
-                ));
-                self.window_tabs.update(|window_tabs| {
-                    if window_tabs.is_empty() {
-                        window_tabs
-                            .push_back((self.scope.create_rw_signal(0), window_tab));
-                    } else {
-                        let active = window_tabs.len().saturating_sub(1).min(active);
-                        let (_, old_window_tab) = window_tabs.set(
-                            active,
-                            (self.scope.create_rw_signal(0), window_tab),
-                        );
-                        old_window_tab.proxy.shutdown();
-                    }
-                })
-            }
-            WindowCommand::OpenProjectTab { workspace } => {
-                let existing = self.window_tabs.with_untracked(|tabs| {
-                    tabs.iter().position(|(_, tab)| {
-                        tab.workspace.kind == workspace.kind
-                            && tab.workspace.path == workspace.path
-                    })
-                });
-                if let Some(index) = existing {
-                    self.active.set(index);
-                } else {
-                    self.run_window_command(WindowCommand::NewWorkspaceTab {
-                        workspace,
-                        end: false,
-                    });
+            WindowCommand::OpenPaths(paths) => {
+                if let Some(folder) = paths.iter().find(|path| path.is_dir) {
+                    let path = folder.path.clone();
+                    let kind = self
+                        .active_window_tab()
+                        .map(|tab| tab.workspace.kind.clone())
+                        .unwrap_or(crate::workspace::SparrowWorkspaceType::Local);
+                    self.request_workspace(
+                        SparrowWorkspace {
+                            kind,
+                            path: Some(path),
+                            last_open: 0,
+                        },
+                        paths.into_iter().filter(|path| !path.is_dir).collect(),
+                    );
+                } else if let Some(tab) = self.active_window_tab() {
+                    tab.open_paths(&paths);
                 }
             }
-            WindowCommand::NewWorkspaceTab { workspace, end } => {
-                let db: Arc<SparrowDb> = use_context().unwrap();
-                if let Err(err) = db.update_recent_workspace(&workspace) {
-                    tracing::error!("{:?}", err);
-                }
-
-                let window_tab = Rc::new(WindowTabData::new(
-                    self.scope,
-                    Arc::new(workspace),
-                    self.common.clone(),
-                ));
-                let active = self.active.get_untracked();
-                let active = self
-                    .window_tabs
-                    .try_update(|tabs| {
-                        if end || tabs.is_empty() {
-                            tabs.push_back((
-                                self.scope.create_rw_signal(0),
-                                window_tab,
-                            ));
-                            tabs.len() - 1
-                        } else {
-                            let index = tabs.len().min(active + 1);
-                            tabs.insert(
-                                index,
-                                (self.scope.create_rw_signal(0), window_tab),
-                            );
-                            index
-                        }
-                    })
-                    .unwrap();
-                self.active.set(active);
+            WindowCommand::SetWorkspace { workspace }
+            | WindowCommand::OpenProjectTab { workspace }
+            | WindowCommand::NewWorkspaceTab { workspace, .. } => {
+                self.request_workspace(workspace, Vec::new());
             }
-            WindowCommand::CloseWorkspaceTab { index } => {
-                let active = self.active.get_untracked();
-                let index = index.unwrap_or(active);
-                self.window_tabs.update(|window_tabs| {
-                    if window_tabs.len() < 2 {
-                        return;
-                    }
-
-                    if index < window_tabs.len() {
-                        let (_, old_window_tab) = window_tabs.remove(index);
-                        old_window_tab.proxy.shutdown();
-                        let db: Arc<SparrowDb> = use_context().unwrap();
-                        if let Err(err) = db.save_window_tab(old_window_tab) {
-                            tracing::error!("{:?}", err);
-                        }
-                    }
-                });
-
-                let tabs_len = self.window_tabs.with_untracked(|tabs| tabs.len());
-
-                if active > index && active > 0 {
-                    self.active.set(active - 1);
-                } else if active >= tabs_len.saturating_sub(1) {
-                    self.active.set(tabs_len.saturating_sub(1));
-                }
+            WindowCommand::CloseWorkspaceTab { .. } => {
+                self.request_workspace(SparrowWorkspace::default(), Vec::new());
             }
             WindowCommand::NextWorkspaceTab => {
                 let active = self.active.get_untracked();
@@ -339,10 +356,6 @@ impl WindowData {
                     };
                     self.active.set(active);
                 }
-            }
-            WindowCommand::NewWindow => {
-                self.app_command
-                    .send(AppCommand::NewWindow { folder: None });
             }
             WindowCommand::CloseWindow => {
                 self.app_command

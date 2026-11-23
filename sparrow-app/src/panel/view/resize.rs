@@ -7,7 +7,7 @@ use floem::{
     kurbo::{Point, Size},
     reactive::{ReadSignal, SignalGet, SignalUpdate, batch, create_rw_signal},
     style::CursorStyle,
-    views::{Decorators, empty},
+    views::{Decorators, empty, stack},
 };
 
 use crate::{
@@ -106,7 +106,24 @@ pub(super) fn handle(
     let drag = Rc::new(Drag::default());
     let sizing = panel.resizing;
     let active = create_rw_signal(false);
-    let view = empty();
+    let line = empty().style(move |s| {
+        let color = config.get().color(SparrowColor::EDITOR_LINK);
+        s.pointer_events_none()
+            .apply_if(position.is_bottom(), |s| s.width_full().height(2))
+            .apply_if(!position.is_bottom(), |s| s.width(2).height_full())
+            .background(if active.get() {
+                color
+            } else {
+                color.multiply_alpha(0.7)
+            })
+    });
+    let hovered = create_rw_signal(false);
+    let line = line.style(move |s| {
+        s.apply_if(!(active.get() || (hovered.get() && !sizing.get())), |s| {
+            s.hide()
+        })
+    });
+    let view = stack((line,));
     let id = view.id();
     // Floem sends pointer events relative to the current position of the handle.
     let window_point =
@@ -202,11 +219,15 @@ pub(super) fn handle(
         move |_| finish()
     })
     .on_cleanup(finish)
+    .on_event_cont(EventListener::PointerEnter, move |_| hovered.set(true))
+    .on_event_cont(EventListener::PointerLeave, move |_| hovered.set(false))
     .style(move |s| {
         let bottom = position.is_bottom();
-        let foreground = config.get().color(SparrowColor::EDITOR_CARET);
-        let highlight = |s: floem::style::Style| s.background(foreground).z_index(2);
         s.absolute()
+            .items_center()
+            .justify_center()
+            .apply_if(!bottom, |s| s.flex_col())
+            .z_index(2)
             .cursor(if bottom {
                 CursorStyle::RowResize
             } else {
@@ -220,8 +241,6 @@ pub(super) fn handle(
             .apply_if(position == PanelContainerPosition::Right, |s| {
                 s.inset_left(-2.0)
             })
-            .apply_if(active.get(), highlight)
-            .hover(highlight)
     })
     .debug_name("Dock resize handle")
 }

@@ -1384,15 +1384,9 @@ impl WindowTabData {
                 }
             }
             CloseFolder => {
-                if !self.workspace.kind.is_remote() {
-                    let window_command = self.common.window_common.window_command;
-                    let workspace = SparrowWorkspace {
-                        kind: SparrowWorkspaceType::Local,
-                        path: None,
-                        last_open: 0,
-                    };
-                    window_command.send(WindowCommand::SetWorkspace { workspace });
-                }
+                self.common.window_common.window_command.send(WindowCommand::SetWorkspace {
+                    workspace: SparrowWorkspace::default(),
+                });
             }
             OpenFile => {
                 if !self.workspace.kind.is_remote() {
@@ -1609,12 +1603,7 @@ impl WindowTabData {
                     },
                 );
             }
-            NewWindow => {
-                self.common
-                    .window_common
-                    .window_command
-                    .send(WindowCommand::NewWindow);
-            }
+            NewWindow => self.common.workbench_command.send(SparrowWorkbenchCommand::OpenFile),
             CloseWindow => {
                 self.common
                     .window_common
@@ -1622,14 +1611,7 @@ impl WindowTabData {
                     .send(WindowCommand::CloseWindow);
             }
             // ==== Window Tabs ====
-            NewWindowTab => {
-                self.common.window_common.window_command.send(
-                    WindowCommand::NewWorkspaceTab {
-                        workspace: SparrowWorkspace::default(),
-                        end: false,
-                    },
-                );
-            }
+            NewWindowTab => self.common.workbench_command.send(SparrowWorkbenchCommand::OpenFile),
             CloseWindowTab => {
                 self.common
                     .window_common
@@ -4339,23 +4321,12 @@ impl WindowTabData {
     }
 
     pub fn open_paths(&self, paths: &[PathObject]) {
-        let (folders, files): (Vec<&PathObject>, Vec<&PathObject>) =
-            paths.iter().partition(|p| p.is_dir);
-
-        for folder in folders {
-            self.common.window_common.window_command.send(
-                WindowCommand::NewWorkspaceTab {
-                    workspace: SparrowWorkspace {
-                        kind: self.workspace.kind.clone(),
-                        path: Some(folder.path.clone()),
-                        last_open: 0,
-                    },
-                    end: false,
-                },
-            );
+        if paths.iter().any(|path| path.is_dir) {
+            self.common.window_common.window_command.send(WindowCommand::OpenPaths(paths.to_vec()));
+            return;
         }
 
-        for file in files {
+        for file in paths {
             let position = file.linecol.map(|pos| {
                 EditorPosition::Position(lsp_types::Position {
                     line: pos.line.saturating_sub(1) as u32,

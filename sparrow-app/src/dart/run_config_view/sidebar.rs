@@ -191,23 +191,23 @@ pub(super) fn configuration_sidebar(
             ),
         ))
         .style(|s| s.height(26.0).items_center()),
-        label({
+        stack((crate::widgets::tree_chevron(config, || true, || true), label({
             let drafts = d.drafts;
             move || {
                 drafts.with(|drafts| {
                     if drafts.is_empty() {
-                        "⌄  Run configurations"
+                        "Run configurations"
                     } else if drafts.iter().all(Draft::flutter) {
-                        "⌄  Flutter"
+                        "Flutter"
                     } else if drafts.iter().all(|draft| !draft.flutter()) {
-                        "⌄  Dart"
+                        "Dart"
                     } else {
-                        "⌄  Run configurations"
+                        "Run configurations"
                     }
                 })
             }
-        })
-        .style(|s| s.padding_left(10.0).height(24.0).font_bold()),
+        })))
+        .style(|s| s.padding_left(10.0).height(24.0).font_bold().items_center().gap(5)),
         configuration_list,
         keyboard.control(
             label(|| "Edit configuration templates…")

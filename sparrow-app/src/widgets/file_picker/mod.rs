@@ -12,7 +12,7 @@ use std::{
 };
 
 use floem::{
-    View,
+    View, ViewId, WindowIdExt,
     event::{Event, EventListener, EventPropagation},
     file::{FileInfo, FileSpec},
     keyboard::{Key, Modifiers, NamedKey},
@@ -21,6 +21,7 @@ use floem::{
         create_effect, create_rw_signal,
     },
     views::{Decorators, label, stack},
+    window::WindowId,
 };
 
 use crate::{
@@ -40,6 +41,7 @@ pub(crate) struct FileDialogOptions {
     directories: bool,
     mixed: bool,
     multiple: bool,
+    create_folder: bool,
     save: bool,
 }
 
@@ -71,6 +73,11 @@ impl FileDialogOptions {
         self.mixed = true;
         self
     }
+    pub(crate) fn start_with_new_folder(mut self) -> Self {
+        self.create_folder = true;
+        self
+    }
+
     pub fn multi_selection(mut self) -> Self {
         self.multiple = true;
         self
@@ -133,8 +140,43 @@ pub(crate) fn save_as(
     show(options, config, callback);
 }
 
+struct PickerWindow {
+    id: WindowId,
+    view: ViewId,
+    finish: Complete,
+}
+
+struct PickerRequest {
+    token: Rc<()>,
+    window: Option<PickerWindow>,
+}
+
 thread_local! {
     static LAST_DIRECTORY: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static PROJECT: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static PICKER: RefCell<Option<PickerRequest>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn set_project(path: Option<PathBuf>) {
+    PROJECT.replace(path);
+}
+
+pub(crate) fn focus_existing() -> bool {
+    PICKER.with_borrow(|picker| {
+        let Some(picker) = picker else { return false };
+        if let Some(window) = &picker.window {
+            window.id.minimized(false);
+            window.id.request_attention(floem::Urgency::Informational);
+            crate::widgets::dialog_frame::activate_frame(window.view);
+        }
+        true
+    })
+}
+
+pub(crate) fn close_active() {
+    if let Some(window) = PICKER.take().and_then(|picker| picker.window) {
+        (window.finish)(None);
+    }
 }
 
 fn home() -> Option<PathBuf> {
@@ -149,6 +191,16 @@ fn show(
     config: Config,
     callback: impl Fn(Option<FileInfo>) + 'static,
 ) {
+    if focus_existing() {
+        callback(None);
+        return;
+    }
+    let token = Rc::new(());
+    PICKER.replace(Some(PickerRequest {
+        token: token.clone(),
+        window: None,
+    }));
+    let project = PROJECT.with_borrow(Clone::clone);
     let theme = config.get_untracked();
     let title = if options.title.is_empty() {
         "Choose a file".into()
@@ -188,17 +240,56 @@ fn show(
                         *last = directory.map(Path::to_path_buf)
                     });
                 }
-                callback(value);
+                PICKER.with_borrow_mut(|picker| {
+                    if picker
+                        .as_ref()
+                        .and_then(|entry| entry.window.as_ref())
+                        .is_some_and(|window| window.id == id)
+                    {
+                        *picker = None;
+                    }
+                });
                 floem::close_window(id);
+                callback(value);
             });
             let config = create_rw_signal(theme).read_only();
-            dialog(window_title, Rc::new(options), start, home, config, finish)
+            let view = dialog(
+                window_title,
+                Rc::new(options),
+                start,
+                home,
+                project,
+                config,
+                finish.clone(),
+            );
+            let installed = PICKER.with_borrow_mut(|picker| {
+                let Some(picker) = picker
+                    .as_mut()
+                    .filter(|picker| Rc::ptr_eq(&picker.token, &token))
+                else {
+                    return false;
+                };
+                picker.window = Some(PickerWindow {
+                    id,
+                    view: view.id(),
+                    finish: finish.clone(),
+                });
+                true
+            });
+            if installed {
+                crate::widgets::dialog_frame::activate_frame(view.id());
+            } else {
+                finish(None);
+            }
+            view
         },
         Some(
             crate::app::sparrow_window_config()
                 .title(title)
                 .apply_default_theme(false)
                 .show_titlebar(false)
+                .undecorated(true)
+                .with_transparent(true)
                 .size((1040.0, 680.0))
                 .min_size((590.0, 390.0)),
         ),
@@ -434,6 +525,7 @@ fn dialog(
     options: Rc<FileDialogOptions>,
     start: PathBuf,
     home: Option<PathBuf>,
+    project: Option<PathBuf>,
     config: Config,
     finish: Complete,
 ) -> impl View {
@@ -455,6 +547,7 @@ fn dialog(
         title,
         browser.clone(),
         home,
+        project,
         entry,
         show_preview,
         finish.clone(),
@@ -474,6 +567,12 @@ fn dialog(
         .placeholder("Filename")
         .on_enter(move || add_name.submit(&name_options, &name_finish))
         .style(move |s| s.margin_horiz(14).apply_if(!save, |s| s.hide()));
+    if options.create_folder {
+        let visible = browser.new_folder;
+        floem::action::exec_after(std::time::Duration::from_millis(90), move |_| {
+            visible.try_update(|show| *show = true);
+        });
+    }
     let new_folder = browser.new_folder;
     let folder_name = browser.folder_name;
     let create = browser.clone();
@@ -513,7 +612,7 @@ fn dialog(
     let mode = browser.mode;
     let query = browser.query;
     let edit_location = browser.clone();
-    stack((
+    let content = stack((
         header,
         stack((
             stack((folder_field, tree)).style(move |s| {
@@ -521,7 +620,7 @@ fn dialog(
                     .flex_grow(if show_preview.get() { 0.85_f32 } else { 1.0 })
                     .padding(14)
                     .background(
-                        config.get().color(SparrowColor::FILE_PICKER_SIDEBAR),
+                        config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
                     )
                     .flex_basis(0)
                     .min_width(0)
@@ -621,45 +720,57 @@ fn dialog(
         let config = config.get();
         s.size_full()
             .flex_col()
-            .background(config.color(SparrowColor::FILE_PICKER_CANVAS))
+            .background(config.color(SparrowColor::PANEL_BACKGROUND))
             .color(config.color(SparrowColor::EDITOR_FOREGROUND))
             .font_size(config.ui.font_size() as f32)
-    })
-    .on_event_cont(EventListener::WindowClosed, move |_| closed(None))
-    .on_event(EventListener::KeyUp, move |event| {
-        let Event::KeyUp(event) = event else {
-            return EventPropagation::Continue;
-        };
-        match &event.key.logical_key {
-            Key::Named(NamedKey::Escape) => {
-                if crate::widgets::modal_focus::consume_popup_escape() {
-                    return EventPropagation::Stop;
-                }
-                if mode.get_untracked() != navigation::Mode::Location {
-                    mode.set(navigation::Mode::Location);
-                    query.set(String::new());
-                    tree_id.request_focus();
-                } else {
-                    escape(None);
-                }
+            .class(floem::views::scroll::Handle, |s| {
+                s.background(config.color(SparrowColor::SPARROW_SCROLL_BAR))
+            })
+    });
+    let matte = config
+        .get_untracked()
+        .color(SparrowColor::SPARROW_WINDOW_BACKGROUND);
+    crate::widgets::dialog_frame::dialog_frame(content, matte)
+        .on_event_cont(EventListener::WindowGotFocus, move |_| {
+            if mode.get_untracked() == navigation::Mode::Location {
+                tree_id.request_focus();
             }
-            Key::Character(key)
-                if event
-                    .modifiers
-                    .intersects(Modifiers::CONTROL | Modifiers::META) =>
-            {
-                if key.eq_ignore_ascii_case("l") {
-                    edit_location.edit_location();
-                } else if key.eq_ignore_ascii_case("f") {
-                    mode.set(navigation::Mode::Search);
-                } else {
-                    return EventPropagation::Continue;
+        })
+        .on_event_cont(EventListener::WindowClosed, move |_| closed(None))
+        .on_event(EventListener::KeyUp, move |event| {
+            let Event::KeyUp(event) = event else {
+                return EventPropagation::Continue;
+            };
+            match &event.key.logical_key {
+                Key::Named(NamedKey::Escape) => {
+                    if crate::widgets::modal_focus::consume_popup_escape() {
+                        return EventPropagation::Stop;
+                    }
+                    if mode.get_untracked() != navigation::Mode::Location {
+                        mode.set(navigation::Mode::Location);
+                        query.set(String::new());
+                        tree_id.request_focus();
+                    } else {
+                        escape(None);
+                    }
                 }
+                Key::Character(key)
+                    if event
+                        .modifiers
+                        .intersects(Modifiers::CONTROL | Modifiers::META) =>
+                {
+                    if key.eq_ignore_ascii_case("l") {
+                        edit_location.edit_location();
+                    } else if key.eq_ignore_ascii_case("f") {
+                        mode.set(navigation::Mode::Search);
+                    } else {
+                        return EventPropagation::Continue;
+                    }
+                }
+                _ => return EventPropagation::Continue,
             }
-            _ => return EventPropagation::Continue,
-        }
-        EventPropagation::Stop
-    })
+            EventPropagation::Stop
+        })
 }
 
 #[cfg(test)]

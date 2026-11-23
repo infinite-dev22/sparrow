@@ -216,7 +216,7 @@ pub(super) fn dialog_card(style: Style, config: &SparrowConfig) -> Style {
         .max_height_pct(92.0)
         .min_height(0.0)
         .flex_col()
-        .border_radius(8.0)
+        .border_radius(crate::widgets::dialog_frame::DIALOG_RADIUS)
 }
 
 #[cfg(test)]

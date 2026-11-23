@@ -194,7 +194,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .style(|s| s.width(92)),
         focus
             .menu_if(
-                button(|| "⌄", ButtonKind::Plain, config),
+                crate::widgets::button_with_content(crate::widgets::tree_chevron(config, || true, || true), ButtonKind::Plain, config),
                 move || mask_enabled.get_untracked(),
                 move || {
                     [

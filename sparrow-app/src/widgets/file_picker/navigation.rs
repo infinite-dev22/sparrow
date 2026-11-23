@@ -168,7 +168,9 @@ fn action_menu(
             })
             .class(ScrollClass, |s| {
                 s.size(164, height)
-                    .background(config.color(SparrowColor::FILE_PICKER_SIDEBAR))
+                    .background(
+                        config.color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
+                    )
                     .color(config.color(SparrowColor::EDITOR_FOREGROUND))
                     .border(1)
                     .border_color(border)
@@ -182,6 +184,7 @@ pub(super) fn header(
     title: String,
     browser: Browser,
     home: Option<PathBuf>,
+    project: Option<PathBuf>,
     location: impl View + 'static,
     show_preview: RwSignal<bool>,
     finish: Complete,
@@ -194,6 +197,8 @@ pub(super) fn header(
         .and_then(|dirs| dirs.desktop_dir().map(Path::to_path_buf))
         .or_else(|| home.as_ref().map(|path| path.join("Desktop")))
         .filter(|path| path.is_dir());
+    let go_project = browser.clone();
+    let has_project = project.is_some();
     let mut places = Vec::new();
     for (label, destination) in [("Home", home), ("Desktop", desktop)] {
         if let Some(path) = destination {
@@ -213,6 +218,10 @@ pub(super) fn header(
     let new_folder = browser.new_folder;
     let name = browser.folder_name;
     stack((
+        empty().style(move |s| s.absolute().inset_left(0).inset_top(0).height_full()
+            .width_pct(if show_preview.get() { 42.5 } else { 100.0 })
+            .pointer_events_none()
+            .background(config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND))),
         clickable_icon(
             || SparrowIcons::SEARCH,
             move || {
@@ -256,6 +265,13 @@ pub(super) fn header(
         )).style(|s| s.flex_shrink(0.0_f32)),
         location.style(|s| s.flex_basis(0).flex_grow(1.0_f32).flex_shrink(1.0_f32).min_width(0)),
         clickable_icon(
+            || SparrowIcons::DIRECTORY,
+            move || {
+                if let Some(path) = &project { go_project.enter(path.clone()); }
+            },
+            || false, move || !has_project, || "Current project folder", config,
+        ).style(move |s| s.apply_if(!has_project, |s| s.hide())),
+        clickable_icon(
             || SparrowIcons::ADD,
             move || {
                 name.set(String::new());
@@ -297,7 +313,7 @@ pub(super) fn header(
         s.width_full().height(46).flex_shrink(0.0_f32).items_center()
             .padding_horiz(10).gap(6).border_bottom(1)
             .border_color(config.color(SparrowColor::SPARROW_BORDER))
-            .background(config.color(SparrowColor::FILE_PICKER_SIDEBAR))
+            .background(config.color(SparrowColor::PANEL_BACKGROUND))
     })
 }
 

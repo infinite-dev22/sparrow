@@ -35,6 +35,7 @@ pub enum SaveEvent {
     App(AppInfo),
     Workspace(SparrowWorkspace, WorkspaceInfo),
     RecentWorkspace(SparrowWorkspace),
+    RemoveRecentWorkspace(SparrowWorkspace),
     Doc(DocInfo),
     DisabledVolts(Vec<VoltID>),
     WorkspaceDisabledVolts(Arc<SparrowWorkspace>, Vec<VoltID>),
@@ -91,6 +92,13 @@ impl SparrowDb {
                                 local_db.insert_recent_workspace(workspace)
                             {
                                 tracing::error!("{:?}", err);
+                            }
+                        }
+                        SaveEvent::RemoveRecentWorkspace(workspace) => {
+                            let mut recents = local_db.recent_workspaces().unwrap_or_default();
+                            recents.retain(|entry| entry.kind != workspace.kind || entry.path != workspace.path);
+                            if let Err(error) = local_db.write_recent_workspaces(&recents) {
+                                tracing::error!(%error, "Could not remove recent workspace");
                             }
                         }
                         SaveEvent::Doc(info) => {
@@ -214,6 +222,17 @@ impl SparrowDb {
         Ok(())
     }
 
+    pub fn remove_recent_workspace(&self, workspace: &SparrowWorkspace) -> Result<()> {
+        self.save_tx.send(SaveEvent::RemoveRecentWorkspace(workspace.clone()))?;
+        Ok(())
+    }
+
+    fn write_recent_workspaces(&self, workspaces: &[SparrowWorkspace]) -> Result<()> {
+        let workspaces = serde_json::to_string_pretty(workspaces)?;
+        std::fs::write(self.folder.join(RECENT_WORKSPACES), workspaces)?;
+        Ok(())
+    }
+
     fn insert_recent_workspace(&self, workspace: SparrowWorkspace) -> Result<()> {
         let mut workspaces = self.recent_workspaces().unwrap_or_default();
 
@@ -237,10 +256,7 @@ impl SparrowDb {
             workspaces.push(workspace);
         }
         workspaces.sort_by_key(|w| -(w.last_open as i64));
-        let workspaces = serde_json::to_string_pretty(&workspaces)?;
-        std::fs::write(self.folder.join(RECENT_WORKSPACES), workspaces)?;
-
-        Ok(())
+        self.write_recent_workspaces(&workspaces)
     }
 
     pub fn save_workspace_info(&self, workspace:SparrowWorkspace, info:WorkspaceInfo) {

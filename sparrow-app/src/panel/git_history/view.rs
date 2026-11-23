@@ -419,12 +419,17 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             }
             EventPropagation::Continue
         });
+    let branch_heading = move |title: &'static str, expanded: floem::reactive::RwSignal<bool>| {
+        stack((crate::widgets::tree_chevron(config, move || expanded.get(), || true), label(move || title)))
+            .on_click_stop(move |_| expanded.update(|value| *value = !*value))
+            .style(|s| s.height(24).items_center().gap(5).padding_left(8))
+    };
     stack((crate::panel::chrome::header(window,PanelKind::GitHistory,"Git",label(||"Log").style(move |s|s.height(24.0).padding_horiz(10.0).items_center().border_radius(3.0).background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND)))),
         stack((
             stack((text_input(branch_query, config).placeholder("Branch or tag"),
                 label(||"HEAD (Current Branch)").on_click_stop(move |_|branch.set("HEAD".into())).style(|s|s.height(26.0).items_center().padding_left(18.0)),
                 label(||"All branches").on_click_stop(move |_|branch.set(String::new())).style(|s|s.height(24.0).items_center().padding_left(18.0)),
-                crate::widgets::sparrow_scroll(stack((label(move ||if local_open.get(){"⌄  Local"}else{"›  Local"}).on_click_stop(move |_|local_open.update(|value|*value=!*value)).style(|s|s.height(24.0).items_center().padding_left(8.0)),branches(false),label(move ||if remote_open.get(){"⌄  Remote"}else{"›  Remote"}).on_click_stop(move |_|remote_open.update(|value|*value=!*value)).style(|s|s.height(24.0).items_center().padding_left(8.0)),branches(true))).style(|s|s.flex_col().width_full())).style(|s|s.flex_grow(1.0_f32).width_full().min_height(0.0))
+                crate::widgets::sparrow_scroll(stack((branch_heading("Local", local_open),branches(false),branch_heading("Remote", remote_open),branches(true))).style(|s|s.flex_col().width_full())).style(|s|s.flex_grow(1.0_f32).width_full().min_height(0.0))
             )).style(move |s|s.width_pct(27.0).height_full().padding(6.0).flex_col().border_right(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
             stack((stack((text_input(query, config).placeholder("Text or hash").style(move |s|s.min_width(80.0).width_pct(32.0)),
                 text_input(user, config).placeholder("User").style(move |s|s.width(100.0)),
@@ -441,7 +446,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             )).style(|s|s.width_pct(48.0).height_full().flex_col()),
             stack((crate::widgets::sparrow_scroll(dyn_stack(move ||detail.with(|d|file_tree(&d.files,&closed.get())),move |file|(selected.get_untracked(),file.path.clone(),file.directory),move |file|{
                 let target=file.path.clone();let folder_toggle=file.path.clone();let selection=file.path.clone();let highlight=file.path.clone();let directory=file.directory;let level=file.level;let count=file.count;let revision=selected.get_untracked();let split=split.clone();let root=state.with_untracked(|s|s.root.clone());let folder=file.path.parent().unwrap_or(Path::new("")).to_string_lossy().to_string();
-                stack((label(move ||if directory{if closed.with(|set|set.contains(&folder_toggle)){"›"}else{"⌄"}}else{""}).style(|s|s.width(10.0)),
+                stack((crate::widgets::tree_chevron(config, move || !closed.with(|set|set.contains(&folder_toggle)), move ||directory),
                     svg({let path=file.path.clone();move ||if directory{config.get().folder_svg(&path).0}else{config.get().file_svg(&path).0}}).style(|s|s.size(14.0,14.0)),label(move ||if directory{format!("{}  {count} files",file.path.file_name().unwrap_or_default().to_string_lossy())}else{file.path.file_name().unwrap_or_default().to_string_lossy().to_string()}).style(|s|s.text_ellipsis()),label(move ||if directory{String::new()}else{folder.clone()}).style(move |s|s.min_width(0.0).text_ellipsis().color(config.get().color(SparrowColor::EDITOR_DIM)))))
                     .on_click_stop(move |_|{selected_file.set(Some(selection.clone()));if directory{closed.update(|set|{if !set.remove(&selection){set.insert(selection.clone());}});}})
                     .on_double_click_stop(move |_|{if !directory{split.open_revision_diff(root.join(&target),revision.clone(),root.clone());}})

@@ -323,16 +323,12 @@ pub(super) fn view(
             let name = entry.name.clone();
             let query = for_rows.query;
             let row = stack((
-                label(move || {
-                    if !is_folder || query.with(|value| !value.trim().is_empty()) {
-                        ""
-                    } else if expanded {
-                        "⌄"
-                    } else {
-                        "›"
-                    }
-                })
-                .style(|s| s.width(18).flex_shrink(0.0_f32))
+                crate::widgets::tree_chevron(
+                    config,
+                    move || expanded,
+                    move || is_folder && query.with(|value| value.trim().is_empty()),
+                )
+                .style(|s| s.margin_right(4))
                 .on_click_stop(move |_| {
                     if is_folder && query.with(|value| value.trim().is_empty()) {
                         toggle(&preview, path.clone());
@@ -398,7 +394,9 @@ pub(super) fn view(
                 .min_height(0)
                 .border(1)
                 .border_radius(6)
-                .background(config.get().color(SparrowColor::FILE_PICKER_CANVAS))
+                .background(
+                    config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
+                )
                 .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
         });
     let id = view.id();

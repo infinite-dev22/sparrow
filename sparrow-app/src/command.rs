@@ -1035,6 +1035,7 @@ pub enum InternalCommand {
 
 #[derive(Clone)]
 pub enum WindowCommand {
+    OpenPaths(Vec<sparrow_rpc::file::PathObject>),
     SetWorkspace {
         workspace: SparrowWorkspace,
     },
@@ -1048,6 +1049,5 @@ pub enum WindowCommand {
     OpenProjectTab { workspace: SparrowWorkspace },
     NextWorkspaceTab,
     PreviousWorkspaceTab,
-    NewWindow,
     CloseWindow,
 }

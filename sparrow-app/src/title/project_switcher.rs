@@ -228,7 +228,7 @@ pub fn project_switcher(
                         config,
                     ),
                     divider(),
-                    section_label("Open Projects"),
+                    section_label("Current Project"),
                     dyn_stack(
                         move || window_tabs.get(),
                         |(_, tab)| tab.window_tab_id,

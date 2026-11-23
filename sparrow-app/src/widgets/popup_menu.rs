@@ -224,7 +224,7 @@ fn show(menu: Menu, position: Option<Point>, anchor: Option<ViewId>) {
                         .into_any();
                 }
                 let enabled=entry.enabled();let title=entry.title().to_string();let child=matches!(entry,MenuEntry::SubMenu(_));
-                stack((label(move ||title.clone()).style(|s|s.flex_grow(1.0_f32)),label(move ||if child {"›"}else{""}).style(|s|s.margin_left(24.0))))
+                stack((label(move ||title.clone()).style(|s|s.flex_grow(1.0_f32)),crate::widgets::tree_chevron(config, || false, move || child).style(|s|s.margin_left(24.0))))
                     .on_event_stop(EventListener::PointerEnter,move |_|{if enabled{enter(levels,selections,depth,index,overlay,restore,false);}})
                     .on_click_stop(move |_|enter(levels,selections,depth,index,overlay,restore,true))
                     .style(move |s|s.width_full().height(26.0).padding_horiz(10.0).items_center().border_radius(3.0)

@@ -9,6 +9,7 @@ mod checkbox;
 mod compact_button;
 mod dialog_surface;
 pub mod divider;
+pub(crate) mod dialog_frame;
 pub mod dropdown;
 mod editor_input;
 mod empty_state;
@@ -32,6 +33,8 @@ pub mod text_area;
 pub mod text_input;
 mod toggle_row;
 pub(crate) mod tooltip;
+mod tree_chevron;
+pub(crate) use tree_chevron::tree_chevron;
 pub mod wave;
 pub mod web_link;
 

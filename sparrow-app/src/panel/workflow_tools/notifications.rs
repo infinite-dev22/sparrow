@@ -53,15 +53,15 @@ pub fn notifications(window: Rc<WindowTabData>) -> impl View {
         label(||"No notifications").style(move |s|s.padding(24.0).apply_if(!notices.with(|n|n.is_empty()),|s|s.hide())),
         sparrow_scroll(dyn_stack(move ||groups.get(),|title|title.clone(),move |title|{
             let count_title=title.clone();let toggle_title=title.clone();let dismiss_title=title.clone();let rows_title=title.clone();
-            let report_window=report_window.clone();
+            let report_window=report_window.clone();let chevron_title=title.clone();
             stack((
-                stack((label(move ||{
+                stack((crate::widgets::tree_chevron(config, move ||open_groups.with(|g|g.contains(&chevron_title)), ||true),label(move ||{
                     let count=notices.with(|items|items.iter().filter(|n|n.title==count_title).count());
-                    format!("{} {}  ({count})",if open_groups.with(|g|g.contains(&count_title)){"⌄"}else{"›"},count_title)
+                    format!("{count_title}  ({count})")
                 }).style(|s|s.flex_grow(1.0_f32).font_weight(floem::text::Weight(600))),
                     clickable_icon(||SparrowIcons::CLOSE,move ||notices.update(|items|items.retain(|n|n.title!=dismiss_title)),||false,||false,||"Dismiss group",config)
                 )).on_click_stop(move |_|open_groups.update(|groups|{if !groups.remove(&toggle_title){groups.insert(toggle_title.clone());}}))
-                  .style(|s|s.height(28.0).width_full().items_center().padding_horiz(6.0)),
+                  .style(|s|s.height(28.0).width_full().items_center().padding_horiz(6.0).gap(4)),
                 dyn_stack(move ||{
                     let all=open_groups.with(|groups|groups.contains(&rows_title));
                     notices.with(|items|items.iter().rev().filter(|n|n.title==rows_title).take(if all{usize::MAX}else{1}).cloned().collect::<Vec<_>>())

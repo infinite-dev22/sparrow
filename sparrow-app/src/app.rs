@@ -28,12 +28,12 @@ use crate::{
     update::ReleaseInfo,
     window::{TabsInfo, WindowData, WindowInfo},
     window_tab::WindowTabData,
-    workspace::{SparrowWorkspace, SparrowWorkspaceType},
+    workspace::SparrowWorkspace,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use floem::{
-    View,
+    IntoView, View,
     event::{Event, EventListener, EventPropagation},
     ext_event::{create_ext_action, create_signal_from_channel},
     peniko::kurbo::{Point, Size},
@@ -64,6 +64,8 @@ use tracing_subscriber::{filter::Targets, reload::Handle};
 mod grammars;
 pub(crate) mod logging;
 mod log_viewer;
+mod startup;
+mod welcome;
 mod window_messages;
 mod workbench;
 mod workspace_tabs;
@@ -86,9 +88,8 @@ pub(crate) fn sparrow_window_config() -> WindowConfig {
 struct Cli {
     #[clap(long,hide=true)]
     run_config_task: Option<String>,
-    /// Launch new window even if sparrow is already running
-    #[clap(short, long, action)]
-    new: bool,
+    #[clap(short = 'n', long = "new", action, hide = true)]
+    _new: bool,
     /// Don't return instantly when opened in a terminal
     #[clap(short, long, action)]
     wait: bool,
@@ -181,6 +182,12 @@ impl AppData {
     }
 
     pub fn new_window(&self, folder: Option<PathBuf>) {
+        if let Some(window) = self.active_window() {
+            if let Some(path) = folder {
+                window.request_workspace(SparrowWorkspace { path: Some(path), ..Default::default() }, Vec::new());
+            }
+            return;
+        }
         let config = self
             .active_window()
             .map(|window| {
@@ -240,6 +247,7 @@ impl AppData {
                 }
             }
             AppCommand::WindowClosed(window_id) => {
+                crate::widgets::file_picker::close_active();
                 if self.app_terminated.get_untracked() {
                     return;
                 }
@@ -261,6 +269,7 @@ impl AppData {
                 }
             }
             AppCommand::CloseWindow(window_id) => {
+                crate::widgets::file_picker::close_active();
                 floem::close_window(window_id);
             }
             AppCommand::NewWindow { folder } => {
@@ -276,150 +285,63 @@ impl AppData {
         &self,
         db: Arc<SparrowDb>,
         paths: Vec<PathObject>,
+        inherit_shell: bool,
     ) -> floem::Application {
-        let mut app = floem::Application::new();
-
-        let mut initial_windows = 0;
-
-        // Split user input into known existing directors and
-        // file paths that exist or not
-        let (dirs, files): (Vec<&PathObject>, Vec<&PathObject>) =
-            paths.iter().partition(|p| p.is_dir);
-
-        let files: Vec<PathObject> = files.into_iter().cloned().collect();
-        let mut files = if files.is_empty() { None } else { Some(files) };
-
-        if !dirs.is_empty() {
-            // There were directories specified, so we'll load those as windows
-
-            // Use the last opened window's size and position as the default
-            let (size, mut pos) = db
-                .get_window()
-                .map(|i| (i.size, i.pos))
-                .unwrap_or_else(|_| (Size::new(800.0, 600.0), Point::new(0.0, 0.0)));
-
-            for dir in dirs {
-                #[cfg(windows)]
-                let workspace_type = if !std::env::var("WSL_DISTRO_NAME")
-                    .unwrap_or_default()
-                    .is_empty()
-                    || !std::env::var("WSL_INTEROP").unwrap_or_default().is_empty()
-                {
-                    SparrowWorkspaceType::RemoteWSL(crate::workspace::WslHost {
-                        host: String::new(),
-                    })
-                } else {
-                    SparrowWorkspaceType::Local
-                };
-                #[cfg(not(windows))]
-                let workspace_type = SparrowWorkspaceType::Local;
-
-                let info = WindowInfo {
-                    size,
-                    pos,
-                    maximised: false,
-                    tabs: TabsInfo {
-                        active_tab: 0,
-                        workspaces: vec![SparrowWorkspace {
-                            kind: workspace_type,
-                            path: Some(dir.path.to_owned()),
-                            last_open: 0,
-                        }],
-                    },
-                };
-
-                pos += (50.0, 50.0);
-
-                let config = self
-                    .default_window_config()
-                    .size(info.size)
-                    .position(info.pos);
-                let config = if cfg!(target_os = "macos")
-                    || self.config.get_untracked().core.custom_titlebar
-                {
-                    config.show_titlebar(false)
-                } else {
-                    config
-                };
-                let app_data = self.clone();
-                let files = files.take().unwrap_or_default();
-                app = app.window(
-                    move |window_id| app_data.app_view(window_id, info, files),
-                    Some(config),
-                );
-                initial_windows += 1;
-            }
-        } else if files.is_none() {
-            // There were no dirs and no files specified, so we'll load the last windows
-            match db.get_app() {
-                Ok(app_info) => {
-                    for info in app_info.windows {
-                        let config = self
-                            .default_window_config()
-                            .size(info.size)
-                            .position(info.pos);
-                        let config = if cfg!(target_os = "macos")
-                            || self.config.get_untracked().core.custom_titlebar
-                        {
-                            config.show_titlebar(false)
-                        } else {
-                            config
-                        };
-                        let app_data = self.clone();
-                        app = app.window(
-                            move |window_id| {
-                                app_data.app_view(window_id, info, vec![])
-                            },
-                            Some(config),
-                        );
-                        initial_windows += 1;
-                    }
-                }
-                Err(err) => {
-                    tracing::error!("{:?}", err);
-                }
-            }
-        }
-
-        if initial_windows == 0 {
-            let mut info = db.get_window().unwrap_or_else(|_| WindowInfo {
-                size: Size::new(800.0, 600.0),
+        let mut info = if paths.is_empty() {
+            db.get_app().ok().and_then(|app| app.windows.into_iter().next())
+        } else {
+            None
+        }.unwrap_or_else(|| {
+            let mut window = db.get_window().unwrap_or_else(|_| WindowInfo {
+                size: Size::new(900.0, 640.0),
                 pos: Point::ZERO,
                 maximised: false,
-                tabs: TabsInfo {
-                    active_tab: 0,
-                    workspaces: vec![SparrowWorkspace::default()],
-                },
+                tabs: TabsInfo { active_tab: 0, workspaces: Vec::new() },
             });
-            info.tabs = TabsInfo {
-                active_tab: 0,
-                workspaces: vec![SparrowWorkspace::default()],
-            };
-            let config = self
-                .default_window_config()
-                .size(info.size)
-                .position(info.pos);
-            let config = if cfg!(target_os = "macos")
-                || self.config.get_untracked().core.custom_titlebar
-            {
-                config.show_titlebar(false)
-            } else {
-                config
-            };
-            let app_data = self.clone();
-            app = app.window(
-                move |window_id| {
-                    app_data.app_view(
-                        window_id,
-                        info,
-                        files.take().unwrap_or_default(),
-                    )
-                },
-                Some(config),
-            );
+            let mut workspace = SparrowWorkspace::default();
+            workspace.path = paths.iter().find(|path| path.is_dir).map(|path| path.path.clone());
+            #[cfg(windows)]
+            if workspace.path.is_some() && (std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSL_INTEROP").is_some()) {
+                workspace.kind = crate::workspace::SparrowWorkspaceType::RemoteWSL(crate::workspace::WslHost { host: String::new() });
+            }
+            window.tabs = TabsInfo { active_tab: 0, workspaces: vec![workspace] };
+            window
+        });
+        if paths.iter().filter(|path| path.is_dir).count() > 1 {
+            tracing::info!("Multiple project paths were supplied; opening the first");
         }
-
-        app
+        if let Some(workspace) = info.tabs.workspaces.get_mut(info.tabs.active_tab)
+            && !workspace.kind.is_remote()
+            && workspace.path.as_ref().is_some_and(|path| !path.is_dir())
+        {
+            workspace.path = None;
+        }
+        let files = paths.into_iter().filter(|path| !path.is_dir).collect();
+        let config = self.default_window_config().size(info.size).position(info.pos);
+        let config = if cfg!(target_os = "macos") || self.config.get_untracked().core.custom_titlebar {
+            config.show_titlebar(false)
+        } else {
+            config
+        };
+        let app_data = self.clone();
+        let theme = self.config.read_only();
+        floem::Application::new().window(
+            move |splash| startup::view(theme, inherit_shell, move || {
+                floem::new_window(
+                    move |id| {
+                        let view = app_data.app_view(id, info, files);
+                        floem::action::exec_after(std::time::Duration::from_millis(90), move |_| {
+                            floem::close_window(splash);
+                        });
+                        view
+                    },
+                    Some(config),
+                );
+            }),
+            Some(sparrow_window_config().title("Sparrow").show_titlebar(false)
+                .undecorated(true).with_transparent(true).resizable(false)
+                .apply_default_theme(false).size((290.0, 200.0))),
+        )
     }
 
     fn app_view(
@@ -611,7 +533,9 @@ impl AppData {
                                 tab.file_explorer.cancel_naming();
                                 return EventPropagation::Stop;
                             }
-                            let modal = if tab.log_viewer_visible.get_untracked() {
+                            let modal = if tab.alert_data.active.get_untracked() {
+                                Some(tab.alert_data.active)
+                            } else if tab.log_viewer_visible.get_untracked() {
                                 Some(tab.log_viewer_visible)
                             } else if tab.settings_modal_visible.get_untracked()
                             {
@@ -695,6 +619,7 @@ impl AppData {
                 }
             })
             .on_event_stop(EventListener::WindowGotFocus, move |_| {
+                crate::widgets::file_picker::focus_existing();
                 crate::ui_test_guard::focus(true);
                 app_command.send(AppCommand::WindowGotFocus(window_id));
             })
@@ -767,13 +692,23 @@ fn window_tab(
     let git_modal=window_tab_data.git_actions.active;
     let symbol_modal=window_tab_data.rename.active;
     let interaction_layer_open=move || naming_open() ||symbol_modal.get()||file_modal.get()||scaffold_modal.get()||formatting_modal.get()||search_modal.get()||everywhere_modal.get()||git_modal.get();
+    let alert_open = window_tab_data.alert_data.active;
     let modal_open =
-        move || naming_open() || log_viewer.get() || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || everywhere_modal.get() || git_modal.get();
+        move || alert_open.get() || naming_open() || log_viewer.get() || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || everywhere_modal.get() || git_modal.get();
 
+    let no_workspace = window_tab_data.workspace.path.is_none() && !window_tab_data.workspace.kind.is_remote();
+    let tabs = window_tab_data.main_split.editor_tabs;
+    let is_welcome = move || no_workspace && !tabs.with(|tabs| {
+        tabs.values().any(|tab| tab.with(|tab| !tab.children.is_empty()))
+    });
+    let welcome = if no_workspace {
+        welcome::view(window_tab_data.clone()).style(move |s| s.apply_if(!is_welcome(), |s| s.hide())).into_any()
+    } else {
+        empty().style(|s| s.hide()).into_any()
+    };
     let project_color = window_tab_data.common.project_color;
     let background_tasks_open = window_tab_data.common.background_tasks.open;
     let about_open = window_tab_data.about_data.visible;
-    let alert_open = window_tab_data.alert_data.active;
     let view = stack((
         stack((
             crate::project_appearance::glow_view(config, project_color),
@@ -783,15 +718,17 @@ fn window_tab(
                 project_chip_origin,
                 branch_chip_origin,
                 device_chip_origin,
-            ),
-            workbench(window_tab_data.clone()),
+            ).style(move |s| s.apply_if(is_welcome(), |s| s.hide())),
+            welcome::title(window_tab_data.clone()).style(move |s| s.apply_if(!is_welcome(), |s| s.hide())),
+            workbench(window_tab_data.clone()).style(move |s| s.apply_if(is_welcome(), |s| s.hide())),
+            welcome,
             status(
                 window_tab_data.clone(),
                 source_control,
                 workbench_command,
                 status_height,
                 config,
-            ),
+            ).style(move |s| s.apply_if(is_welcome(), |s| s.hide())),
         ))
         .on_resize(move |rect| {
             layout_rect.set(rect);
@@ -1003,11 +940,7 @@ pub fn launch() {
             )));
     }
 
-    let stdin = std::io::stdin();
-    if !stdin.is_terminal() {
-        trace!(TraceLevel::INFO, "Loading custom environment from shell");
-        load_shell_env();
-    }
+    let inherit_shell = !std::io::stdin().is_terminal();
 
     // small hack to unblock terminal if launched from it
     // launch it as a separate process that waits
@@ -1053,9 +986,8 @@ pub fn launch() {
     //     return;
     // }
 
-    // If the cli is not requesting a new window, and we're not developing a plugin, we try to open
-    // in the existing Sparrow process
-    if !cli.new {
+    // Route launcher and command-line requests to the running IDE.
+    {
         match get_socket() {
             Ok(socket) => {
                 if let Err(e) = try_open_in_existing_process(socket, &cli.paths) {
@@ -1172,7 +1104,7 @@ pub fn launch() {
         plugin_paths,
     };
 
-    let app = app_data.create_windows(db.clone(), cli.paths);
+    let app = app_data.create_windows(db.clone(), cli.paths, inherit_shell);
 
     {
         let app_data = app_data.clone();
@@ -1278,10 +1210,11 @@ pub fn launch() {
         let app_data = app_data.clone();
         create_effect(move |_| {
             if let Some(CoreNotification::OpenPaths { paths }) = notification.get() {
-                if let Some(window_tab) = app_data.active_window_tab() {
-                    window_tab.open_paths(&paths);
-                    // focus window after open doc
-                    floem::action::focus_window();
+                if let Some(window) = app_data.active_window() {
+                    window.run_window_command(crate::command::WindowCommand::OpenPaths(paths));
+                    if !crate::widgets::file_picker::focus_existing() {
+                        floem::action::focus_window();
+                    }
                 }
             }
         });
@@ -1304,6 +1237,7 @@ pub fn launch() {
 
     app.on_event(move |event| match event {
         floem::AppEvent::WillTerminate => {
+            crate::widgets::file_picker::close_active();
             app_data.app_terminated.set(true);
             if let Err(err) = db.insert_app(app_data.clone()) {
                 tracing::error!("{:?}", err);
@@ -1321,7 +1255,7 @@ pub fn launch() {
 }
 
 /// Uses a login shell to load the correct shell environment for the current user.
-pub fn load_shell_env() {
+fn read_shell_env() -> String {
     use std::process::Command;
 
     #[cfg(not(windows))]
@@ -1333,7 +1267,7 @@ pub fn load_shell_env() {
                 TraceLevel::ERROR,
                 "Failed to obtain shell environment: {error}"
             );
-            return;
+            return String::new();
         }
     };
 
@@ -1354,7 +1288,7 @@ pub fn load_shell_env() {
     #[cfg(windows)]
     command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW);
 
-    let env = match command.output() {
+    match command.output() {
         Ok(output) => String::from_utf8(output.stdout).unwrap_or_default(),
 
         Err(error) => {
@@ -1362,10 +1296,12 @@ pub fn load_shell_env() {
                 TraceLevel::ERROR,
                 "Failed to obtain shell environment: {error}"
             );
-            return;
+            return String::new();
         }
-    };
+    }
+}
 
+fn apply_shell_env(env: String) {
     env.split('\n')
         .filter_map(|line| line.split_once('='))
         .for_each(|(key, value)| unsafe {
@@ -1948,17 +1884,6 @@ pub fn window_menu(
             }))
             .entry(MenuItem::new("Previous Editor Tab").action(move || {
                 workbench_command.send(PreviousEditorTab);
-            }))
-            .separator()
-            .entry(MenuItem::new("Next Window Tab").action(move || {
-                workbench_command.send(NextWindowTab);
-            }))
-            .entry(MenuItem::new("Previous Window Tab").action(move || {
-                workbench_command.send(PreviousWindowTab);
-            }))
-            .separator()
-            .entry(MenuItem::new("New Window").action(move || {
-                workbench_command.send(NewWindow);
             })),
     );
 

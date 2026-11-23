@@ -193,14 +193,24 @@ fn split_resize_border(
                             SplitDirection::Vertical => CursorStyle::ColResize,
                             SplitDirection::Horizontal => CursorStyle::RowResize,
                         })
-                        .background(config.get().color(SparrowColor::EDITOR_CARET))
+                        .background(
+                            config
+                                .get()
+                                .color(SparrowColor::EDITOR_LINK)
+                                .multiply_alpha(0.75),
+                        )
                     })
                     .hover(|s| {
                         s.cursor(match direction {
                             SplitDirection::Vertical => CursorStyle::ColResize,
                             SplitDirection::Horizontal => CursorStyle::RowResize,
                         })
-                        .background(config.get().color(SparrowColor::EDITOR_CARET))
+                        .background(
+                            config
+                                .get()
+                                .color(SparrowColor::EDITOR_LINK)
+                                .multiply_alpha(0.75),
+                        )
                     })
                     .pointer_events_auto()
             })
@@ -443,15 +453,92 @@ pub(crate) fn main_split(window_tab_data: Rc<WindowTabData>) -> impl View {
     })
     .debug_name("Main Split");
 
-    // Islands look: the editor area is a rounded island.
-    stack((split, island_corners(config, window_tab_data.common.project_color)))
-        .style(move |s| {
-            let config = config.get();
-            s.background(config.color(SparrowColor::EDITOR_BACKGROUND))
-                .border_radius(ISLAND_RADIUS)
-                .width_full()
-                .flex_grow(1.0f32)
-                .flex_basis(0.0)
+    let tabs = window_tab_data.main_split.editor_tabs;
+    let has_files = move || {
+        tabs.with(|tabs| {
+            tabs.values()
+                .any(|tab| tab.with(|tab| !tab.children.is_empty()))
         })
-        .debug_name("Editor Island")
+    };
+    let split = split.style(move |s| s.apply_if(!has_files(), |s| s.hide()));
+    let workbench = window_tab_data.common.workbench_command;
+    let keypress = window_tab_data.common.keypress;
+    let hints = [
+        (
+            "Search Everywhere",
+            crate::command::SparrowWorkbenchCommand::SearchEverywhere,
+        ),
+        (
+            "Go to File",
+            crate::command::SparrowWorkbenchCommand::Palette,
+        ),
+        (
+            "Open File",
+            crate::command::SparrowWorkbenchCommand::OpenFile,
+        ),
+    ];
+    let empty_editor = stack((
+        floem::views::stack_from_iter(hints.into_iter().map(|(title, command)| {
+            let id: &'static str = command.clone().into();
+            let shortcut = move || {
+                keypress.with(|keys| {
+                    keys.command_keymaps
+                        .get(id)
+                        .and_then(|maps| maps.first())
+                        .map(|map| {
+                            map.key
+                                .iter()
+                                .map(|press| press.label())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
+                        .unwrap_or_else(|| {
+                            if title == "Search Everywhere" {
+                                "Shift Shift".into()
+                            } else {
+                                String::new()
+                            }
+                        })
+                })
+            };
+            stack((
+                floem::views::label(move || title).style(move |s| {
+                    s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+                }),
+                floem::views::label(shortcut).style(move |s| {
+                    s.color(config.get().color(SparrowColor::EDITOR_FOREGROUND))
+                }),
+            ))
+            .on_click_stop(move |_| workbench.send(command.clone()))
+            .style(|s| s.gap(10).items_center())
+        }))
+        .style(|s| s.flex_col().gap(12)),
+        floem::views::label(|| "Drop files here to open them").style(move |s| {
+            s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+        }),
+    ))
+    .style(move |s| {
+        s.size_full()
+            .flex_col()
+            .justify_center()
+            .items_center()
+            .gap(18)
+            .apply_if(has_files(), |s| s.hide())
+    });
+
+    // Islands look: the editor area is a rounded island.
+    stack((
+        split,
+        empty_editor,
+        island_corners(config, window_tab_data.common.project_color),
+    ))
+    .style(move |s| {
+        let config = config.get();
+        s.background(config.color(SparrowColor::EDITOR_BACKGROUND))
+            .border_radius(ISLAND_RADIUS)
+            .width_full()
+            .flex_grow(1.0f32)
+            .flex_basis(0.0)
+    })
+    .debug_name("Editor Island")
 }

@@ -75,9 +75,9 @@ pub fn source_control_panel(
         let count = move || selection.with(|(total, _)| *total);
         stack((
             stack((
-                label(move || if open.get() { "⌄" } else { "›" })
+                crate::widgets::tree_chevron(config, move || open.get(), || true)
                     .on_click_stop(move |_| open.update(|v| *v = !*v))
-                    .style(|s| s.width(18.0)),
+                    .style(|s| s.margin_right(6.0)),
                 group_checkbox(
                     move || {
                         selection.with(|&(total, selected)| {

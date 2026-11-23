@@ -12,7 +12,9 @@ use std::{
 use floem::{
     IntoView, View,
     peniko::{Blob, Image, ImageFormat},
-    reactive::{Scope, SignalGet, SignalUpdate, create_effect, create_rw_signal},
+    reactive::{
+        Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal,
+    },
     views::{
         Decorators, dyn_container, dyn_stack, img, label, stack, stack_from_iter,
         svg,
@@ -285,9 +287,21 @@ pub(super) fn view(browser: Browser, config: Config) -> impl View {
                 let name = entry.name.clone();
                 let is_dir = entry.directory;
                 let path = entry.path.clone();
+                let chevron_path = path.clone();
+                let depth = entry.depth;
                 let row = stack((
-                    label(move || if is_dir { "›" } else { "" })
-                        .style(|s| s.width(11)),
+                    crate::widgets::tree_chevron(
+                        config,
+                        move || {
+                            folder.with(|rows| {
+                                rows.iter()
+                                    .position(|row| row.path == chevron_path)
+                                    .and_then(|index| rows.get(index + 1))
+                                    .is_some_and(|next| next.depth > depth)
+                            })
+                        },
+                        move || is_dir,
+                    ),
                     tree::entry_icon(path, is_dir, config),
                     label(move || name.clone())
                         .style(|s| s.min_width(0).text_ellipsis()),

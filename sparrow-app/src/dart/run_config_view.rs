@@ -692,7 +692,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             form_row("Additional attach args:",d.fields[3],"Additional arguments to 'flutter attach'.").style(move |s|s.apply_if(!is_flutter.get(),|s|s.hide())),
             form_row("Build flavor:",d.fields[4],"Optional Gradle product flavor or Xcode custom scheme.").style(move |s|s.apply_if(!is_flutter.get(),|s|s.hide())),
             form_row("Environment variables:",d.fields[5],"Additional environment variables. Format: KEY=value; KEY2=value."),
-            label(||"⌄  Before launch").style(|s|s.margin_top(6.0).margin_bottom(10.0)),
+            stack((crate::widgets::tree_chevron(config, || true, || true), label(||"Before launch"))).style(|s|s.margin_top(6.0).margin_bottom(10.0).items_center().gap(5)),
             stack((
                 stack((
                     keyboard.icon(||SparrowIcons::ADD,move ||{add_task.edit_task(0);floem::action::exec_after(std::time::Duration::from_millis(30),move |_|{if visible.get_untracked(){if let Some(id)=task_program_focus.get_untracked(){id.request_focus();}}});},||false,||false,||"Add before-launch task",config),

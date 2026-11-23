@@ -28,9 +28,11 @@ pub(super) fn test_tree(
             |r| (r.key.clone(), r.text.clone()),
             move |row| {
                 let key = row.key;
+                let chevron_key = key.clone();
                 let test = row.test;
                 let status = row.status;
                 stack((
+                    crate::widgets::tree_chevron(config, move || !collapsed.with(|rows| rows.contains(&chevron_key)), move || test.is_none()),
                     label(move || {
                         status.map(TestStatus::symbol).unwrap_or_default()
                     })
@@ -108,14 +110,7 @@ fn rows(run: &TestRun, collapsed: &BTreeSet<String>) -> Vec<Row> {
         let closed = collapsed.contains(&key);
         result.push(Row {
             key,
-            text: format!(
-                "{} {}",
-                if closed { "▸" } else { "▾" },
-                run.suites
-                    .get(&suite)
-                    .map(String::as_str)
-                    .unwrap_or("Loading tests")
-            ),
+            text: run.suites.get(&suite).cloned().unwrap_or_else(|| "Loading tests".into()),
             depth: 0,
             test: None,
             status: None,
@@ -149,7 +144,7 @@ fn group_rows(
         if visible {
             rows.push(Row {
                 key,
-                text: format!("{} {}", if closed { "▸" } else { "▾" }, group.name),
+                text: group.name.clone(),
                 depth,
                 test: None,
                 status: None,
