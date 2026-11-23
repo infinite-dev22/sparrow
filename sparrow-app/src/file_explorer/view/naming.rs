@@ -1,144 +1,175 @@
-//! Inline file and directory naming editor.
+//! Project path creation, rename, and copy popup.
 
 use std::path::Path;
 
 use floem::{
     View,
     event::EventListener,
-    peniko::Color,
-    reactive::{SignalGet, SignalUpdate, SignalWith},
-    style::Position,
-    views::{Container, Decorators, container, label, stack},
+    reactive::{SignalGet, SignalWith, create_effect, create_memo},
+    views::{Decorators, container, label, stack},
 };
-use lapce_xi_rope::Rope;
-use sparrow_core::selection::Selection;
+use sparrow_rpc::file::{Naming, NamingState};
 
-use crate::file_explorer::data::FileExplorerData;
 use crate::{
-    config::color::SparrowColor, panel::kind::PanelKind,
-    widgets::text_input::TextInputBuilder, window_tab::Focus,
+    config::color::SparrowColor,
+    file_explorer::data::FileExplorerData,
+    widgets::{ButtonKind, button, text_input::TextInputBuilder},
 };
 
-/// Blends `foreground` with `background`.
-///
-/// Uses the alpha channel from `foreground` - if `foreground` is opaque, `foreground` will be
-/// returned unchanged.
-///
-/// The result is always opaque regardless of the transparency of the inputs.
-fn blend_colors(background: Color, foreground: Color) -> Color {
-    let background = background.to_rgba8();
-    let foreground = foreground.to_rgba8();
-    let a: u16 = foreground.a.into();
-    let [r, g, b] = [
-        [background.r, foreground.r],
-        [background.g, foreground.g],
-        [background.b, foreground.b],
-    ]
-    .map(|x| x.map(u16::from))
-    .map(|[b, f]| (a * f + (255 - a) * b) / 255)
-    .map(|x| x as u8);
-
-    Color::from_rgba8(r, g, b, 255)
+fn naming_description(naming: &Naming) -> (&'static str, &'static str, String) {
+    match naming {
+        Naming::None => ("", "", String::new()),
+        Naming::NewNode(node) => (
+            if node.is_dir {
+                "New Directory"
+            } else {
+                "New File"
+            },
+            "Create",
+            node.base_path.display().to_string(),
+        ),
+        Naming::Renaming(rename) => (
+            "Rename",
+            "Rename",
+            format!(
+                "Current name  {}",
+                rename
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ),
+        ),
+        Naming::Duplicating(copy) => (
+            if copy.move_on_finish { "Move" } else { "Copy" },
+            if copy.move_on_finish { "Move" } else { "Copy" },
+            copy.destination
+                .as_deref()
+                .or_else(|| copy.path.parent())
+                .map(Path::display)
+                .map(|path| path.to_string())
+                .unwrap_or_default(),
+        ),
+    }
 }
 
-/// Initialize the file explorer's naming (renaming, creating, etc.) editor with the given path.
-pub(super) fn initialize_naming_editor_with_path(data: &FileExplorerData, path: &Path) {
-    let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-    // Start with the part of the file or directory name before the extension
-    // selected.
-    let selection_end = {
-        let without_leading_dot = file_name.strip_prefix('.').unwrap_or(&file_name);
-        let idx = without_leading_dot
-            .find('.')
-            .unwrap_or(without_leading_dot.len());
-
-        idx + file_name.len() - without_leading_dot.len()
-    };
-
-    initialize_naming_editor(data, &file_name, Some(selection_end));
-}
-
-pub(super) fn initialize_naming_editor(
-    data: &FileExplorerData,
-    text: &str,
-    selection_end: Option<usize>,
-) {
-    let text = Rope::from(text);
-    let selection_end = selection_end.unwrap_or(text.len());
-
-    let doc = data.naming_editor_data.doc();
-    doc.reload(text, true);
-    data.naming_editor_data
-        .cursor()
-        .update(|cursor| cursor.set_insert(Selection::region(0, selection_end)));
-
-    data.naming
-        .update(|naming| naming.set_editor_needs_reset(false));
-}
-
-/// Input used for naming a file/directory
-pub(super) fn file_node_input_view(data: FileExplorerData, err: Option<String>) -> Container {
-    let ui_line_height = data.common.ui_line_height;
-
-    let naming_editor_data = data.naming_editor_data.clone();
-    let text_input_file_explorer_data = data.clone();
-    let focus = data.common.focus;
+pub(crate) fn file_naming_popup(data: FileExplorerData) -> impl View {
     let config = data.common.config;
-
-    let is_focused = move || {
-        focus.with_untracked(|focus| focus == &Focus::Panel(PanelKind::FileExplorer))
+    let naming = data.naming;
+    let active = create_memo(move |_| naming.with(|state| state.state().is_some()));
+    let busy = move || {
+        naming.with(|state| matches!(state.state(), Some(NamingState::Pending)))
     };
-    let text_input_view = TextInputBuilder::new()
-        .is_focused(is_focused)
-        .key_focus(text_input_file_explorer_data)
-        .build_editor(naming_editor_data.clone())
-        .on_event_stop(EventListener::FocusLost, move |_| {
-            data.finish_naming();
+    let describe = move || naming.with(naming_description);
+    let editor = data.naming_editor_data.clone();
+    let commands = data.clone();
+    let submit = data.clone();
+    let cancel = data.clone();
+    let root = data.common.window_common.app_view_id;
+    let input = TextInputBuilder::new()
+        .key_focus(commands)
+        .build_editor(editor)
+        .placeholder(|| "Name".into())
+        .style(move |s| {
+            s.width_full()
+                .height(33)
+                .padding_horiz(8)
+                .padding_vert(0)
+                .border(1)
+                .border_radius(5)
+                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+                .focus(|s| {
+                    s.border_color(config.get().color(SparrowColor::EDITOR_CARET))
+                })
+        })
+        .disabled(busy);
+    let input_id = input.id();
+    create_effect(move |was_open: Option<bool>| {
+        let open = active.get();
+        if open {
+            input_id.request_focus();
+        } else if was_open == Some(true) {
+            root.get_untracked().request_focus();
+        }
+        open
+    });
+    let retry = create_memo(move |_| {
+        naming.with(|state| state.state().is_some_and(NamingState::is_err))
+    });
+    create_effect(move |_| {
+        if retry.get() {
+            input_id.request_focus();
+        }
+    });
+
+    let title = describe.clone();
+    let action = describe.clone();
+    let popup = stack((
+        label(move || title().0).style(|s| s.font_bold().font_size(15)),
+        label(move || describe().2).style(move |s| {
+            s.width_full()
+                .min_width(0)
+                .text_ellipsis()
+                .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+        }),
+        input,
+        label(move || {
+            naming.with(|state| {
+                state
+                    .state()
+                    .and_then(NamingState::err)
+                    .unwrap_or_default()
+                    .to_string()
+            })
         })
         .style(move |s| {
             s.width_full()
-                .height(ui_line_height.get())
-                .padding(0.0)
-                .margin(0.0)
-                .border_radius(6.0)
-                .border(1.0)
-                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-        });
+                .color(
+                    config
+                        .get()
+                        .color(SparrowColor::ERROR_LENS_ERROR_FOREGROUND),
+                )
+                .apply_if(!retry.get(), |s| s.hide())
+        }),
+        stack((
+            button(|| "Cancel", ButtonKind::Plain, config)
+                .on_click_stop(move |_| cancel.cancel_naming())
+                .disabled(busy),
+            button(
+                move || if busy() { "Working…" } else { action().1 },
+                ButtonKind::Primary,
+                config,
+            )
+            .on_click_stop(move |_| submit.finish_naming())
+            .disabled(busy),
+        ))
+        .style(|s| s.width_full().justify_end().gap(8)),
+    ))
+    .style(move |s| {
+        let c = config.get();
+        s.flex_col()
+            .width(370)
+            .max_width_pct(92.0)
+            .padding(14)
+            .gap(9)
+            .border(1)
+            .border_radius(9)
+            .background(c.color(SparrowColor::PANEL_BACKGROUND))
+            .border_color(c.color(SparrowColor::SPARROW_BORDER))
+            .color(c.color(SparrowColor::EDITOR_FOREGROUND))
+            .box_shadow_blur(18)
+            .box_shadow_color(c.color(SparrowColor::SPARROW_DROPDOWN_SHADOW))
+    });
 
-    let text_input_id = text_input_view.id();
-    text_input_id.request_focus();
-
-    if let Some(err) = err {
-        container(
-            stack((
-                text_input_view,
-                label(move || err.clone()).style(move |s| {
-                    let config = config.get();
-
-                    let editor_background_color =
-                        config.color(SparrowColor::PANEL_CURRENT_BACKGROUND);
-                    let error_background_color =
-                        config.color(SparrowColor::ERROR_LENS_ERROR_BACKGROUND);
-
-                    let background_color = blend_colors(
-                        editor_background_color,
-                        error_background_color,
-                    );
-
-                    s.position(Position::Absolute)
-                        .inset_top(ui_line_height.get())
-                        .width_full()
-                        .color(
-                            config.color(SparrowColor::ERROR_LENS_ERROR_FOREGROUND),
-                        )
-                        .background(background_color)
-                        .z_index(100)
-                }),
-            ))
-            .style(|s| s.flex_grow(1.0f32)),
-        )
-    } else {
-        container(text_input_view)
-    }
-    .style(move |s| s.width_full())
+    container(popup)
+        .on_event_stop(EventListener::PointerDown, |_| {})
+        .style(move |s| {
+            s.absolute()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .z_index(100)
+                .apply_if(!active.get(), |s| s.hide())
+        })
+        .debug_name("Project path dialog")
 }

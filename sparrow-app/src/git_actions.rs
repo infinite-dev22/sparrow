@@ -19,6 +19,7 @@ use std::{
 pub struct State {
     pub active: RwSignal<bool>,
     title: RwSignal<String>,
+    cloning: RwSignal<bool>,
     args: RwSignal<String>,
     output: RwSignal<String>,
     busy: RwSignal<bool>,
@@ -33,16 +34,26 @@ impl State {
         Self {
             active: cx.create_rw_signal(false),
             title: cx.create_rw_signal(String::new()),
+            cloning: cx.create_rw_signal(false),
             args: cx.create_rw_signal(String::new()),
             output: cx.create_rw_signal(String::new()),
             busy: cx.create_rw_signal(false),
             cancel: Arc::new(AtomicBool::new(false)),
         }
     }
+    pub fn open_clone(&self) {
+        if !self.busy.get_untracked() {
+            self.open("Clone Repository".into(), vec!["clone".into()]);
+            self.cloning.set(true);
+            self.output.set("Add a repository URL and an optional destination after clone. Use an absolute path to choose the destination.".into());
+        }
+    }
+
     pub fn open(&self, title: String, args: Vec<String>) {
         if self.busy.get_untracked() {
             return;
         }
+        self.cloning.set(false);
         self.title.set(title);
         self.args.set(crate::dart::run_config::join_args(&args));
         self.output.set(String::new());
@@ -61,7 +72,17 @@ impl State {
                     return;
                 }
             };
-        let Some(root) = window.workspace.path.clone() else {
+        let root = if self.cloning.get_untracked() {
+            window.workspace.path.as_deref()
+                .filter(|_| window.workspace.kind.is_local())
+                .and_then(std::path::Path::parent)
+                .map(std::path::Path::to_path_buf)
+                .or_else(sparrow_core::directory::Directory::home_dir)
+        } else {
+            window.workspace.path.clone()
+        };
+        let Some(root) = root else {
+            self.output.set("No working directory is available.".into());
             return;
         };
         self.busy.set(true);

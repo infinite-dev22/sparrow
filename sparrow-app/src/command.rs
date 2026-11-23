@@ -356,6 +356,18 @@ pub enum SparrowWorkbenchCommand {
     #[strum(message = "New File")]
     #[strum(serialize = "new_file")]
     NewFile,
+
+    #[strum(message = "Project: New File")]
+    #[strum(serialize = "project_new_file")]
+    ProjectNewFile,
+
+    #[strum(message = "Project: New Directory")]
+    #[strum(serialize = "project_new_directory")]
+    ProjectNewDirectory,
+
+    #[strum(message = "Clone Repository")]
+    #[strum(serialize = "project_clone_repository")]
+    CloneRepository,
     #[strum(message = "Scaffold: New Feature…")]
     #[strum(serialize = "scaffold_new_feature")]
     ScaffoldNewFeature,
@@ -820,10 +832,6 @@ pub enum InternalCommand {
         path: PathBuf,
     },
     ReloadFileExplorer,
-    /// Test whether a file/directory can be created at that path
-    TestPathCreation {
-        new_path: PathBuf,
-    },
     FinishRenamePath {
         current_path: PathBuf,
         new_path: PathBuf,
@@ -1037,6 +1045,7 @@ pub enum WindowCommand {
         workspace: SparrowWorkspace,
         end: bool,
     },
+    OpenProjectTab { workspace: SparrowWorkspace },
     NextWorkspaceTab,
     PreviousWorkspaceTab,
     NewWindow,

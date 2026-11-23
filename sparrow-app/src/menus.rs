@@ -1,6 +1,6 @@
 //! Shared context-menu behavior for file, editor and tab surfaces.
 use crate::{
-    command::SparrowWorkbenchCommand,
+    command::{SparrowWorkbenchCommand, WindowCommand},
     listener::Listener,
     widgets::popup_menu::{Menu, MenuItem},
 };
@@ -18,6 +18,9 @@ pub struct MenuContext {
     pub can_reload: bool,
     pub dart_editor: bool,
     pub quick_actions: Vec<String>,
+    pub has_project: bool,
+    pub recent_projects: Vec<crate::workspace::SparrowWorkspace>,
+    pub window_command: Listener<WindowCommand>,
 }
 impl MenuContext {
     pub fn from_window(tab: &crate::window_tab::WindowTabData) -> Self {
@@ -55,6 +58,11 @@ impl MenuContext {
             can_reload,
             dart_editor,
             quick_actions: tab.common.config.with(|config| config.ui.quick_actions.clone()),
+            has_project: tab.workspace.path.is_some(),
+            recent_projects: floem::reactive::use_context::<std::sync::Arc<crate::db::SparrowDb>>()
+                .and_then(|db| db.recent_workspaces().ok())
+                .unwrap_or_default(),
+            window_command: tab.common.window_common.window_command,
         }
     }
 }

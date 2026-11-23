@@ -1429,6 +1429,14 @@ impl WindowTabData {
             NewFile => {
                 self.main_split.new_file();
             }
+            ProjectNewFile | ProjectNewDirectory => {
+                let editor_path = self.main_split.active_editor.get_untracked()
+                    .and_then(|editor| editor.doc().content.with_untracked(|content| content.path().cloned()));
+                if let Some(base) = self.file_explorer.creation_base(editor_path.as_deref()) {
+                    self.file_explorer.create_entry(base, cmd == ProjectNewDirectory);
+                }
+            }
+            CloneRepository => self.git_actions.open_clone(),
             RevealActiveFileInFileExplorer => {
                 if let Some(editor_data) = self.main_split.active_editor.get() {
                     let doc = editor_data.doc();
@@ -2379,7 +2387,7 @@ impl WindowTabData {
                     }
                 }
             }
-            CopyActiveFile => {if let Some(path)=self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())){self.show_panel(PanelKind::FileExplorer);self.file_explorer.reveal_in_file_tree(path.clone());self.file_explorer.naming.set(sparrow_rpc::file::Naming::Duplicating(sparrow_rpc::file::Duplicating{state:sparrow_rpc::file::NamingState::Naming,path,destination:None,is_dir:false,move_on_finish:false,editor_needs_reset:true}));}}
+            CopyActiveFile => {if let Some(path)=self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())){self.show_panel(PanelKind::FileExplorer);self.file_explorer.reveal_in_file_tree(path.clone());self.file_explorer.begin_naming(sparrow_rpc::file::Naming::Duplicating(sparrow_rpc::file::Duplicating{state:sparrow_rpc::file::NamingState::Naming,path,destination:None,is_dir:false,move_on_finish:false,editor_needs_reset:true}));}}
             RefactorExtract | RefactorInline => {if let Some(editor)=self.main_split.active_editor.get_untracked(){self.common.internal_command.send(InternalCommand::RequestCodeActions{offset:editor.cursor().with_untracked(|c|c.offset()),mouse_click:false,kind:Some(if cmd==RefactorExtract{"refactor.extract"}else{"refactor.inline"}.into())});}}
             SafeDeleteFile => {let path=data.and_then(|d|serde_json::from_value::<PathBuf>(d).ok()).or_else(||self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())));if let Some(path)=path.filter(|p|crate::dart::is_dart_path(p)){self.file_refactor.open_delete(path);}}
             MoveActiveFile => {let path=data.and_then(|d|serde_json::from_value::<PathBuf>(d).ok()).or_else(||self.main_split.active_editor.get_untracked().and_then(|e|e.doc().content.with_untracked(|c|c.path().cloned())));if let (Some(path),Some(root))=(path,self.workspace.path.as_deref()){if crate::dart::is_dart_path(&path){self.file_refactor.open_move(path,root);}}}
@@ -2390,7 +2398,11 @@ impl WindowTabData {
                     self.show_panel(PanelKind::FileExplorer);
                     self.common.focus.set(Focus::Panel(PanelKind::FileExplorer));
                     self.file_explorer.reveal_in_file_tree(path.clone());
-                    if crate::dart::is_dart_path(&path){self.file_refactor.open(path);}else{self.file_explorer.rename_path(path);}
+                    if !self.workspace.kind.is_remote() && crate::dart::is_dart_path(&path) {
+                        self.file_refactor.open(path);
+                    } else {
+                        self.file_explorer.rename_path(path);
+                    }
                 }
             }
             ToggleBookmark => {
@@ -2509,23 +2521,6 @@ impl WindowTabData {
             InternalCommand::ReloadFileExplorer => {
                 self.file_explorer.reload();
             }
-            InternalCommand::TestPathCreation { new_path } => {
-                let naming = self.file_explorer.naming;
-
-                let send = create_ext_action(
-                    self.scope,
-                    move |response: Result<ProxyResponse, RpcError>| match response {
-                        Ok(_) => {
-                            naming.update(Naming::set_ok);
-                        }
-                        Err(err) => {
-                            naming.update(|naming| naming.set_err(err.message));
-                        }
-                    },
-                );
-
-                self.common.proxy.test_create_at_path(new_path, send);
-            }
             InternalCommand::FinishRenamePath {
                 current_path,
                 new_path,
@@ -2552,6 +2547,14 @@ impl WindowTabData {
                                 } else {
                                     send_new_path
                                 };
+                            let retarget = |path: &Path| {
+                                let suffix = path.strip_prefix(&send_current_path).ok()?;
+                                Some(if suffix.as_os_str().is_empty() {
+                                    new_path.clone()
+                                } else {
+                                    new_path.join(suffix)
+                                })
+                            };
 
                             // If the renamed item is a file, update any editors the file is open
                             // in to use the new path.
@@ -2582,10 +2585,8 @@ impl WindowTabData {
                             for content in renamed_editors_content {
                                 content.update(|content| {
                                     if let DocContent::File { path, .. } = content {
-                                        if let Ok(suffix) =
-                                            path.strip_prefix(&send_current_path)
-                                        {
-                                            *path = new_path.join(suffix);
+                                        if let Some(target) = retarget(path) {
+                                            *path = target;
                                         }
                                     }
                                 });
@@ -2594,26 +2595,26 @@ impl WindowTabData {
                             // Rekey caches as well as editor content. Otherwise reopening the
                             // old path can return the moved document under its stale key.
                             docs.update(|docs| {
-                                let paths = docs.keys().filter(|path| path.starts_with(&send_current_path)).cloned().collect::<Vec<_>>();
-                                for old in paths {
+                                let paths = docs.keys().filter_map(|path| retarget(path).map(|new| (path.clone(), new))).collect::<Vec<_>>();
+                                for (old, target) in paths {
                                     if let Some(doc) = docs.remove(&old) {
-                                        let target = new_path.join(old.strip_prefix(&send_current_path).expect("matching prefix"));
                                         dart_lsp.send_close(old);
                                         docs.insert(target, doc);
                                     }
                                 }
                             });
                             diagnostics.update(|diagnostics| {
-                                let paths = diagnostics.keys().filter(|path| path.starts_with(&send_current_path)).cloned().collect::<Vec<_>>();
-                                for old in paths {
+                                let paths = diagnostics.keys().filter_map(|path| retarget(path).map(|new| (path.clone(), new))).collect::<Vec<_>>();
+                                for (old, target) in paths {
                                     if let Some(data) = diagnostics.remove(&old) {
-                                        diagnostics.insert(new_path.join(old.strip_prefix(&send_current_path).expect("matching prefix")), data);
+                                        diagnostics.insert(target, data);
                                     }
                                 }
                             });
 
                             file_explorer.finish_file_move(&send_current_path);
                             file_explorer.reload();
+                            file_explorer.refresh_created_path(&new_path);
                             file_explorer.naming.set(Naming::None);
                         }
                         Err(err) => {
@@ -2676,36 +2677,24 @@ impl WindowTabData {
             InternalCommand::FinishNewNode { is_dir, path } => {
                 let file_explorer = self.file_explorer.clone();
                 let internal_command = self.common.internal_command;
-
+                let created_path = path.clone();
                 let send = create_ext_action(
                     self.scope,
-                    move |response: Result<ProxyResponse, RpcError>| {
-                        match response {
-                            Ok(response) => {
-                                file_explorer.reload();
-                                file_explorer.naming.set(Naming::None);
-
-                                // Open a new file in the editor
-                                if let ProxyResponse::CreatePathResponse { path } =
-                                    response
-                                {
-                                    if !is_dir {
-                                        internal_command.send(
-                                            InternalCommand::OpenFile { path },
-                                        );
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                file_explorer
-                                    .naming
-                                    .update(|naming| naming.set_err(err.message));
+                    move |response: Result<ProxyResponse, RpcError>| match response {
+                        Ok(response) => {
+                            let path = match response {
+                                ProxyResponse::CreatePathResponse { path } => path,
+                                _ => created_path,
+                            };
+                            file_explorer.refresh_created_path(&path);
+                            file_explorer.naming.set(Naming::None);
+                            if !is_dir {
+                                internal_command.send(InternalCommand::OpenAndConfirmedFile { path });
                             }
                         }
+                        Err(err) => file_explorer.naming.update(|naming| naming.set_err(err.message)),
                     },
                 );
-
-                self.file_explorer.naming.update(Naming::set_pending);
                 if is_dir {
                     self.common.proxy.create_directory(path, send);
                 } else {
@@ -3576,7 +3565,8 @@ impl WindowTabData {
                 return true;
             }
         }
-        if self.settings_modal_visible.get_untracked()
+        if self.file_explorer.naming.with_untracked(|naming| naming.state().is_some())
+            || self.settings_modal_visible.get_untracked()
             || self.run_config_modal_visible.get_untracked()
             || self.flutter_project.active.get_untracked()
             || self.file_refactor.active.get_untracked()

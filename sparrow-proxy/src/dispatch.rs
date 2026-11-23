@@ -978,7 +978,8 @@ impl ProxyHandler for Dispatcher {
                 self.respond_rpc(id, result);
             }
             CreateDirectory { path } => {
-                let result = std::fs::create_dir_all(path)
+                let result = path.parent().map_or(Ok(()), std::fs::create_dir_all)
+                    .and_then(|()| std::fs::create_dir(path))
                     .map(|_| ProxyResponse::Success {})
                     .map_err(|e| RpcError {
                         code: 0,

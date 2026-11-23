@@ -607,6 +607,10 @@ impl AppData {
                             .window_tabs
                             .with_untracked(|tabs| tabs.get(active).cloned())
                         {
+                            if tab.file_explorer.naming.with_untracked(|naming| naming.state().is_some()) {
+                                tab.file_explorer.cancel_naming();
+                                return EventPropagation::Stop;
+                            }
                             let modal = if tab.log_viewer_visible.get_untracked() {
                                 Some(tab.log_viewer_visible)
                             } else if tab.settings_modal_visible.get_untracked()
@@ -653,10 +657,11 @@ impl AppData {
                 {
                     // The commit message editor uses Sparrow's keymaps while
                     // retaining Floem focus for Tab navigation to its actions.
-                    if tab.common.focus.get_untracked()
-                        != crate::window_tab::Focus::Panel(
-                            crate::panel::kind::PanelKind::SourceControl,
-                        )
+                    if tab.file_explorer.naming.with_untracked(|naming| naming.state().is_none())
+                        && tab.common.focus.get_untracked()
+                            != crate::window_tab::Focus::Panel(
+                                crate::panel::kind::PanelKind::SourceControl,
+                            )
                     {
                         view_id.request_focus();
                     }
@@ -753,15 +758,17 @@ fn window_tab(
     let run_modal = window_tab_data.run_config_modal_visible;
     let project_modal = window_tab_data.flutter_project.active;
     let file_modal=window_tab_data.file_refactor.active;
+    let naming = window_tab_data.file_explorer.naming;
+    let naming_open = move || naming.with(|naming| naming.state().is_some());
     let scaffold_modal=window_tab_data.scaffold.active;
     let formatting_modal=window_tab_data.formatting.active;
     let search_modal=window_tab_data.project_search.active;
     let everywhere_modal = window_tab_data.search_everywhere.active;
     let git_modal=window_tab_data.git_actions.active;
     let symbol_modal=window_tab_data.rename.active;
-    let interaction_layer_open=move ||symbol_modal.get()||file_modal.get()||scaffold_modal.get()||formatting_modal.get()||search_modal.get()||everywhere_modal.get()||git_modal.get();
+    let interaction_layer_open=move || naming_open() ||symbol_modal.get()||file_modal.get()||scaffold_modal.get()||formatting_modal.get()||search_modal.get()||everywhere_modal.get()||git_modal.get();
     let modal_open =
-        move || log_viewer.get() || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || everywhere_modal.get() || git_modal.get();
+        move || naming_open() || log_viewer.get() || settings_modal.get() || run_modal.get() || project_modal.get() || file_modal.get() || scaffold_modal.get() || formatting_modal.get() || search_modal.get() || everywhere_modal.get() || git_modal.get();
 
     let project_color = window_tab_data.common.project_color;
     let background_tasks_open = window_tab_data.common.background_tasks.open;
@@ -803,7 +810,7 @@ fn window_tab(
         signature_help(window_tab_data.clone()).disabled(modal_open),
         hover(window_tab_data.clone()).disabled(modal_open),
         crate::code_action_preview::view(window_tab_data.clone()).disabled(modal_open),
-        stack((rename(window_tab_data.clone()).disabled(modal_open),crate::file_refactor::view(window_tab_data.clone()),crate::scaffold::view(window_tab_data.clone()),crate::formatting::view(window_tab_data.clone()),crate::project_search::view(window_tab_data.clone()),crate::search_everywhere::view(window_tab_data.clone()),crate::git_actions::view(window_tab_data.clone()))).style(move |s|s.absolute().size_full().apply_if(!interaction_layer_open(),|s|s.hide())),
+        stack((rename(window_tab_data.clone()).disabled(modal_open),crate::file_refactor::view(window_tab_data.clone()),crate::file_explorer::view::file_naming_popup(window_tab_data.file_explorer.clone()),crate::scaffold::view(window_tab_data.clone()),crate::formatting::view(window_tab_data.clone()),crate::project_search::view(window_tab_data.clone()),crate::search_everywhere::view(window_tab_data.clone()),crate::git_actions::view(window_tab_data.clone()))).style(move |s|s.absolute().size_full().apply_if(!interaction_layer_open(),|s|s.hide())),
 
         palette(window_tab_data.clone()).disabled(modal_open),
         stack((
@@ -1455,21 +1462,48 @@ pub fn window_menu(
 
     let mut menu = Menu::new("");
 
-    // ── FILE ────────────────────────────────────────────────────────
+    let new_menu = Menu::new("New")
+        .entry(MenuItem::new("Flutter Project…").action(move || {
+            workbench_command.send(FlutterNewProject);
+        }))
+        .entry(MenuItem::new("Project from Version Control…").action(move || {
+            workbench_command.send(CloneRepository);
+        }))
+        .separator()
+        .entry(MenuItem::new("File…").enabled(context.has_project).action(move || {
+            workbench_command.send(ProjectNewFile);
+        }))
+        .entry(MenuItem::new("Directory…").enabled(context.has_project).action(move || {
+            workbench_command.send(ProjectNewDirectory);
+        }))
+        .entry(MenuItem::new("Scratch File").action(move || {
+            workbench_command.send(NewFile);
+        }));
+    let mut recent_menu = Menu::new("Recent Projects");
+    let window_command = context.window_command;
+    for (workspace, path) in context.recent_projects.iter().filter_map(|ws| ws.path.as_deref().map(|path| (ws, path))).take(12) {
+        let name = path.display().to_string();
+        let workspace = workspace.clone();
+        recent_menu = recent_menu.entry(MenuItem::new(name).action(move || {
+            window_command.send(crate::command::WindowCommand::OpenProjectTab {
+                workspace: workspace.clone(),
+            });
+        }));
+    }
+    recent_menu = recent_menu.entry(MenuItem::new("Browse Recent Projects…").action(move || {
+        workbench_command.send(PaletteWorkspace);
+    }));
+
     menu = menu.entry(
         Menu::new("File")
-            .entry(MenuItem::new("New...").action(move || {
-                workbench_command.send(NewFile);
-            }))
+            .entry(new_menu)
             .entry(MenuItem::new("Open...").action(move || {
                 workbench_command.send(OpenFile);
             }))
             .entry(MenuItem::new("Open Folder...").action(move || {
                 workbench_command.send(OpenFolder);
             }))
-            .entry(MenuItem::new("Recent Projects").action(move || {
-                workbench_command.send(PaletteWorkspace);
-            }))
+            .entry(recent_menu)
             .separator()
             .entry(MenuItem::new("Close Project").action(move || {
                 workbench_command.send(CloseFolder);

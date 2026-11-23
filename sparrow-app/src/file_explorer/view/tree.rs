@@ -17,14 +17,10 @@ use floem::{
     views::{Decorators, container, label, stack, svg, virtual_stack},
 };
 use sparrow_rpc::{
-    file::{FileNodeItem, FileNodeViewData, FileNodeViewKind, Naming},
+    file::{FileNodeItem, FileNodeViewData, FileNodeViewKind},
     source_control::FileDiffKind,
 };
 
-use super::naming::{
-    file_node_input_view, initialize_naming_editor,
-    initialize_naming_editor_with_path,
-};
 use crate::file_explorer::{
     data::FileExplorerData, node::FileNodeVirtualList, project,
 };
@@ -213,27 +209,7 @@ fn file_node_text_view(
                 )
             }
         }
-        FileNodeViewKind::Renaming { path, err } => {
-            if data.naming.with_untracked(Naming::editor_needs_reset) {
-                initialize_naming_editor_with_path(&data, &path);
-            }
-
-            file_node_input_view(data, err.clone())
-        }
-        FileNodeViewKind::Naming { err } => {
-            if data.naming.with_untracked(Naming::editor_needs_reset) {
-                initialize_naming_editor(&data, "", None);
-            }
-
-            file_node_input_view(data, err.clone())
-        }
-        FileNodeViewKind::Duplicating { source, err } => {
-            if data.naming.with_untracked(Naming::editor_needs_reset) {
-                initialize_naming_editor_with_path(&data, &source);
-            }
-
-            file_node_input_view(data, err.clone())
-        }
+        _ => container(label(String::new)),
     }
 }
 
@@ -274,7 +250,7 @@ pub(super) fn file_explorer_view(
         let content = stack((
             container(
                 virtual_stack(
-                    move || FileNodeVirtualList::new(root.get(), data.naming.get()),
+                    move || FileNodeVirtualList::new(root.get()),
                     move |node| (node.kind.clone(), node.is_dir, node.open, node.level),
                     move |node| {
                         let level = node.level;
@@ -471,7 +447,7 @@ pub(super) fn file_explorer_view(
     })
         .style(|s| s.absolute().size_full().line_height(1.0))
         .on_secondary_click_stop(move |_| {
-            if let Naming::None = naming.get_untracked() {
+            if naming.with_untracked(|naming| naming.state().is_none()) {
                 if let Some(path) = &secondary_click_data.common.workspace.path {
                     secondary_click_data.secondary_click(path);
                 }

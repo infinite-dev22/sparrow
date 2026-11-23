@@ -241,6 +241,22 @@ impl WindowData {
                     }
                 })
             }
+            WindowCommand::OpenProjectTab { workspace } => {
+                let existing = self.window_tabs.with_untracked(|tabs| {
+                    tabs.iter().position(|(_, tab)| {
+                        tab.workspace.kind == workspace.kind
+                            && tab.workspace.path == workspace.path
+                    })
+                });
+                if let Some(index) = existing {
+                    self.active.set(index);
+                } else {
+                    self.run_window_command(WindowCommand::NewWorkspaceTab {
+                        workspace,
+                        end: false,
+                    });
+                }
+            }
             WindowCommand::NewWorkspaceTab { workspace, end } => {
                 let db: Arc<SparrowDb> = use_context().unwrap();
                 if let Err(err) = db.update_recent_workspace(&workspace) {

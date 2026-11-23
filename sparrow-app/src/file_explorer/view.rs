@@ -12,6 +12,7 @@ use crate::{
 };
 
 mod naming;
+pub(crate) use naming::file_naming_popup;
 mod open_editors;
 mod project_header;
 mod tree;

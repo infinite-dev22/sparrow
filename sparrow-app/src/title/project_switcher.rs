@@ -162,9 +162,10 @@ pub fn project_switcher(
                 ))
                 .style(|s| s.flex_col().flex_grow(1.0f32).min_width(0.0)),
             ))
+            .keyboard_navigable()
             .on_click_stop(move |_| {
                 if !is_current {
-                    cmd.send(WindowCommand::SetWorkspace {
+                    cmd.send(WindowCommand::OpenProjectTab {
                         workspace: (*ws).clone(),
                     });
                 }
@@ -177,6 +178,10 @@ pub fn project_switcher(
                     .padding_vert(6.0)
                     .border_radius(6.0)
                     .items_center()
+                    .apply_if(is_current, |s| {
+                        s.background(c.color(SparrowColor::PANEL_SELECTION_BACKGROUND))
+                    })
+                    .focus(|s| s.background(c.color(SparrowColor::PANEL_SELECTION_BACKGROUND)))
                     .hover(|s| {
                         s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
                             .cursor(CursorStyle::Pointer)
@@ -198,7 +203,7 @@ pub fn project_switcher(
                         "New Project...",
                         move || {
                             workbench_command
-                                .send(SparrowWorkbenchCommand::OpenFolder);
+                                .send(SparrowWorkbenchCommand::FlutterNewProject);
                             close_menu();
                         },
                         config,
@@ -216,10 +221,12 @@ pub fn project_switcher(
                     menu_row(
                         Some(SparrowIcons::SCM),
                         "Clone Repository...",
-                        || {},
+                        move || {
+                            workbench_command.send(SparrowWorkbenchCommand::CloneRepository);
+                            close_menu();
+                        },
                         config,
                     ),
-                    menu_row(None, "Import Sample...", || {}, config),
                     divider(),
                     section_label("Open Projects"),
                     dyn_stack(
@@ -297,6 +304,7 @@ fn menu_row(
                 .color(config.get().color(SparrowColor::EDITOR_FOREGROUND))
         }),
     ))
+    .keyboard_navigable()
     .on_click_stop(move |_| on_click())
     .style(move |s| {
         let c = config.get();
@@ -305,6 +313,7 @@ fn menu_row(
             .padding_horiz(8.0)
             .padding_vert(6.0)
             .border_radius(6.0)
+            .focus(|s| s.background(c.color(SparrowColor::PANEL_SELECTION_BACKGROUND)))
             .hover(|s| {
                 s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
                     .cursor(CursorStyle::Pointer)
