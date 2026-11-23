@@ -31,8 +31,8 @@ use floem::{
 };
 
 use crate::widgets::clickable_icon;
-use crate::widgets::horizontal_scroll;
 use crate::widgets::tooltip::tooltip_tip;
+use crate::widgets::{TabStrip, tab_strip};
 
 use super::context_menu::tab_secondary_click;
 
@@ -78,7 +78,8 @@ pub(super) fn editor_tab_header(
         }
     };
 
-    let view_fn = move |(i, layout_rect, child): (
+    let view_fn = move |strip: TabStrip,
+                        (i, layout_rect, child): (
         RwSignal<usize>,
         RwSignal<Rect>,
         EditorTabChild,
@@ -240,7 +241,7 @@ pub(super) fn editor_tab_header(
 
         let header_content_size = create_rw_signal(Size::ZERO);
         let drag_over_left: RwSignal<Option<bool>> = create_rw_signal(None);
-        stack((
+        let tab_view = stack((
             child_view
                 .on_double_click_stop(move |_| {
                     if let Some(confirmed) = confirmed {
@@ -363,9 +364,6 @@ pub(super) fn editor_tab_header(
                 })
                 .debug_name("Active Tab Indicator"),
         ))
-        .on_resize(move |rect| {
-            layout_rect.set(rect);
-        })
         .style(move |s| {
             let config = config.get();
             let active = editor_tab_active.get() == i.get();
@@ -433,7 +431,12 @@ pub(super) fn editor_tab_header(
         })
         .on_event_stop(EventListener::DragLeave, move |_| {
             drag_over_left.set(None);
-        })
+        });
+        strip.item_with_bounds(
+            tab_view,
+            move || editor_tab_active.get() == i.get(),
+            layout_rect,
+        )
     };
 
     let content_size = create_rw_signal(Size::ZERO);
@@ -462,8 +465,8 @@ pub(super) fn editor_tab_header(
         })
         .style(|s| s.flex_shrink(0f32)),
         container(
-            horizontal_scroll({
-                dyn_stack(items, key, view_fn)
+            tab_strip(|strip| {
+                dyn_stack(items, key, move |item| view_fn(strip, item))
                     .on_resize(move |rect| {
                         let size = rect.size();
                         if content_size.get_untracked() != size {
@@ -476,13 +479,6 @@ pub(super) fn editor_tab_header(
             .on_scroll(move |rect| {
                 scroll_offset.set(rect);
             })
-            .ensure_visible(move || {
-                let active = editor_tab_active.get();
-                editor_tab
-                    .with_untracked(|editor_tab| editor_tab.children[active].1)
-                    .get_untracked()
-            })
-            .scroll_style(|s| s.hide_bars(true).vertical_scroll_as_horizontal(true))
             .style(|s| s.absolute().size_full()),
         )
         .style(|s| {

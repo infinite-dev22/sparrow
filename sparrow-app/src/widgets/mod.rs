@@ -47,7 +47,7 @@ pub use panel_title_bar::panel_title_bar;
 pub use progress_bar::progress_bar;
 pub use radio_group::radio_group;
 pub use sparrow_scroll::{horizontal_scroll, sparrow_scroll};
-pub use tab::{tab_button, tab_strip};
+pub use tab::{TabStrip, tab_button, tab_strip};
 pub use text_input::text_input;
 pub use toggle_row::toggle_row;
 pub use tooltip::tooltip_label;

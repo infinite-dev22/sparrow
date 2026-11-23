@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
 use floem::{
-    IntoView, View,
+    IntoView, View, ViewId,
+    kurbo::Rect,
     peniko::Color,
-    reactive::{ReadSignal, SignalGet},
+    reactive::{
+        ReadSignal, RwSignal, SignalGet, SignalTrack, SignalUpdate, create_effect,
+        create_rw_signal,
+    },
     style::CursorStyle,
-    views::{Decorators, button},
+    views::{Decorators, Scroll, button},
 };
 
 use crate::config::{SparrowConfig, color::SparrowColor};
@@ -46,9 +50,125 @@ pub fn tab_button(
     )
 }
 
-/// A horizontal tab strip that scrolls when the labels exceed the available width.
-pub fn tab_strip(content: impl IntoView + 'static) -> impl View {
-    super::horizontal_scroll(content)
-        .scroll_style(|s| s.hide_bars(true))
-        .style(|s| s.min_width(0.0).flex_shrink(1.0_f32))
+#[derive(Clone, Copy)]
+pub struct TabStrip {
+    active: RwSignal<Option<(ViewId, Rect)>>,
+}
+
+impl TabStrip {
+    pub fn button(
+        self,
+        content: impl IntoView + 'static,
+        selected: impl Fn() -> bool + Clone + 'static,
+        select: impl FnMut() + 'static,
+        config: ReadSignal<Arc<SparrowConfig>>,
+    ) -> impl View {
+        self.item(
+            tab_button(content, selected.clone(), select, config),
+            selected,
+        )
+    }
+
+    /// Register a tab that is a direct child of the strip's content row.
+    pub fn item<V: View + 'static>(
+        self,
+        view: V,
+        selected: impl Fn() -> bool + 'static,
+    ) -> V {
+        self.item_with_bounds(view, selected, create_rw_signal(Rect::ZERO))
+    }
+
+    pub(crate) fn item_with_bounds<V: View + 'static>(
+        self,
+        view: V,
+        selected: impl Fn() -> bool + 'static,
+        bounds: RwSignal<Rect>,
+    ) -> V {
+        let id = view.id();
+        let clear = move || {
+            if self
+                .active
+                .try_get_untracked()
+                .flatten()
+                .is_some_and(|(active, _)| active == id)
+            {
+                self.active.set(None);
+            }
+        };
+        create_effect(move |_| {
+            if selected() {
+                let rect = bounds.get();
+                let target = Some((id, Rect::new(rect.x0, 0.0, rect.x1, 0.0)));
+                if rect.width() > 0.0 && self.active.get_untracked() != target {
+                    self.active.set(target);
+                }
+            } else {
+                clear();
+            }
+        });
+        view.style(|s| s.flex_shrink(0.0_f32))
+            .on_resize(move |rect| bounds.set(rect))
+            .on_cleanup(clear)
+    }
+}
+
+/// Scrolls an intrinsic-width row only when it exceeds the available width.
+/// Active tabs are fully revealed on selection, layout changes, and viewport resize.
+#[track_caller]
+pub fn tab_strip<V: View + 'static>(build: impl FnOnce(TabStrip) -> V) -> Scroll {
+    let active = create_rw_signal(None);
+    let width = create_rw_signal(0.0);
+    let content = build(TabStrip { active });
+    let content_id = content.id();
+    let scroll = super::horizontal_scroll(content.style(|s| s.items_center()))
+        .scroll_style(|s| s.handle_thickness(3).track_thickness(3))
+        .ensure_visible(move || {
+            width.track();
+            active.get().map_or(Rect::ZERO, |(_, bounds)| bounds)
+        })
+        .on_resize(move |rect| {
+            if width.get_untracked() != rect.width() {
+                width.set(rect.width());
+            }
+        })
+        .style(|s| s.min_width(0.0).flex_shrink(1.0_f32));
+    let name = std::panic::Location::caller().file();
+    let id = scroll.id();
+    if std::env::var_os("SPARROW_TEST_TAB_LAYOUT").is_some() {
+        observe_tabs(name, id, content_id, active, String::new());
+    }
+    scroll
+}
+
+fn observe_tabs(name: &'static str, id: ViewId, content: ViewId, active: RwSignal<Option<(ViewId, Rect)>>, previous: String) {
+    floem::action::exec_after(std::time::Duration::from_millis(95), move |_| {
+        let mut next = previous;
+        if active.try_get_untracked().is_none() {
+            return;
+        }
+        if !id.is_hidden_recursive() {
+            if let (Some(size), Some(row)) = (id.get_size(), content.get_size()) {
+                let origin = id.layout_rect().origin();
+                let offset = origin.x - content.layout_rect().x0;
+                let items = content.children().into_iter().filter_map(|child| {
+                    let layout = child.get_layout()?;
+                    Some([layout.location.x.into(), layout.size.width.into(), layout.size.height.into()])
+                }).collect::<Vec<[f64; 3]>>();
+                let selected = active.get_untracked().map(|(child, rect)| {
+                    let style = child.get_combined_style().get(floem::style::Background);
+                    (rect.x0,rect.x1, format!("{style:?}"))
+                });
+                let payload = serde_json::json!({
+                    "name":name, "id":format!("{id:?}"), "size":[size.width,size.height],
+                    "row":[row.width,row.height], "origin":[origin.x,origin.y],
+                    "offset":offset, "items":items,"active":selected
+                }).to_string();
+                if payload != next {
+                    println!("TAB_LAYOUT {payload}");
+                    next = payload;
+                }
+            }
+        }
+        observe_tabs(name, id, content, active, next);
+    });
 }

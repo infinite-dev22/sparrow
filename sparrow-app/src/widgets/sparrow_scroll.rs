@@ -1,6 +1,6 @@
 use floem::{
     IntoView,
-    views::{Scroll, scroll},
+    views::{Decorators, Scroll, scroll},
 };
 
 /// A Floem scroll view with Sparrow's scrollbar defaults.
@@ -16,7 +16,9 @@ pub fn sparrow_scroll(child: impl IntoView + 'static) -> Scroll {
     })
 }
 
-/// A scroll view that maps vertical wheel input to horizontal scrolling.
+/// Scroll an intrinsic-width row with horizontal gestures or a vertical wheel.
 pub fn horizontal_scroll(child: impl IntoView + 'static) -> Scroll {
-    sparrow_scroll(child).scroll_style(|s| s.vertical_scroll_as_horizontal(true))
+    sparrow_scroll(child.into_view().style(|s| s.flex_shrink(0.0_f32)))
+        .scroll_style(|s| s.vertical_scroll_as_horizontal(true))
+        .style(|s| s.min_width(0.0))
 }

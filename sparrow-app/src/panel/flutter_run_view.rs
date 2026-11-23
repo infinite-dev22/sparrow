@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use floem::{
-    View, IntoView,
+    IntoView, View,
     event::EventListener,
     reactive::{SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
@@ -17,7 +17,7 @@ use crate::{
     dart::FlutterRunState,
     debug::RunDebugMode,
     editor::location::{EditorLocation, EditorPosition},
-    widgets::{clickable_icon, panel_title_bar, tab_button, tab_strip},
+    widgets::{clickable_icon, panel_title_bar, tab_strip},
     window_tab::{Focus, WindowTabData},
 };
 
@@ -33,7 +33,7 @@ pub fn flutter_run_panel(
 
     let sessions = terminal.clone();
     let tab_terminal = terminal.clone();
-    let tabs = tab_strip(
+    let tabs = tab_strip(|strip| {
         dyn_stack(
             move || {
                 sessions
@@ -45,7 +45,7 @@ pub fn flutter_run_panel(
             |(id, process)| (*id, process.config.name.clone(), process.stopped),
             move |(id, process)| {
                 let close = tab_terminal.clone();
-                tab_button(
+                strip.button(
                     stack((
                         label(move || process.config.name.clone())
                             .style(|s| s.max_width(220.0).text_ellipsis()),
@@ -66,8 +66,8 @@ pub fn flutter_run_panel(
                 )
             },
         )
-        .style(|s| s.items_center().height_full()),
-    )
+        .style(|s| s.items_center().height_full())
+    })
     .style(|s| s.flex_grow(1.0_f32).min_width(0.0));
 
     let header = panel_title_bar(
@@ -274,26 +274,24 @@ pub(super) fn log_line_row(
     let display_text = line.clone();
     let is_err = line.starts_with('⚠') || line.starts_with('❌');
 
-    stack((
-        label(move || display_text.clone()).style(move |s| {
-            let c = config.get();
-            let base_color = if is_err {
-                c.color(SparrowColor::SPARROW_ERROR)
-            } else {
-                c.color(SparrowColor::EDITOR_FOREGROUND)
-            };
-            s.selectable(true)
-                .color(base_color)
-                .min_width(0.0)
-                .font_family(c.terminal_font_family().to_string())
-                .apply_if(has_link, |s| {
-                    s.hover(|s| {
-                        s.cursor(CursorStyle::Pointer)
-                            .color(c.color(SparrowColor::EDITOR_LINK))
-                    })
+    stack((label(move || display_text.clone()).style(move |s| {
+        let c = config.get();
+        let base_color = if is_err {
+            c.color(SparrowColor::SPARROW_ERROR)
+        } else {
+            c.color(SparrowColor::EDITOR_FOREGROUND)
+        };
+        s.selectable(true)
+            .color(base_color)
+            .min_width(0.0)
+            .font_family(c.terminal_font_family().to_string())
+            .apply_if(has_link, |s| {
+                s.hover(|s| {
+                    s.cursor(CursorStyle::Pointer)
+                        .color(c.color(SparrowColor::EDITOR_LINK))
                 })
-        }),
-    ))
+            })
+    }),))
     .on_click_stop(move |_| {
         if let Some(loc) = &link_target {
             internal_command.send(InternalCommand::JumpToLocation {

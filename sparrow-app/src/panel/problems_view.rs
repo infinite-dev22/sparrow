@@ -25,7 +25,7 @@ use crate::{
     widgets::{
         clickable_icon, panel_title_bar,
         popup_menu::{Menu, MenuItem, PopupMenuExt, show_context_menu},
-        sparrow_scroll, tab_button, tab_strip,
+        sparrow_scroll, tab_strip,
     },
     window_tab::{Focus, WindowTabData},
 };
@@ -347,7 +347,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         .and_then(|path| path.file_name())
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Workspace".into());
-    let tabs = tab_strip(
+    let tabs = tab_strip(|strip| {
         dyn_stack(
             move || {
                 let mut tabs = vec![Tab::File, Tab::Project];
@@ -359,7 +359,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             |tab| *tab,
             move |item| {
                 let title = title.clone();
-                tab_button(
+                strip.button(
                     stack((
                         label(move || match item {
                             Tab::File => {
@@ -401,8 +401,8 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 )
             },
         )
-        .style(|s| s.height_full().items_center()),
-    );
+        .style(|s| s.height_full().items_center())
+    });
 
     let toolbar_window = window.clone();
     let fix_window = window.clone();

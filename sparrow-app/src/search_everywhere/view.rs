@@ -11,7 +11,7 @@ use crate::{
         modal_focus::{ModalChoice, ModalFocus, restore_workbench_on_close},
         search_match_options::search_match_options,
         search_result_row::{search_result_bounds, search_result_row},
-        sparrow_scroll, tab_button, tab_strip,
+        sparrow_scroll, tab_strip,
         text_input::text_input,
     },
     window_tab::WindowTabData,
@@ -213,17 +213,19 @@ pub(crate) fn view(window: Rc<WindowTabData>) -> impl View {
             });
         }
     });
-    let tabs = tab_strip(stack_from_iter(Tab::ALL.map(|(mode, name)| {
-        focus.control(tab_button(
-            label(move || name),
-            move || tab.get() == mode,
-            move || {
-                tab.set(mode);
-                input_id.request_focus();
-            },
-            config,
-        ))
-    })));
+    let tabs = tab_strip(|strip| {
+        stack_from_iter(Tab::ALL.map(|(mode, name)| {
+            focus.control(strip.button(
+                label(move || name),
+                move || tab.get() == mode,
+                move || {
+                    tab.set(mode);
+                    input_id.request_focus();
+                },
+                config,
+            ))
+        }))
+    });
     let include = focus
         .control(labeled_checkbox(
             move || places.get() == Places::All,

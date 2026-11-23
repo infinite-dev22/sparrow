@@ -41,7 +41,7 @@ pub(super) fn panel(state: State) -> impl View {
     let add = state.clone();
     let open_capture = state.clone();
     let cleanup = state.clone();
-    let tabs = crate::widgets::tab_strip(
+    let tabs = crate::widgets::tab_strip(|strip| {
         dyn_stack(move || tabs_state.panes.get(), |p| p.id, {
             let state = state.clone();
             move |pane: Pane| {
@@ -74,7 +74,7 @@ pub(super) fn panel(state: State) -> impl View {
                     )
                     .style(|s| s.size(18.0, 18.0).padding(3.0)),
                 ));
-                crate::widgets::tab_button(
+                strip.button(
                     content,
                     move || active.get() == id,
                     move || active.set(id),
@@ -82,8 +82,8 @@ pub(super) fn panel(state: State) -> impl View {
                 )
             }
         })
-        .style(|s| s.items_center()),
-    );
+        .style(|s| s.items_center())
+    });
     let header = super::super::chrome::header(
         state.window.clone(),
         PanelKind::Logcat,

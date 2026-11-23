@@ -13,7 +13,7 @@ pub(super) fn resource_categories(
     kind: RwSignal<Kind>,
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> impl View {
-    crate::widgets::tab_strip(
+    crate::widgets::tab_strip(|strip| {
         dyn_stack(
             || {
                 vec![
@@ -28,17 +28,18 @@ pub(super) fn resource_categories(
             },
             |k| *k,
             move |tab| {
-                crate::widgets::tab_button(
-                    label(move || tab.title()),
-                    move || kind.get() == tab,
-                    move || kind.set(tab),
-                    config,
-                )
-                .style(|s| s.padding_horiz(9.0))
+                strip
+                    .button(
+                        label(move || tab.title()),
+                        move || kind.get() == tab,
+                        move || kind.set(tab),
+                        config,
+                    )
+                    .style(|s| s.padding_horiz(9.0))
             },
         )
-        .style(|s| s.items_center()),
-    )
+        .style(|s| s.items_center())
+    })
     .style(move |s| {
         s.width_full()
             .height(30.0)

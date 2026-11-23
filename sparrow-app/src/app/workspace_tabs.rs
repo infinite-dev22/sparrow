@@ -22,7 +22,7 @@ use floem::{
     },
 };
 
-use crate::widgets::clickable_icon;
+use crate::widgets::{TabStrip, clickable_icon, tab_strip};
 
 fn workspace_title(workspace: &SparrowWorkspace) -> Option<String> {
     let p = workspace.path.as_ref()?;
@@ -62,195 +62,210 @@ pub(super) fn workspace_tab_header(window_data: WindowData) -> impl View {
             - 30.0;
         let tabs_len = tabs.with(|tabs| tabs.len());
         if tabs_len > 0 {
-            (available_width / tabs_len as f64).min(200.0)
+            (available_width / tabs_len as f64).clamp(104.0, 200.0)
         } else {
-            available_width
+            available_width.max(0.0)
         }
     });
 
     let local_window_data = window_data.clone();
     let dragging_index: RwSignal<Option<RwSignal<usize>>> = create_rw_signal(None);
-    let view_fn = move |(index, tab): (RwSignal<usize>, Rc<WindowTabData>)| {
-        let drag_over_left = create_rw_signal(None);
-        let window_data = local_window_data.clone();
-        stack((
-            container({
-                stack((
+    let view_fn =
+        move |strip: TabStrip,
+              (index, tab): (RwSignal<usize>, Rc<WindowTabData>)| {
+            let drag_over_left = create_rw_signal(None);
+            let window_data = local_window_data.clone();
+            let tab_view = stack((
+                container({
                     stack((
-                        text(
-                            workspace_title(&tab.workspace)
-                                .unwrap_or_else(|| String::from("New Tab")),
-                        )
-                        .style(|s| {
-                            s.margin_left(10.0)
-                                .min_width(0.0)
-                                .flex_basis(0.0)
-                                .flex_grow(1.0f32)
-                                .selectable(false)
-                                .text_ellipsis()
-                        }),
-                        {
-                            let window_data = local_window_data.clone();
-                            clickable_icon(
-                                || SparrowIcons::WINDOW_CLOSE,
-                                move || {
-                                    window_data.run_window_command(
-                                        WindowCommand::CloseWorkspaceTab {
-                                            index: Some(index.get_untracked()),
-                                        },
-                                    );
-                                },
-                                || false,
-                                || false,
-                                || "Close",
-                                config.read_only(),
+                        stack((
+                            text(
+                                workspace_title(&tab.workspace)
+                                    .unwrap_or_else(|| String::from("New Tab")),
                             )
-                            .style(|s| s.margin_horiz(6.0))
-                        },
-                    ))
-                    .on_event_stop(EventListener::DragOver, move |event| {
-                        if dragging_index.get_untracked().is_some() {
-                            if let Event::PointerMove(pointer_event) = event {
-                                let left = pointer_event.pos.x
-                                    < tab_width.get_untracked() / 2.0;
-                                if drag_over_left.get_untracked() != Some(left) {
-                                    drag_over_left.set(Some(left));
+                            .style(|s| {
+                                s.margin_left(10.0)
+                                    .min_width(0.0)
+                                    .flex_basis(0.0)
+                                    .flex_grow(1.0f32)
+                                    .selectable(false)
+                                    .text_ellipsis()
+                            }),
+                            {
+                                let window_data = local_window_data.clone();
+                                clickable_icon(
+                                    || SparrowIcons::WINDOW_CLOSE,
+                                    move || {
+                                        window_data.run_window_command(
+                                            WindowCommand::CloseWorkspaceTab {
+                                                index: Some(index.get_untracked()),
+                                            },
+                                        );
+                                    },
+                                    || false,
+                                    || false,
+                                    || "Close",
+                                    config.read_only(),
+                                )
+                                .style(|s| s.margin_horiz(6.0))
+                            },
+                        ))
+                        .on_event_stop(EventListener::DragOver, move |event| {
+                            if dragging_index.get_untracked().is_some() {
+                                if let Event::PointerMove(pointer_event) = event {
+                                    let left = pointer_event.pos.x
+                                        < tab_width.get_untracked() / 2.0;
+                                    if drag_over_left.get_untracked() != Some(left) {
+                                        drag_over_left.set(Some(left));
+                                    }
                                 }
                             }
-                        }
-                    })
-                    .on_event(EventListener::Drop, move |event| {
-                        if dragging_index.get_untracked().is_some() {
+                        })
+                        .on_event(EventListener::Drop, move |event| {
+                            if dragging_index.get_untracked().is_some() {
+                                drag_over_left.set(None);
+                                if let Event::PointerUp(pointer_event) = event {
+                                    let left = pointer_event.pos.x
+                                        < tab_width.get_untracked() / 2.0;
+                                    let index = index.get_untracked();
+                                    let new_index =
+                                        if left { index } else { index + 1 };
+                                    if let Some(from_index) =
+                                        dragging_index.get_untracked()
+                                    {
+                                        window_data.move_tab(
+                                            from_index.get_untracked(),
+                                            new_index,
+                                        );
+                                    }
+                                    dragging_index.set(None);
+                                }
+                                EventPropagation::Stop
+                            } else {
+                                EventPropagation::Continue
+                            }
+                        })
+                        .on_event_stop(EventListener::DragLeave, move |_| {
                             drag_over_left.set(None);
-                            if let Event::PointerUp(pointer_event) = event {
-                                let left = pointer_event.pos.x
-                                    < tab_width.get_untracked() / 2.0;
-                                let index = index.get_untracked();
-                                let new_index = if left { index } else { index + 1 };
-                                if let Some(from_index) =
-                                    dragging_index.get_untracked()
-                                {
-                                    window_data.move_tab(
-                                        from_index.get_untracked(),
-                                        new_index,
-                                    );
-                                }
-                                dragging_index.set(None);
-                            }
-                            EventPropagation::Stop
-                        } else {
-                            EventPropagation::Continue
-                        }
-                    })
-                    .on_event_stop(EventListener::DragLeave, move |_| {
-                        drag_over_left.set(None);
-                    })
-                    .style(move |s| {
-                        let config = config.get();
-                        s.width_full()
-                            .min_width(0.0)
-                            .items_center()
-                            .border_right(1.0)
-                            .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                            .apply_if(
-                                cfg!(target_os = "macos") && index.get() == 0,
-                                |s| s.border_left(1.0),
-                            )
-                    }),
-                    container(empty().style(move |s| {
-                        s.size_full()
-                            .apply_if(active.get() == index.get(), |s| {
-                                s.border_bottom(2.0)
-                            })
-                            .border_color(
-                                config.get().color(
+                        })
+                        .style(move |s| {
+                            let config = config.get();
+                            s.width_full()
+                                .min_width(0.0)
+                                .apply_if(active.get() == index.get(), |s| {
+                                    s.background(config.color(
+                                        SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND,
+                                    ))
+                                })
+                                .items_center()
+                                .border_right(1.0)
+                                .border_color(
+                                    config.color(SparrowColor::SPARROW_BORDER),
+                                )
+                                .apply_if(
+                                    cfg!(target_os = "macos") && index.get() == 0,
+                                    |s| s.border_left(1.0),
+                                )
+                        }),
+                        container(empty().style(move |s| {
+                            s.size_full()
+                                .apply_if(active.get() == index.get(), |s| {
+                                    s.border_bottom(2.0)
+                                })
+                                .border_color(config.get().color(
                                     SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE,
-                                ),
-                            )
-                    }))
-                    .style(move |s| {
-                        s.position(Position::Absolute)
-                            .padding_horiz(3.0)
-                            .size_full()
-                            .pointer_events_none()
-                    }),
-                ))
-                .style(move |s| s.size_full().items_center())
-            })
-            .draggable()
-            .on_event_stop(EventListener::DragStart, move |_| {
-                dragging_index.set(Some(index));
-            })
-            .on_event_stop(EventListener::DragEnd, move |_| {
-                dragging_index.set(None);
-            })
-            .dragging_style(move |s| {
-                let config = config.get();
-                s.border(1.0)
-                    .border_radius(6.0)
-                    .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                    .color(
-                        config
-                            .color(SparrowColor::EDITOR_FOREGROUND)
-                            .multiply_alpha(0.7),
-                    )
-                    .background(
-                        config
-                            .color(SparrowColor::PANEL_BACKGROUND)
-                            .multiply_alpha(0.7),
-                    )
-            })
-            .on_click_stop(move |_| {
-                active.set(index.get_untracked());
-            })
-            .style(move |s| s.size_full()),
-            empty().style(move |s| {
-                let index = index.get();
-                s.absolute()
-                    .margin_left(if index == 0 { 0.0 } else { -2.0 })
-                    .width(
-                        tab_width.get() as f32 + if index == 0 { 1.0 } else { 3.0 },
-                    )
-                    .height_full()
-                    .border_color(
-                        config
-                            .get()
-                            .color(SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE),
-                    )
-                    .apply_if(drag_over_left.get().is_some(), move |s| {
-                        let drag_over_left = drag_over_left.get_untracked().unwrap();
-                        if drag_over_left {
-                            s.border_left(3.0)
-                        } else {
-                            s.border_right(3.0)
-                        }
-                    })
-                    .apply_if(drag_over_left.get().is_none(), move |s| s.hide())
-            }),
-        ))
-        .style(move |s| s.height_full().width(tab_width.get() as f32))
-    };
+                                ))
+                        }))
+                        .style(move |s| {
+                            s.position(Position::Absolute)
+                                .padding_horiz(3.0)
+                                .size_full()
+                                .pointer_events_none()
+                        }),
+                    ))
+                    .style(move |s| s.size_full().items_center())
+                })
+                .draggable()
+                .on_event_stop(EventListener::DragStart, move |_| {
+                    dragging_index.set(Some(index));
+                })
+                .on_event_stop(EventListener::DragEnd, move |_| {
+                    dragging_index.set(None);
+                })
+                .dragging_style(move |s| {
+                    let config = config.get();
+                    s.border(1.0)
+                        .border_radius(6.0)
+                        .border_color(config.color(SparrowColor::SPARROW_BORDER))
+                        .color(
+                            config
+                                .color(SparrowColor::EDITOR_FOREGROUND)
+                                .multiply_alpha(0.7),
+                        )
+                        .background(
+                            config
+                                .color(SparrowColor::PANEL_BACKGROUND)
+                                .multiply_alpha(0.7),
+                        )
+                })
+                .on_click_stop(move |_| {
+                    active.set(index.get_untracked());
+                })
+                .style(move |s| s.size_full()),
+                empty().style(move |s| {
+                    let index = index.get();
+                    s.absolute()
+                        .margin_left(if index == 0 { 0.0 } else { -2.0 })
+                        .width(
+                            tab_width.get() as f32
+                                + if index == 0 { 1.0 } else { 3.0 },
+                        )
+                        .height_full()
+                        .border_color(
+                            config
+                                .get()
+                                .color(SparrowColor::SPARROW_TAB_ACTIVE_UNDERLINE),
+                        )
+                        .apply_if(drag_over_left.get().is_some(), move |s| {
+                            let drag_over_left =
+                                drag_over_left.get_untracked().unwrap();
+                            if drag_over_left {
+                                s.border_left(3.0)
+                            } else {
+                                s.border_right(3.0)
+                            }
+                        })
+                        .apply_if(drag_over_left.get().is_none(), move |s| s.hide())
+                }),
+            ))
+            .style(move |s| s.height_full().width(tab_width.get() as f32));
+            strip.item(tab_view, move || active.get() == index.get())
+        };
 
     stack((
         empty().style(move |s| {
             let is_macos = cfg!(target_os = "macos");
             s.min_width(75.0)
                 .width(75.0)
+                .flex_shrink(0.0_f32)
                 .apply_if(!is_macos, |s| s.hide())
         }),
-        dyn_stack(
-            move || {
-                let tabs = tabs.get();
-                for (i, (index, _)) in tabs.iter().enumerate() {
-                    if index.get_untracked() != i {
-                        index.set(i);
+        tab_strip(|strip| {
+            dyn_stack(
+                move || {
+                    let tabs = tabs.get();
+                    for (i, (index, _)) in tabs.iter().enumerate() {
+                        if index.get_untracked() != i {
+                            index.set(i);
+                        }
                     }
-                }
-                tabs
-            },
-            |(_, tab)| tab.window_tab_id,
-            view_fn,
-        )
+                    tabs
+                },
+                |(_, tab)| tab.window_tab_id,
+                move |item| view_fn(strip, item),
+            )
+            .style(|s| s.height_full())
+        })
         .style(|s| s.height_full()),
         container(clickable_icon(
             || SparrowIcons::ADD,
@@ -273,6 +288,7 @@ pub(super) fn workspace_tab_header(window_data: WindowData) -> impl View {
         })
         .style(|s| {
             s.height_full()
+                .flex_shrink(0.0_f32)
                 .padding_left(10.0)
                 .padding_right(10.0)
                 .items_center()
@@ -286,6 +302,7 @@ pub(super) fn workspace_tab_header(window_data: WindowData) -> impl View {
             window_maximized,
             config.read_only(),
         )
+        .style(|s| s.flex_shrink(0.0_f32))
         .on_resize(move |rect| {
             let width = rect.width();
             if window_control_width.get_untracked() != width {

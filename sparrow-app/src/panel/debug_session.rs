@@ -23,7 +23,6 @@ use crate::{
 mod console;
 
 use console::console_view;
-use crate::widgets::sparrow_scroll;
 
 pub(super) fn panel(
     window: Rc<WindowTabData>,
@@ -50,7 +49,7 @@ pub(super) fn panel(
 
     let sessions = terminal.clone();
     let session_window = window.clone();
-    let tabs = crate::widgets::tab_strip(
+    let tabs = crate::widgets::tab_strip(|strip| {
         dyn_stack(
             move || {
                 sessions
@@ -85,7 +84,7 @@ pub(super) fn panel(
                     )
                     .style(|s| s.size(18.0, 18.0).padding(2.0).margin_left(6.0)),
                 ));
-                crate::widgets::tab_button(
+                strip.button(
                     content,
                     move || active.get() == Some(id),
                     move || {
@@ -97,8 +96,8 @@ pub(super) fn panel(
                 )
             },
         )
-        .style(|s| s.items_center().height_full()),
-    )
+        .style(|s| s.items_center().height_full())
+    })
     .style(|s| {
         s.flex_grow(1.0_f32)
             .flex_basis(0.0)
@@ -278,12 +277,33 @@ pub(super) fn panel(
             let breakpoint_window = controls_window.clone();
             let muted = controls_window.terminal.debug.muted;
             let action_proxy = controls_window.common.proxy.clone();
-            let step_thread = move || daps.with_untracked(|daps|daps.get(&dap_id).and_then(|dap|dap.thread_id.get_untracked()));
-            let step_generation = move || daps.with_untracked(|daps|daps.get(&dap_id).map(|dap|dap.pause_generation.get_untracked()).unwrap_or_default());
-            let step_frame = move || daps.with_untracked(|daps|daps.get(&dap_id).and_then(|dap| {
-                let thread = dap.thread_id.get_untracked()?;
-                dap.stack_traces.with_untracked(|traces|traces.get(&thread).and_then(|trace|trace.frames.with_untracked(|f|f.front().map(|f|f.id))))
-            }));
+            let step_thread = move || {
+                daps.with_untracked(|daps| {
+                    daps.get(&dap_id)
+                        .and_then(|dap| dap.thread_id.get_untracked())
+                })
+            };
+            let step_generation = move || {
+                daps.with_untracked(|daps| {
+                    daps.get(&dap_id)
+                        .map(|dap| dap.pause_generation.get_untracked())
+                        .unwrap_or_default()
+                })
+            };
+            let step_frame = move || {
+                daps.with_untracked(|daps| {
+                    daps.get(&dap_id).and_then(|dap| {
+                        let thread = dap.thread_id.get_untracked()?;
+                        dap.stack_traces.with_untracked(|traces| {
+                            traces.get(&thread).and_then(|trace| {
+                                trace
+                                    .frames
+                                    .with_untracked(|f| f.front().map(|f| f.id))
+                            })
+                        })
+                    })
+                })
+            };
             stack((
                 buttons,
                 clickable_icon(|| SparrowIcons::DEBUG_DISCONNECT,
@@ -375,24 +395,24 @@ pub(super) fn panel(
             .into_any()
         },
     );
-    let toolbar = sparrow_scroll(
+    let toolbar = crate::widgets::tab_strip(|strip| {
         stack((
             controls,
-            crate::widgets::tab_button(
+            strip.button(
                 label(|| "Threads & Variables"),
                 move || !console_selected.get(),
                 move || console_selected.set(false),
                 config,
             ),
-            crate::widgets::tab_button(
+            strip.button(
                 label(|| "Console"),
                 move || console_selected.get(),
                 move || console_selected.set(true),
                 config,
             ),
         ))
-        .style(|s| s.items_center().height_full()),
-    )
+        .style(|s| s.items_center().height_full())
+    })
     .style(move |s| {
         s.height(30.0)
             .width_full()

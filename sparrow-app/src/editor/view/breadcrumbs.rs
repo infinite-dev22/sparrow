@@ -10,12 +10,12 @@ use floem::{
 };
 
 use crate::editor::EditorData;
+use crate::widgets::horizontal_scroll;
 use crate::{
     config::{SparrowConfig, color::SparrowColor},
     doc::DocContent,
     workspace::SparrowWorkspace,
 };
-use crate::widgets::sparrow_scroll;
 
 pub(super) fn editor_breadcrumbs(
     workspace: Arc<SparrowWorkspace>,
@@ -33,7 +33,7 @@ pub(super) fn editor_breadcrumbs(
         }
     });
     container(
-        sparrow_scroll(
+        horizontal_scroll(
             stack((
                 {
                     let workspace = workspace.clone();
@@ -97,7 +97,7 @@ pub(super) fn editor_breadcrumbs(
             doc.track();
             Some(Point::new(3000.0, 0.0))
         })
-        .scroll_style(|s| s.hide_bars(true))
+        .scroll_style(|s| s.handle_thickness(3).track_thickness(3))
         .style(move |s| {
             s.absolute()
                 .size_pct(100.0, 100.0)

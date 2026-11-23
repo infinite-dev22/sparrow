@@ -16,7 +16,7 @@ use crate::{
     config::{SparrowConfig, color::SparrowColor},
     widgets::{
         ButtonKind, Divider, button, button_with_content, empty_state,
-        sparrow_scroll, tab_button, tab_strip,
+        sparrow_scroll, tab_strip,
     },
 };
 
@@ -57,13 +57,15 @@ pub(super) fn pane(
     reveal: impl Fn(Arc<Entry>) + Clone + 'static,
     config: Config,
 ) -> impl View {
-    let tabs = DetailTab::ALL.map(|page| {
-        tab_button(
-            label(move || page.label()).style(|s| s.selectable(false)),
-            move || tab.get() == page,
-            move || tab.set(page),
-            config,
-        )
+    let tabs = tab_strip(|strip| {
+        stack_from_iter(DetailTab::ALL.map(|page| {
+            strip.button(
+                label(move || page.label()).style(|s| s.selectable(false)),
+                move || tab.get() == page,
+                move || tab.set(page),
+                config,
+            )
+        }))
     });
     let controls = stack((
         label(|| "Log details").style(|s| s.font_bold().flex_grow(1.0_f32)),
@@ -134,8 +136,7 @@ pub(super) fn pane(
 
     stack((
         controls,
-        tab_strip(stack_from_iter(tabs))
-            .style(|s| s.width_full().flex_shrink(0.0_f32)),
+        tabs.style(|s| s.width_full().flex_shrink(0.0_f32)),
         Divider::new(config).into_view(),
         contents,
     ))
