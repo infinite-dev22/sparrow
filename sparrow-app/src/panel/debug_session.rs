@@ -74,12 +74,9 @@ pub(super) fn panel(
                     }),
                     label(move || p.config.name.clone())
                         .style(|s| s.max_width(220.0).text_ellipsis()),
-                    clickable_icon(
-                        || SparrowIcons::CLOSE,
+                    crate::widgets::tab_close_button(
                         move || close_terminal.close_run_debug_session(id),
-                        || false,
-                        || false,
-                        || "Close debug session",
+                        "Close debug session",
                         config,
                     )
                     .style(|s| s.size(18.0, 18.0).padding(2.0).margin_left(6.0)),
@@ -107,15 +104,12 @@ pub(super) fn panel(
 
     let menu_window = window.clone();
     let hide = window.panel.clone();
-    let header_actions = stack((
-        clickable_icon(
-            || SparrowIcons::WINDOW_MORE,
-            || {},
-            || false,
-            || false,
-            || "Debug options",
-            config,
-        )
+    let header_actions = crate::widgets::icon_button(
+        || SparrowIcons::WINDOW_MORE,
+        || "Debug options",
+        config,
+        crate::widgets::IconButtonStyle::default,
+    )
         .ide_popout_menu(move || {
             let close = menu_window.terminal.clone();
             let maximize = menu_window.panel.clone();
@@ -161,17 +155,12 @@ pub(super) fn panel(
             }
             menu = menu.entry(docking);
             menu
-        }),
-        clickable_icon(
-            || SparrowIcons::REMOVE,
-            move || hide.hide_panel(&PanelKind::Debug),
-            || false,
-            || false,
-            || "Hide Debug",
-            config,
-        ),
-    ));
-    let header = crate::widgets::panel_title_bar("Debug", tabs, header_actions);
+        });
+    let header = crate::widgets::panel_title_bar(
+        "Debug", None, tabs, Some(header_actions.into_any()),
+        move || hide.hide_panel(&PanelKind::Debug),
+        config,
+    );
 
     let controls_window = window.clone();
     let selected_terminal = terminal.clone();

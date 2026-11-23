@@ -17,7 +17,7 @@ use crate::{
     dart::FlutterRunState,
     debug::RunDebugMode,
     editor::location::{EditorLocation, EditorPosition},
-    widgets::{clickable_icon, panel_title_bar, tab_strip},
+    widgets::{clickable_icon, tab_strip},
     window_tab::{Focus, WindowTabData},
 };
 
@@ -28,7 +28,6 @@ pub fn flutter_run_panel(
     let config = window.common.config;
     let terminal = window.terminal.clone();
     let active = terminal.active_run;
-    let panel = window.panel.clone();
     let focus = window.common.focus;
 
     let sessions = terminal.clone();
@@ -49,14 +48,11 @@ pub fn flutter_run_panel(
                     stack((
                         label(move || process.config.name.clone())
                             .style(|s| s.max_width(220.0).text_ellipsis()),
-                        clickable_icon(
-                            || SparrowIcons::CLOSE,
-                            move || close.close_run_debug_session(id),
-                            || false,
-                            || false,
-                            || "Close run session",
-                            config,
-                        )
+                        crate::widgets::tab_close_button(
+                        move || close.close_run_debug_session(id),
+                        "Close run session",
+                        config,
+                    )
                         .style(|s| s.size(18.0, 18.0).padding(2.0).margin_left(6.0)),
                     ))
                     .style(|s| s.items_center()),
@@ -70,18 +66,7 @@ pub fn flutter_run_panel(
     })
     .style(|s| s.flex_grow(1.0_f32).min_width(0.0));
 
-    let header = panel_title_bar(
-        "Run",
-        tabs,
-        clickable_icon(
-            || SparrowIcons::REMOVE,
-            move || panel.hide_panel(&PanelKind::FlutterRun),
-            || false,
-            || false,
-            || "Hide Run",
-            config,
-        ),
-    );
+    let header = super::chrome::header(window.clone(), PanelKind::FlutterRun, "Run", tabs);
 
     let actions = terminal.clone();
     let monitor = terminal.clone();

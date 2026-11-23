@@ -47,6 +47,26 @@ pub fn tab_button(
     )
 }
 
+/// Close affordance for compact tab strips. Use the same glyph size and hit
+/// target across tools while keeping it inside a 24-pixel tab.
+pub(crate) fn tab_close_button(
+    close: impl Fn() + 'static,
+    tooltip: &'static str,
+    config: ReadSignal<Arc<SparrowConfig>>,
+) -> impl View {
+    super::icon_button(
+        || crate::config::icon::SparrowIcons::CLOSE,
+        move || tooltip,
+        config,
+        || super::IconButtonStyle {
+            size: Some(20.0),
+            icon_size: Some(14.0),
+            ..Default::default()
+        },
+    )
+    .on_click_stop(move |_| close())
+}
+
 #[derive(Clone, Copy)]
 pub struct TabStrip {
     active: RwSignal<Option<(ViewId, Rect)>>,

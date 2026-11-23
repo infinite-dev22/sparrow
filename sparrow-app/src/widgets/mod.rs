@@ -49,13 +49,17 @@ pub use divider::{Divider, DividerVariant};
 pub use dropdown::dropdown;
 pub use empty_state::empty_state;
 pub use foldable_section::foldable_panel_section;
-pub use icon_button::{clickable_icon, clickable_icon_base, not_clickable_icon};
+pub use icon_button::{
+    IconButtonStyle, clickable_icon, clickable_icon_base, icon_button,
+    not_clickable_icon,
+};
 pub use menu_button::menu_button;
 pub use panel_title_bar::panel_title_bar;
 pub use progress_bar::progress_bar;
 pub use radio_group::radio_group;
 pub(crate) use selectable_row::selectable_row_style;
 pub use sparrow_scroll::{horizontal_scroll, sparrow_scroll};
+pub(crate) use tab::tab_close_button;
 pub use tab::{TabStrip, tab_button, tab_strip};
 pub use text_input::text_input;
 pub use toggle_row::toggle_row;

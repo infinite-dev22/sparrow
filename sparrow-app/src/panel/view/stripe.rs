@@ -9,7 +9,7 @@ use floem::{
     event::EventListener,
     reactive::{SignalGet, SignalUpdate, SignalWith},
     style::CursorStyle,
-    views::{Decorators, container, dyn_stack, empty, label, stack, svg},
+    views::{Decorators, container, dyn_stack, empty, label, stack},
 };
 
 use crate::panel::{kind::PanelKind, position::PanelPosition};
@@ -136,29 +136,23 @@ fn stripe_picker(
                     }
                 }
             };
-            let icon_active = is_active.clone();
-            let glyph_active = is_active.clone();
+            let button_active = is_active.clone();
             container(
-                crate::widgets::tooltip_label(config,
-                    container(svg(move || config.get().ui_svg(icon))
-                        .style(move |s| s.size(16.0, 16.0).color(
-                            if glyph_active() { floem::peniko::Color::from_rgb8(255,255,255) }
-                            else { config.get().color(SparrowColor::SPARROW_ICON_ACTIVE) })))
-                        .style(move |s| {
-                            let config = config.get();
-                            let active = icon_active();
-                            let blue = config.color(SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND);
-                            s.size(28.0, 28.0).padding(6.0).border_radius(6.0)
-                                .color(if active { floem::peniko::Color::from_rgb8(255,255,255) }
-                                    else { config.color(SparrowColor::SPARROW_ICON_ACTIVE) })
-                                .apply_if(active, |s| s.background(blue))
-                                .hover(|s| s.cursor(CursorStyle::Pointer).background(if active { blue }
-                                    else { config.color(SparrowColor::PANEL_HOVERED_BACKGROUND) }))
-                                .active(|s| s.background(if active { blue }
-                                    else { config.color(SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND) }))
-                        })
-                        .on_click_stop(move |_| window_tab_data.toggle_panel_visual(p)),
-                    move || tooltip)
+                crate::widgets::icon_button(
+                    move || icon,
+                    move || tooltip,
+                    config,
+                    move || crate::widgets::IconButtonStyle {
+                        size: Some(28.0),
+                        icon_size: Some(16.0),
+                        radius: Some(6.0),
+                        foreground: button_active().then_some(floem::peniko::Color::WHITE),
+                        background: button_active().then(|| config.get().color(
+                            SparrowColor::SPARROW_BUTTON_PRIMARY_BACKGROUND,
+                        )),
+                    },
+                )
+                .on_click_stop(move |_| window_tab_data.toggle_panel_visual(p))
                 .draggable()
                 .on_event_stop(EventListener::DragStart, move |_| {
                     dragging.set(Some(DragContent::Panel(p)));

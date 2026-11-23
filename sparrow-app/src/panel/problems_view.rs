@@ -381,14 +381,11 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             Tab::Inspection => format!("Inspection · {title}"),
                         })
                         .style(|s| s.max_width(240.0).text_ellipsis()),
-                        clickable_icon(
-                            || SparrowIcons::CLOSE,
-                            move || inspection.close(),
-                            || false,
-                            || false,
-                            || "Close inspection",
-                            config,
-                        )
+                        crate::widgets::tab_close_button(
+                        move || inspection.close(),
+                        "Close inspection",
+                        config,
+                    )
                         .style(move |s| {
                             s.margin_left(6.0)
                                 .apply_if(item != Tab::Inspection, |s| s.hide())
@@ -776,35 +773,18 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
 
     let header_window = window.clone();
     let hide = window.panel.clone();
-    let header = panel_title_bar(
-        "Problems",
-        tabs,
-        stack((
-            clickable_icon(
-                || SparrowIcons::WINDOW_MORE,
-                || {},
-                || false,
-                || false,
-                || "Problems options",
-                config,
-            )
-            .ide_popout_menu(move || {
-                options::panel_options(&header_window, options, excluded)
-            }),
-            clickable_icon(
-                || SparrowIcons::WINDOW_MINIMIZE,
-                move || hide.hide_panel(&PanelKind::Problems),
-                || false,
-                || false,
-                || "Hide Problems",
-                config,
-            ),
-        )),
+    let actions = crate::widgets::icon_button(
+        || SparrowIcons::WINDOW_MORE,
+        || "Problems options",
+        config,
+        crate::widgets::IconButtonStyle::default,
     )
-    .style(move |s| {
-        s.border_bottom(1.0)
-            .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-    });
+    .ide_popout_menu(move || options::panel_options(&header_window, options, excluded));
+    let header = panel_title_bar(
+        "Problems", None, tabs, Some(actions.into_any()),
+        move || hide.hide_panel(&PanelKind::Problems),
+        config,
+    );
     stack((header, content)).style(move |s| {
         let config = config.get();
         s.absolute()

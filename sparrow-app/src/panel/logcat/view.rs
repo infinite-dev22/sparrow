@@ -64,15 +64,11 @@ pub(super) fn panel(state: State) -> impl View {
                         }
                     })
                     .style(|s| s.text_ellipsis().max_width(160.0)),
-                    clickable_icon(
-                        || SparrowIcons::CLOSE,
+                    crate::widgets::tab_close_button(
                         move || close.remove(id),
-                        || false,
-                        || false,
-                        || "Close Logcat tab",
+                        "Close Logcat tab",
                         config,
-                    )
-                    .style(|s| s.size(18.0, 18.0).padding(3.0)),
+                    ),
                 ));
                 strip.button(
                     content,
@@ -84,12 +80,12 @@ pub(super) fn panel(state: State) -> impl View {
         })
         .style(|s| s.items_center())
     });
-    let header = super::super::chrome::header(
+    let header = super::super::chrome::header_with_actions(
         state.window.clone(),
         PanelKind::Logcat,
         "Logcat",
-        stack((
-            tabs,
+        tabs,
+        Some(stack((
             clickable_icon(
                 || SparrowIcons::ADD,
                 move || add.add(),
@@ -107,7 +103,7 @@ pub(super) fn panel(state: State) -> impl View {
                 config,
             ),
         ))
-        .style(|s| s.items_center().min_width(0.0).flex_shrink(1.0_f32)),
+        .style(|s| s.items_center().gap(2.0)).into_any()),
     );
     let import_state = state.clone();
     let load = state.clone();

@@ -13,10 +13,10 @@ use floem::{
 
 use super::{kind::PanelKind, position::PanelPosition};
 use crate::{
-    config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
+    config::{SparrowConfig, color::SparrowColor},
     dart::{InspectorState, performance::Sample},
     widgets::{
-        clickable_icon, panel_title_bar, sparrow_scroll, tab_strip, toggle_row,
+        sparrow_scroll, tab_strip, toggle_row,
     },
     window_tab::WindowTabData,
 };
@@ -44,25 +44,10 @@ pub fn flutter_performance_panel(
     let state = inspector.state;
     let page = create_rw_signal(Page::Frames);
     let data = inspector.performance;
-    let panel = window.panel.clone();
     poll(window.clone(), page);
 
-    let header = panel_title_bar(
-        "Flutter Performance",
-        floem::views::empty(),
-        clickable_icon(
-            || SparrowIcons::WINDOW_MINIMIZE,
-            move || panel.hide_panel(&PanelKind::FlutterPerformance),
-            || false,
-            || false,
-            || "Hide Flutter Performance",
-            config,
-        ),
-    )
-    .style(move |s| {
-        s.border_bottom(1.0)
-            .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-    });
+    let header = super::chrome::header(window.clone(), PanelKind::FlutterPerformance, "Flutter Performance", floem::views::empty());
+
     let status = stack((
         floem::views::empty().style(move |s| {
             s.size(7.0, 7.0)

@@ -6,7 +6,7 @@ use floem::{
     IntoView, View,
     event::{EventListener, EventPropagation},
     reactive::{Memo, SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
-    views::{Decorators, empty, stack, tab},
+    views::{Decorators, container, empty, stack, tab},
 };
 
 use crate::panel::{
@@ -255,7 +255,29 @@ fn panel_view(
                         .into_any()
                 }
             };
-            view.style(|s| s.size_pct(100.0, 100.0))
+            let needs_header = match kind {
+                PanelKind::Search
+                | PanelKind::CallHierarchy
+                | PanelKind::References
+                | PanelKind::Implementation
+                | PanelKind::FlutterInspector
+                | PanelKind::FlutterTest => true,
+                PanelKind::Problem => !position.is_bottom(),
+                _ => false,
+            };
+            let view = view.style(|s| s.size_full());
+            if needs_header {
+                stack((
+                    crate::panel::chrome::header(
+                        window_tab_data.clone(), kind, kind.title(), empty(),
+                    ),
+                    container(view).style(|s| s.width_full().flex_grow(1.0_f32).flex_basis(0).min_height(0)),
+                ))
+                .style(|s| s.flex_col().size_full())
+                .into_any()
+            } else {
+                view.into_any()
+            }
         },
     )
         .style(move |s| {
