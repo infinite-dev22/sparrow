@@ -12,7 +12,7 @@ use floem::{
         ReadSignal, RwSignal, SignalGet, SignalUpdate, SignalWith, create_memo,
         create_rw_signal,
     },
-    style::{AlignItems, CursorStyle, Style},
+    style::{AlignItems, Style},
     text::{Attrs, AttrsList, TextLayout, Weight},
     views::{Decorators, container, label, stack, svg, virtual_stack},
 };
@@ -355,34 +355,29 @@ pub(super) fn file_explorer_view(
                         .style({
                             let kind = kind.clone();
                             move |s| {
-                                s.padding_right(ROW_END_PADDING)
+                                let row = s
+                                    .padding_right(ROW_END_PADDING)
                                     .border_radius(6.0)
                                     .min_width_full()
                                     .padding_left(level as f64 * TREE_INDENT)
                                     .align_items(AlignItems::Center)
                                     .apply_if(role == Some("excluded"), |s| {
-                                        s.background(Color::from_rgba8(122, 79, 40, 35))
+                                        s.background(Color::from_rgba8(
+                                            122, 79, 40, 35,
+                                        ))
                                     })
                                     .apply_if(role == Some("test"), |s| {
-                                        s.background(Color::from_rgba8(58, 103, 48, 30))
-                                    })
-                                    .hover(|s| {
-                                        s.background(config.get().color(
-                                            SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                        s.background(Color::from_rgba8(
+                                            58, 103, 48, 30,
                                         ))
-                                        .cursor(CursorStyle::Pointer)
-                                    })
-                                    .apply_if(
-                                        select
-                                            .get()
-                                            .map(|x| x == kind)
-                                            .unwrap_or_default(),
-                                        |x| {
-                                            x.background(config.get().color(
-                                                SparrowColor::PANEL_SELECTION_BACKGROUND,
-                                            ))
-                                        },
-                                    )
+                                    });
+                                crate::widgets::selectable_row_style(
+                                    row,
+                                    &config.get(),
+                                    select
+                                        .get()
+                                        .is_some_and(|selected| selected == kind),
+                                )
                             }
                         })
                         .debug_name("file item");

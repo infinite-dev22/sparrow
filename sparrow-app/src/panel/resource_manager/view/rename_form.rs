@@ -67,9 +67,13 @@ impl RenameForm {
             text_input(rename_name, config).disabled(move ||rename_busy.get()).placeholder("New resource name"),
             sparrow_scroll(label(move ||rename_plan.with(|p|p.as_ref().map(|p|p.details()).unwrap_or_default()))).style(|s|s.width_full().max_height(220.0)),
             label(move ||rename_error.get()),
-            stack((
-                label(||"Cancel").on_click_stop(move |_|{if !rename_busy.get_untracked(){rename_resource.set(None);}}),
-                label(move ||if rename_busy.get(){"Working…"}else if rename_plan.with(|p|p.is_some()){"Apply rename"}else{"Preview usages"}).on_click_stop({let window=window.clone();move |_|{
+            crate::widgets::action_group((
+                crate::widgets::compact_button(|| "Cancel", crate::widgets::ButtonKind::Outlined, config)
+                    .disabled(move || rename_busy.get())
+                    .on_click_stop(move |_|{if !rename_busy.get_untracked(){rename_resource.set(None);}}),
+                crate::widgets::compact_button(move ||if rename_busy.get(){"Working…"}else if rename_plan.with(|p|p.is_some()){"Apply rename"}else{"Preview usages"}, crate::widgets::ButtonKind::Primary, config)
+                    .disabled(move || rename_busy.get())
+                    .on_click_stop({let window=window.clone();move |_|{
                     if rename_busy.get_untracked(){return;}
                     let Some(root)=window.workspace.path.clone()else{return;};
                     let Some(target)=rename_resource.get_untracked()else{return;};
@@ -93,7 +97,7 @@ impl RenameForm {
                     });
                     std::thread::spawn(move ||send(if let Some(plan)=plan {plan.apply().map(|_|None)}else{crate::panel::resource_rename::plan(&root,&target,&name).map(Some)}));
                 }}),
-            )).style(|s|s.gap(16.0)),
+            )),
         )).style(move |s|s.absolute().inset_left(12.0).inset_right(12.0).inset_top(100.0).padding(16.0).gap(12.0).flex_col().border(1.0).border_radius(5.0).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_color(config.get().color(SparrowColor::SPARROW_BORDER)).z_index(60).apply_if(rename_resource.with(|r|r.is_none()),|s|s.hide()))
     }
 }

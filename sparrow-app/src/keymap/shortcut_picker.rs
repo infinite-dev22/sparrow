@@ -9,7 +9,6 @@ use floem::{
     reactive::{
         Memo, ReadSignal, SignalGet, SignalUpdate, SignalWith, create_effect,
     },
-    style::CursorStyle,
     views::{Decorators, container, dyn_stack, label, stack, text},
 };
 
@@ -80,70 +79,37 @@ pub(super) fn keyboard_picker_view(
                     .background(config.color(SparrowColor::EDITOR_BACKGROUND))
             }),
             stack((
-                text("Save")
-                    .style(move |s| {
-                        let config = config.get();
-                        s.width(100.0)
-                            .justify_center()
-                            .padding_vert(8.0)
-                            .border(1.0)
-                            .border_radius(6.0)
-                            .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                            .hover(|s| {
-                                s.cursor(CursorStyle::Pointer).background(
-                                    config.color(
-                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                    ),
-                                )
-                            })
-                            .active(|s| {
-                                s.background(config.color(
-                                    SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND,
-                                ))
-                            })
-                    })
-                    .on_click_stop(move |_| {
-                        let keymap = picker.keymap.get_untracked();
-                        if let Some(keymap) = keymap {
-                            let keys = picker.keys.get_untracked();
-                            picker.keymap.set(None);
-                            return_focus.request_focus();
-                            KeyPressData::update_file(
-                                &keymap,
-                                &keys
-                                    .iter()
-                                    .map(|(key, _)| key.clone())
-                                    .collect::<Vec<KeyMapPress>>(),
-                            );
-                        }
-                    }),
-                text("Cancel")
-                    .style(move |s| {
-                        let config = config.get();
-                        s.margin_left(20.0)
-                            .width(100.0)
-                            .justify_center()
-                            .padding_vert(8.0)
-                            .border(1.0)
-                            .border_radius(6.0)
-                            .border_color(config.color(SparrowColor::SPARROW_BORDER))
-                            .hover(|s| {
-                                s.cursor(CursorStyle::Pointer).background(
-                                    config.color(
-                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                    ),
-                                )
-                            })
-                            .active(|s| {
-                                s.background(config.color(
-                                    SparrowColor::PANEL_HOVERED_ACTIVE_BACKGROUND,
-                                ))
-                            })
-                    })
-                    .on_click_stop(move |_| {
+                crate::widgets::button(
+                    || "Save",
+                    crate::widgets::ButtonKind::Primary,
+                    config,
+                )
+                .style(|s| s.width(100.0).padding_vert(8.0))
+                .on_click_stop(move |_| {
+                    let keymap = picker.keymap.get_untracked();
+                    if let Some(keymap) = keymap {
+                        let keys = picker.keys.get_untracked();
                         picker.keymap.set(None);
                         return_focus.request_focus();
-                    }),
+                        KeyPressData::update_file(
+                            &keymap,
+                            &keys
+                                .iter()
+                                .map(|(key, _)| key.clone())
+                                .collect::<Vec<KeyMapPress>>(),
+                        );
+                    }
+                }),
+                crate::widgets::button(
+                    || "Cancel",
+                    crate::widgets::ButtonKind::Outlined,
+                    config,
+                )
+                .style(|s| s.width(100.0).padding_vert(8.0))
+                .on_click_stop(move |_| {
+                    picker.keymap.set(None);
+                    return_focus.request_focus();
+                }),
             ))
             .style(move |s| {
                 let config = config.get();
@@ -151,6 +117,7 @@ pub(super) fn keyboard_picker_view(
                     .justify_center()
                     .width_pct(100.0)
                     .margin_top(20.0)
+                    .gap(20.0)
                     .border_color(config.color(SparrowColor::SPARROW_BORDER))
             }),
         ))

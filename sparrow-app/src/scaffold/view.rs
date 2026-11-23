@@ -199,10 +199,11 @@ fn scaffold_view(window: Rc<WindowTabData>) -> impl View {
             .disabled(move || busy.get() || undoing.get())
                 .style(move |s| s.apply_if(export_mode.get() || undoing.get(), |s| s.hide())),
         ),
-        focus.control(label(|| "Manage templates…").on_click_stop({
-            let window = window.clone();
-            move |_| window.scaffold.open_manager(&window)
-        })),
+        focus.control(crate::widgets::action_link(
+            || "Manage templates…",
+            { let window = window.clone(); move || window.scaffold.open_manager(&window) },
+            config,
+        )),
         input.style(move |s| s.apply_if(export_mode.get(), |s| s.hide())),
         focus.control(
             crate::widgets::labeled_checkbox(
@@ -235,35 +236,35 @@ fn scaffold_view(window: Rc<WindowTabData>) -> impl View {
                 .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
         }),
         label(move || error.get()).style(|s| s.width_full()),
-        stack((
+        crate::widgets::action_group((
             focus.control(
-                label(move || {
+                crate::widgets::compact_button(move || {
                     if export_mode.get() {
                         "Preview Export"
                     } else {
                         "Preview Changes"
                     }
-                })
+                }, crate::widgets::ButtonKind::Outlined, config)
                 .on_click_stop(move |_| preview.preview(&w))
                 .disabled(move || busy.get()),
             ),
             focus.control(
-                label(move || {
+                crate::widgets::compact_button(move || {
                     if undoing.get() {
                         "Undo Scaffold"
                     } else {
                         "Apply Changes"
                     }
-                })
+                }, crate::widgets::ButtonKind::Primary, config)
                 .on_click_stop(move |_| apply.apply(&aw))
                 .disabled(move || plan.get().is_none() || busy.get()),
             ),
             focus.control(
-                label(|| "Undo Last Scaffold…")
+                crate::widgets::compact_button(|| "Undo Last Scaffold…", crate::widgets::ButtonKind::Outlined, config)
                     .on_click_stop(move |_| undo.open_undo())
                     .disabled(move || history.get().is_empty()),
             ),
-            focus.control(label(|| "Pub Get").on_click_stop(move |_| {
+            focus.control(crate::widgets::compact_button(|| "Pub Get", crate::widgets::ButtonKind::Outlined, config).on_click_stop(move |_| {
                 let Some(root) = pub_window.workspace.path.as_deref() else {
                     return;
                 };
@@ -290,10 +291,9 @@ fn scaffold_view(window: Rc<WindowTabData>) -> impl View {
                 }
             })).style(move |s| s.apply_if(export_mode.get(), |s| s.hide())),
             focus.control(
-                label(|| "Close").on_click_stop(move |_| active.set(false)),
+                crate::widgets::compact_button(|| "Close", crate::widgets::ButtonKind::Outlined, config).on_click_stop(move |_| active.set(false)),
             ),
-        ))
-        .style(|s| s.gap(16.0)),
+        )),
         focus.control(
             label(|| "Export bundled default to project…")
                 .on_click_stop(move |_| export.export(&export_window))

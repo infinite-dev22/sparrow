@@ -67,9 +67,12 @@ impl ImportForm {
             text_input(source, config).placeholder("Source file path / resource value"),
             text_input(destination, config).placeholder("Destination path / resource name"),
             label(move || error.get()),
-            stack((
-                label(|| "Cancel").on_click_stop(move |_| import_open.set(false)),
-                label(move ||if create_kind.get().is_some(){"Create"}else{"Import"}).on_click_stop(move |_| {
+            crate::widgets::action_group((
+                crate::widgets::compact_button(|| "Cancel", crate::widgets::ButtonKind::Outlined, config)
+                    .on_click_stop(move |_| import_open.set(false)),
+                crate::widgets::compact_button(move ||if create_kind.get().is_some(){"Create"}else{"Import"}, crate::widgets::ButtonKind::Primary, config)
+                    .disabled(move || importing.get())
+                    .on_click_stop(move |_| {
                     let Some(root) = import_root.clone() else {
                         return;
                     };
@@ -114,8 +117,7 @@ impl ImportForm {
                         send(if let Some(kind)=create{create_value(&root,&selected_module,kind,&destination,&source)}else{import_asset(&root,Path::new(&source),Path::new(&destination))})
                     });
                 }),
-            ))
-            .style(|s| s.gap(16.0)),
+            )),
         ))
         .style(move |s| {
             s.absolute()

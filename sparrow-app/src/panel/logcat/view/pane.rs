@@ -217,12 +217,11 @@ pub(super) fn pane_view(state: State, pane: Pane) -> impl View {
     let package_warning = stack((
         label(|| "⚠ Select a build variant or sync Gradle to resolve package:mine.")
             .style(|s| s.flex_grow(1.0_f32).min_width(0.0).text_ellipsis()),
-        label(|| "Sync now")
-            .on_click_stop(move |_| sync.sync_gradle(true))
-            .style(move |s| {
-                s.color(config.get().color(SparrowColor::EDITOR_LINK))
-                    .cursor(CursorStyle::Pointer)
-            }),
+        crate::widgets::action_link(
+            || "Sync now",
+            move || sync.sync_gradle(true),
+            config,
+        ),
     ))
     .style(move |s| {
         s.width_full()

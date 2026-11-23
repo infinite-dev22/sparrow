@@ -4,7 +4,6 @@ use floem::{
     IntoView, View,
     kurbo::Rect,
     reactive::{ReadSignal, SignalGet},
-    style::CursorStyle,
     views::{Decorators, label, stack},
 };
 
@@ -38,17 +37,16 @@ pub(crate) fn search_result_row<T: Display + 'static>(
     .style(move |s| {
         let config = config.get();
         let selected = is_selected();
-        let selection = config.color(SparrowColor::PANEL_SELECTION_BACKGROUND);
-        let hover = config.color(SparrowColor::PANEL_HOVERED_BACKGROUND);
-        s.height(ROW_HEIGHT)
-            .width_full()
-            .padding_horiz(8)
-            .items_center()
-            .gap(8)
-            .border_radius(4)
-            .cursor(CursorStyle::Pointer)
-            .apply_if(selected, |s| s.background(selection))
-            .hover(move |s| s.background(if selected { selection } else { hover }))
+        super::selectable_row_style(
+            s.height(ROW_HEIGHT)
+                .width_full()
+                .padding_horiz(8)
+                .items_center()
+                .gap(8)
+                .border_radius(4),
+            &config,
+            selected,
+        )
     })
 }
 

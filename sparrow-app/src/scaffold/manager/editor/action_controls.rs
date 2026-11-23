@@ -11,13 +11,14 @@ use floem::{
     },
 };
 use std::{cell::RefCell, collections::BTreeMap, path::PathBuf, rc::Rc};
-use crate::widgets::sparrow_scroll;
+use crate::widgets::{ButtonKind, action_group, compact_button, sparrow_scroll};
 use super::{Draft, analyzer};
 
 pub(super) fn action_controls(
     session: Rc<analyzer::Session>, draft: RwSignal<Option<Draft>>, selected: RwSignal<PathBuf>,
     documents: Rc<RefCell<BTreeMap<PathBuf, Rc<TextDocument>>>>, handle: Rc<RefCell<Option<Editor>>>,
     plan: RwSignal<Option<engine::Plan>>, error: RwSignal<String>, focus: &crate::widgets::modal_focus::ModalFocus,
+    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
 ) -> impl View + use<> {
     let actions=session.actions.clone();
     let list=actions.list;
@@ -33,13 +34,13 @@ pub(super) fn action_controls(
     let cancel=actions.clone();
     let row_focus=focus.clone();
     stack((
-        stack((
-            focus.control(label(||"Dart Actions…  Alt+Enter").on_click_stop(move |_| {
+        action_group((
+            focus.control(compact_button(|| "Dart Actions…  Alt+Enter", ButtonKind::Plain, config).on_click_stop(move |_| {
                 plan.set(None);
                 if let Some(ed)=request_handle.borrow().as_ref() { request_session.request_actions(ed,selected); }
                 else {message.set("Open a Dart template first.".into());}
             })),
-            focus.control_if(label(||"Apply Action").disabled(move ||preview.get().is_none()).on_click_stop(move |_| {
+            focus.control_if(compact_button(|| "Apply Action", ButtonKind::Primary, config).disabled(move ||preview.get().is_none()).on_click_stop(move |_| {
                 match apply_session.apply_action(draft,&apply_documents.borrow(),plan,false) {
                     Ok(())=>{
                         error.set(String::new());
@@ -57,7 +58,7 @@ pub(super) fn action_controls(
                     Err(e)=>error.set(e),
                 }
             }),move ||preview.get_untracked().is_some()),
-            focus.control_if(label(||"Undo Action").disabled(move ||undo.get().is_none()).on_click_stop(move |_| {
+            focus.control_if(compact_button(|| "Undo Action", ButtonKind::Outlined, config).disabled(move ||undo.get().is_none()).on_click_stop(move |_| {
                 match undo_session.apply_action(draft,&documents.borrow(),plan,true) {
                     Ok(())=>{
                         error.set(String::new());
@@ -75,8 +76,8 @@ pub(super) fn action_controls(
                     Err(e)=>error.set(e),
                 }
             }),move ||undo.get_untracked().is_some()),
-            focus.control(label(||"Cancel Action").on_click_stop(move |_|cancel.clear())),
-        )).style(|s|s.gap(18.0).height(24.0).items_center()),
+            focus.control(compact_button(|| "Cancel Action", ButtonKind::Plain, config).on_click_stop(move |_|cancel.clear())),
+        )),
         label(move ||message.get()).style(|s|s.font_size(12.0)),
         sparrow_scroll(dyn_stack(move ||list.get().into_iter().enumerate().collect::<Vec<_>>(),
             |(index,action)|(*index,action.title.clone()),move |(_,choice)| {

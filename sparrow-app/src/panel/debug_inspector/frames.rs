@@ -9,7 +9,6 @@ use crate::{
 use floem::{
     IntoView, View,
     reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal},
-    style::CursorStyle,
     views::{
         Decorators, dyn_container, dyn_stack, empty, label, stack, svg,
     },
@@ -176,37 +175,25 @@ pub(super) fn frames(window: Rc<WindowTabData>) -> impl View {
                             }
                         })
                         .style(move |s| {
-                            s.height(22.0)
-                                .width_full()
-                                .min_width(0.0)
-                                .items_center()
-                                .padding_horiz(8.0)
-                                .cursor(CursorStyle::Pointer)
-                                .apply_if(
-                                    selected.get().map(|f| f.id).unwrap_or_else(
-                                        || {
-                                            traces
-                                                .with(|t| {
-                                                    t.get(&main).and_then(|t| {
-                                                        t.frames.with(|f| {
-                                                            f.front().map(|f| f.id)
-                                                        })
-                                                    })
-                                                })
-                                                .unwrap_or(usize::MAX)
-                                        },
-                                    ) == frame_id,
-                                    |s| {
-                                        s.background(config.get().color(
-                                            SparrowColor::PANEL_SELECTION_BACKGROUND,
-                                        ))
-                                    },
-                                )
-                                .hover(|s| {
-                                    s.background(config.get().color(
-                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                    ))
-                                })
+                            let selected_id =
+                                selected.get().map(|frame| frame.id).or_else(|| {
+                                    traces.with(|traces| {
+                                        traces.get(&main).and_then(|trace| {
+                                            trace.frames.with(|frames| {
+                                                frames.front().map(|frame| frame.id)
+                                            })
+                                        })
+                                    })
+                                });
+                            crate::widgets::selectable_row_style(
+                                s.height(22.0)
+                                    .width_full()
+                                    .min_width(0.0)
+                                    .items_center()
+                                    .padding_horiz(8.0),
+                                &config.get(),
+                                selected_id == Some(frame_id),
+                            )
                         })
                     },
                 )

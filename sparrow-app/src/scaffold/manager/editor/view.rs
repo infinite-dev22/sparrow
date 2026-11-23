@@ -1,5 +1,6 @@
 //! Template document editor, diagnostics, completion and rendered preview.
 
+use crate::widgets::{ButtonKind, action_group, compact_button};
 use crate::scaffold::manager::stage;
 use crate::{config::color::SparrowColor, window_tab::WindowTabData};
 use floem::{
@@ -147,7 +148,7 @@ pub(in crate::scaffold::manager) fn view(window: Rc<WindowTabData>) -> impl View
     let editor_focus = focus.clone();
     let documents =
         Rc::new(RefCell::new(BTreeMap::<PathBuf, Rc<TextDocument>>::new()));
-    let action_bar = action_controls(analyzer.clone(),draft,selected,documents.clone(),active_editor.clone(),plan,error,&focus);
+    let action_bar = action_controls(analyzer.clone(),draft,selected,documents.clone(),active_editor.clone(),plan,error,&focus,config);
     let editor_scope = Scope::current();
     let text_editor_handle = active_editor.clone();
     let text_analyzer = analyzer.clone();
@@ -475,28 +476,28 @@ pub(in crate::scaffold::manager) fn view(window: Rc<WindowTabData>) -> impl View
         )).style(|s|s.gap(12.0).items_center()),
         action_bar,
         stack((files,code_panel,output)).style(|s|s.width_full().height(430.0).gap(10.0)),
-        stack((
+        action_group((
             focus.input(new_file, config).style(|s|s.width(270.0)),
-            focus.control(label(||"Add File").on_click_stop(move |_| {
+            focus.control(compact_button(||"Add File", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let mut result = Err("No draft".to_string());
                 draft.update(|d| {if let Some(d)=d {result=d.add_file(&new_file.get_untracked());}});
                 match result {Ok(path)=>selected.set(path),Err(e)=>add_window.scaffold.error.set(e)}
             })),
-            focus.control(label(||"Remove File").on_click_stop(move |_| {
+            focus.control(compact_button(||"Remove File", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let mut result = Err("No draft".to_string());
                 draft.update(|d| {if let Some(d)=d {result=d.remove_file(&selected.get_untracked());}});
                 match result {Ok(())=>selected.set("pack.yaml".into()),Err(e)=>remove_window.scaffold.error.set(e)}
             })),
-        )).style(|s|s.gap(16.0).items_center()),
+        )),
         label(move ||error.get()),
-        stack((
-            focus.control(label(||"Preview Save").on_click_stop(move |_| {
+        action_group((
+            focus.control(compact_button(||"Preview Save", ButtonKind::Plain, config).on_click_stop(move |_| {
                 save_actions.clear();
                 let result = draft.get_untracked().ok_or("No draft".into()).and_then(|d|d.save_plan(&sample.get_untracked()));
                 save_window.scaffold.undoing.set(false);
                 stage(&save_window,result);
             })),
-            focus.control(label(||"Apply Save").disabled(move ||plan.get().is_none()).on_click_stop(move |_| {
+            focus.control(compact_button(||"Apply Save", ButtonKind::Primary, config).disabled(move ||plan.get().is_none()).on_click_stop(move |_| {
                 apply_window.scaffold.apply(&apply_window);
                 if plan.get_untracked().is_none() {
                     draft.update(|d| {if let Some(d)=d {d.mark_saved();}});
@@ -504,13 +505,13 @@ pub(in crate::scaffold::manager) fn view(window: Rc<WindowTabData>) -> impl View
                     error.set("Template saved. Undo Last Change is available in the manager.".into());
                 }
             })),
-            focus.control(label(||"Generated Preview").on_click_stop(move |_| {generated_actions.clear();plan.set(None);} )),
-            focus.control(label(||"Back to Manager").on_click_stop(move |_| {plan.set(None);open.set(false);})),
-            focus.control(label(||"Discard Draft").on_click_stop(move |_| {
+            focus.control(compact_button(||"Generated Preview", ButtonKind::Plain, config).on_click_stop(move |_| {generated_actions.clear();plan.set(None);} )),
+            focus.control(compact_button(||"Back to Manager", ButtonKind::Plain, config).on_click_stop(move |_| {plan.set(None);open.set(false);})),
+            focus.control(compact_button(||"Discard Draft", ButtonKind::Plain, config).on_click_stop(move |_| {
                 draft.set(None);plan.set(None);open.set(false);
                 discard_window.scaffold.error.set("Draft discarded; saved files are unchanged.".into());
             })),
-        )).style(|s|s.gap(18.0)),
+        )),
     )).style(move |s|s.width(1380.0).max_width_pct(96.0).max_height_pct(96.0).flex_col()
         .gap(10.0).padding(18.0).border(1.0).border_radius(6.0)
         .border_color(config.get().color(SparrowColor::SPARROW_BORDER))

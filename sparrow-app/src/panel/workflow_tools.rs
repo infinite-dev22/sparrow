@@ -1,12 +1,10 @@
 //! Dart and Flutter workflow panels and workspace notification state.
 
-use floem::reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, batch};
+use floem::reactive::{RwSignal, SignalUpdate, SignalWith, batch};
 use lsp_types::ShowMessageParams;
 
 use crate::{
-    app::logging::CrashReport,
-    widgets::{ButtonKind, button},
-    window_tab::WindowTabData,
+    app::logging::CrashReport, widgets::action_link, window_tab::WindowTabData,
 };
 use floem::{View, views::Decorators};
 use std::rc::Rc;
@@ -25,21 +23,19 @@ pub(crate) fn crash_report_button(
 ) -> impl View {
     let config = window.common.config;
     let has_report = report.is_some();
-    button(|| "Open crash report", ButtonKind::Plain, config)
-        .on_click_stop(move |_| {
+    action_link(
+        || "Open crash report",
+        move || {
             if let Some(report) = &report {
                 window.open_logs(Some(report.clone()));
             }
-        })
-        .style(move |s| {
-            s.align_self(Some(floem::style::AlignItems::FlexStart))
-                .color(
-                    config
-                        .get()
-                        .color(crate::config::color::SparrowColor::EDITOR_LINK),
-                )
-                .apply_if(!has_report, |s| s.hide())
-        })
+        },
+        config,
+    )
+    .style(move |s| {
+        s.align_self(Some(floem::style::AlignItems::FlexStart))
+            .apply_if(!has_report, |s| s.hide())
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -162,7 +158,7 @@ pub fn record_pub_get_result(
 #[cfg(test)]
 mod notice_tests {
     use super::*;
-    use floem::reactive::Scope;
+    use floem::reactive::{Scope, SignalGet};
 
     #[test]
     fn actionable_event_is_shown_and_added_to_the_timeline_once() {

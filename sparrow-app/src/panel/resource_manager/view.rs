@@ -415,20 +415,28 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         )
         .style(|s| s.flex_col().width_full().max_height(120.0)),
         stack((
-            label(|| "List").on_click_stop(move |_| grid.set(false)),
-            label(|| "Grid").on_click_stop(move |_| grid.set(true)),
+            crate::widgets::tab_button(
+                label(|| "List"), move || !grid.get(), move || grid.set(false), config,
+            ),
+            crate::widgets::tab_button(
+                label(|| "Grid"), move || grid.get(), move || grid.set(true), config,
+            ),
             empty().style(|s| s.flex_grow(1.0_f32)),
-            label(|| "−")
-                .on_click_stop(move |_| size.update(|v| *v = (*v - 8.0).max(24.0))),
-            label(|| "+")
-                .on_click_stop(move |_| size.update(|v| *v = (*v + 8.0).min(128.0))),
+            crate::widgets::button(|| "−", crate::widgets::ButtonKind::Outlined, config)
+                .on_click_stop(move |_| size.update(|v| *v = (*v - 8.0).max(24.0)))
+                .disabled(move || size.get() <= 24.0)
+                .style(|s| s.size(24.0, 24.0)),
+            crate::widgets::button(|| "+", crate::widgets::ButtonKind::Outlined, config)
+                .on_click_stop(move |_| size.update(|v| *v = (*v + 8.0).min(128.0)))
+                .disabled(move || size.get() >= 128.0)
+                .style(|s| s.size(24.0, 24.0)),
         ))
         .style(move |s| {
             s.width_full()
                 .height(30.0)
                 .items_center()
-                .gap(12.0)
-                .padding_horiz(12.0)
+                .gap(4.0)
+                .padding_horiz(8.0)
                 .border_top(1.0)
                 .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
         }),

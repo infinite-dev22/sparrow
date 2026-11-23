@@ -125,27 +125,14 @@ pub(super) fn navigation_tree<A: Fn() + 'static>(
             .style(move |s| {
                 let config = config.get();
                 let selected = displayed_page.get() == p;
-                tree_row_layout(s, depth)
-                    .apply_if(!shown_pages.with(|pages| pages.contains(&p)), |s| {
-                        s.hide()
-                    })
-                    .apply_if(selected, |s| {
-                        s.background(
-                            config.color(SparrowColor::PANEL_SELECTION_BACKGROUND),
-                        )
-                    })
-                    .hover(|s| {
-                        s.cursor(floem::style::CursorStyle::Pointer).apply_if(
-                            !selected,
-                            |s| {
-                                s.background(
-                                    config.color(
-                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
-                                    ),
-                                )
-                            },
-                        )
-                    })
+                crate::widgets::selectable_row_style(
+                    tree_row_layout(s, depth),
+                    &config,
+                    selected,
+                )
+                .apply_if(!shown_pages.with(|pages| pages.contains(&p)), |s| {
+                    s.hide()
+                })
             });
             rows.update(|rows| {
                 rows.insert(p, row.id());

@@ -1,24 +1,20 @@
-use floem::{
-    View,
-    peniko::Color,
-    style::CursorStyle,
-    views::{Decorators, label},
-};
+use std::sync::Arc;
 
-use crate::{command::InternalCommand, listener::Listener};
+use floem::{View, reactive::ReadSignal};
+
+use crate::{command::InternalCommand, config::SparrowConfig, listener::Listener};
+
+use super::action_link;
 
 pub fn web_link(
     text: impl Fn() -> String + 'static,
     uri: impl Fn() -> String + 'static,
-    color: impl Fn() -> Color + 'static,
+    config: ReadSignal<Arc<SparrowConfig>>,
     internal_command: Listener<InternalCommand>,
 ) -> impl View {
-    label(text)
-        .on_click_stop(move |_| {
-            internal_command.send(InternalCommand::OpenWebUri { uri: uri() });
-        })
-        .style(move |s| {
-            s.color(color())
-                .hover(move |s| s.cursor(CursorStyle::Pointer))
-        })
+    action_link(
+        text,
+        move || internal_command.send(InternalCommand::OpenWebUri { uri: uri() }),
+        config,
+    )
 }

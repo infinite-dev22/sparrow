@@ -92,7 +92,14 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 }
             })
             .style(|s| s.flex_grow(1.0_f32).font_bold()),
-            label(|| "×").on_click_stop(move |_| close.close(&w4)),
+            focus.icon(
+                || crate::config::icon::SparrowIcons::CLOSE,
+                move || close.close(&w4),
+                || false,
+                || false,
+                || "Close",
+                config,
+            ),
         ))
         .style(|s| s.height(34.0).items_center().padding_horiz(12.0)),
         stack((

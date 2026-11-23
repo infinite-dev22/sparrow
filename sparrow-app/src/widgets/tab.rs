@@ -8,7 +8,6 @@ use floem::{
         ReadSignal, RwSignal, SignalGet, SignalTrack, SignalUpdate, create_effect,
         create_rw_signal,
     },
-    style::CursorStyle,
     views::{Decorators, Scroll, button},
 };
 
@@ -25,27 +24,25 @@ pub fn tab_button(
         move |s| {
             let config = config.get();
             let selected = selected();
-            s.height(24.0)
-                .items_center()
-                .padding_horiz(7.0)
-                .margin_right(4.0)
-                .flex_shrink(0.0_f32)
-                .border_radius(4.0)
-                .border(1.0)
-                .border_color(if selected {
-                    config.color(SparrowColor::EDITOR_LINK)
-                } else {
-                    Color::TRANSPARENT
-                })
-                .apply_if(selected, |s| {
-                    s.background(
-                        config.color(SparrowColor::PANEL_SELECTION_BACKGROUND),
-                    )
-                })
-                .focus_visible(|s| {
-                    s.border_color(config.color(SparrowColor::EDITOR_CARET))
-                })
-                .cursor(CursorStyle::Pointer)
+            super::selectable_row_style(
+                s.height(24.0)
+                    .items_center()
+                    .padding_horiz(7.0)
+                    .margin_right(4.0)
+                    .flex_shrink(0.0_f32)
+                    .border_radius(4.0)
+                    .border(1.0)
+                    .border_color(if selected {
+                        config.color(SparrowColor::EDITOR_LINK)
+                    } else {
+                        Color::TRANSPARENT
+                    }),
+                &config,
+                selected,
+            )
+            .focus_visible(|s| {
+                s.border_color(config.color(SparrowColor::EDITOR_CARET))
+            })
         },
     )
 }

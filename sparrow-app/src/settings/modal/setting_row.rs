@@ -128,32 +128,34 @@ pub(super) fn setting_row(
             .into_any(),
     };
     let reset = keyboard.control(
-        label(move || {
-            if pending.with(|pending| {
-                pending
-                    .get(&reset_key_label)
-                    .is_some_and(|edit| matches!(edit.kind, Type::Reset))
-            }) {
-                "Will inherit IDE value on Apply"
-            } else {
-                "Use IDE value"
-            }
-        })
-        .on_click_stop(move |_| {
-            pending.update(|pending| {
-                pending.insert(
-                    reset_key.clone(),
-                    Edit {
-                        raw: reset_value.clone(),
-                        kind: Type::Reset,
-                    },
-                );
-            })
-        })
+        crate::widgets::action_link(
+            move || {
+                if pending.with(|pending| {
+                    pending
+                        .get(&reset_key_label)
+                        .is_some_and(|edit| matches!(edit.kind, Type::Reset))
+                }) {
+                    "Will inherit IDE value on Apply"
+                } else {
+                    "Use IDE value"
+                }
+            },
+            move || {
+                pending.update(|pending| {
+                    pending.insert(
+                        reset_key.clone(),
+                        Edit {
+                            raw: reset_value.clone(),
+                            kind: Type::Reset,
+                        },
+                    );
+                })
+            },
+            config,
+        )
         .style(move |s| {
             s.height(24.0)
                 .items_center()
-                .color(config.get().color(SparrowColor::EDITOR_LINK))
                 .apply_if(!project_scope.get(), |s| s.hide())
         }),
     );

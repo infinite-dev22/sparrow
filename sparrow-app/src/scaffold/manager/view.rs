@@ -1,5 +1,6 @@
 //! Template library, operations, and transaction preview.
 
+use crate::widgets::{ButtonKind, action_group, compact_button};
 use super::{
     catalog, create, duplicate, editable, editor, export, import, remove, stage,
     toggle,
@@ -176,17 +177,17 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
         label(move ||root.get().display().to_string()),
         label(||"Filter templates"),
         input,
-        stack((
-            focus.control(label(move || if global.get() {"Destination: User ▾"} else {"Destination: Project ▾"})
+        action_group((
+            focus.control(compact_button(move || if global.get() {"Destination: User ▾"} else {"Destination: Project ▾"}, ButtonKind::Plain, config)
                 .on_click_stop(move |_| { global.update(|g|*g=!*g); plan.set(None); })),
             label(||"New pack ID:"),
             focus.input(new_id, config).style(|s|s.width(260.0)),
-            focus.control(label(||"Create…").on_click_stop(move |_| {
+            focus.control(compact_button(||"Create…", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let m = &create_window.scaffold.manager;
                 undoing.set(false);
                 stage(&create_window,m.destination().and_then(|d|create(&d,&new_id.get_untracked())));
             })),
-            focus.control(label(||"Import…").on_click_stop(move |_| {
+            focus.control(compact_button(||"Import…", ButtonKind::Plain, config).on_click_stop(move |_| {
                 // Capture the destination at picker launch, and ignore callbacks from a closed dialog.
                 let destination = import_window.scaffold.manager.destination();
                 let generation = import_window.scaffold.generation.get_untracked();
@@ -204,18 +205,18 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
                     },
                 );
             })),
-            focus.control(label(||"Refresh").on_click_stop(move |_| {
+            focus.control(compact_button(||"Refresh", ButtonKind::Plain, config).on_click_stop(move |_| {
                 refresh_window.scaffold.manager.refresh(); plan.set(None);
             })),
-        )).style(|s|s.items_center().gap(14.0)),
+        )),
         stack((list,stack((detail,preview)).style(|s|s.flex_col().flex_grow(1.0_f32).min_width(0.0).height_full())))
             .style(|s|s.height(420.0).width_full().gap(12.0)),
-        stack((
-            focus.control(label(move || if draft.get().is_some_and(|d|d.dirty()) {"Resume Editor…"} else {"Template Editor…"})
+        action_group((
+            focus.control(compact_button(move || if draft.get().is_some_and(|d|d.dirty()) {"Resume Editor…"} else {"Template Editor…"}, ButtonKind::Plain, config)
                 .on_click_stop(move |_| {
                     if let Err(e) = editor::open(&built_in_window) { error.set(e); }
                 })),
-            focus.control(label(||"Edit Manifest").on_click_stop(move |_| {
+            focus.control(compact_button(||"Edit Manifest", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let m = &edit_window.scaffold.manager;
                 let result = m.entry().ok_or("Select a template".to_string())
                     .and_then(|e|editable(&e,&root.get_untracked()));
@@ -224,7 +225,7 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
                     Err(e) => error.set(e),
                 }
             })),
-            focus.control(label(||"Edit Sources").on_click_stop(move |_| {
+            focus.control(compact_button(||"Edit Sources", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let m = &source_window.scaffold.manager;
                 let result = (|| {
                     let e = m.entry().ok_or("Select a template")?;
@@ -244,30 +245,30 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
                     Err(e) => error.set(e),
                 }
             })),
-            focus.control(label(||"Enable / Disable…").on_click_stop(move |_| {
+            focus.control(compact_button(||"Enable / Disable…", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let m = &toggle_window.scaffold.manager;
                 undoing.set(false);
                 stage(&toggle_window,(||toggle(&m.entry().ok_or("Select a template")?,&root.get_untracked(),&m.destination()?))());
             })),
-            focus.control(label(||"Remove…").on_click_stop(move |_| {
+            focus.control(compact_button(||"Remove…", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let m = &remove_window.scaffold.manager;
                 undoing.set(false);
                 stage(&remove_window,m.entry().ok_or("Select a template".to_string()).and_then(|e|remove(&e,&root.get_untracked())));
             })),
-            focus.control(label(||"Duplicate…").on_click_stop(move |_| {
+            focus.control(compact_button(||"Duplicate…", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let m = &duplicate_window.scaffold.manager;
                 undoing.set(false);
                 stage(&duplicate_window,(||duplicate(&m.entry().ok_or("Select a template")?,&m.destination()?,&new_id.get_untracked()))());
             })),
-            focus.control(label(||"Export…").on_click_stop(move |_| {
+            focus.control(compact_button(||"Export…", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let m = &export_window.scaffold.manager;
                 undoing.set(false);
                 stage(&export_window,(||export(&m.entry().ok_or("Select a template")?,&m.destination()?))());
             })),
-        )).style(|s|s.gap(18.0)),
+        )),
         label(move ||error.get()),
-        stack((
-            focus.control(label(move ||if undoing.get() {"Apply Undo"} else {"Apply Preview"})
+        action_group((
+            focus.control(compact_button(move ||if undoing.get() {"Apply Undo"} else {"Apply Preview"}, ButtonKind::Primary, config)
                 .disabled(move ||plan.get().is_none())
                 .on_click_stop(move |_| {
                     apply_window.scaffold.apply(&apply_window);
@@ -277,15 +278,15 @@ fn manager_view(window: Rc<WindowTabData>) -> impl View {
                         error.set("Template changes applied. Undo is available in this manager and the command palette.".into());
                     }
                 })),
-            focus.control(label(||"Undo Last Change…").on_click_stop(move |_| {
+            focus.control(compact_button(||"Undo Last Change…", ButtonKind::Plain, config).on_click_stop(move |_| {
                 let s = &undo_window.scaffold;
                 match s.history.get_untracked().last() {
                     Some(applied) => { undoing.set(true); plan.set(Some(applied.undo_plan())); error.set(String::new()); }
                     None => error.set("No scaffold or template change to undo in this window session.".into()),
                 }
             })),
-            focus.control(label(||"Close").on_click_stop(move |_|active.set(false))),
-        )).style(|s|s.gap(18.0)),
+            focus.control(compact_button(||"Close", ButtonKind::Plain, config).on_click_stop(move |_|active.set(false))),
+        )),
     )).style(move |s|s.width(1120.0).max_width_pct(95.0).max_height_pct(95.0)
         .flex_col().gap(10.0).padding(18.0).border_radius(6.0).border(1.0)
         .border_color(config.get().color(SparrowColor::SPARROW_BORDER))

@@ -424,28 +424,17 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
                 });
             })
             .style(move |s| {
-                let cfg = config.get();
-                s.height(24.0)
-                    .width_full()
-                    .min_width(0.0)
-                    .items_center()
-                    .padding_horiz(8.0)
-                    .apply_if(
-                        selection.with(|row| {
-                            row.as_ref()
-                                .is_some_and(|row| Arc::ptr_eq(row, &highlight))
-                        }),
-                        |s| {
-                            s.background(
-                                cfg.color(SparrowColor::PANEL_SELECTION_BACKGROUND),
-                            )
-                        },
-                    )
-                    .hover(|s| {
-                        s.background(
-                            cfg.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
+                crate::widgets::selectable_row_style(
+                    s.height(24.0)
+                        .width_full()
+                        .min_width(0.0)
+                        .items_center()
+                        .padding_horiz(8.0),
+                    &config.get(),
+                    selection.with(|row| {
+                        row.as_ref().is_some_and(|row| Arc::ptr_eq(row, &highlight))
+                    }),
+                )
             })
         },
     )

@@ -4,13 +4,12 @@ use std::sync::Arc;
 
 use floem::{
     IntoView, View,
-    reactive::{ReadSignal, SignalGet},
-    style::CursorStyle,
+    reactive::ReadSignal,
     views::{Decorators, label, stack},
 };
 
 use crate::{
-    config::{SparrowConfig, color::SparrowColor},
+    config::SparrowConfig,
     widgets::{Divider, modal_focus::ModalFocus},
 };
 
@@ -65,20 +64,7 @@ pub(super) fn link(
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> floem::AnyView {
     keyboard
-        .control(
-            crate::widgets::button(
-                move || title,
-                crate::widgets::ButtonKind::Plain,
-                config,
-            )
-            .on_click_stop(move |_| action())
-            .style(move |s| {
-                s.max_width_full()
-                    .padding_horiz(0)
-                    .color(config.get().color(SparrowColor::EDITOR_LINK))
-                    .hover(|s| s.cursor(CursorStyle::Pointer))
-            }),
-        )
+        .control(crate::widgets::action_link(move || title, action, config))
         .into_any()
 }
 

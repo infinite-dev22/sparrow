@@ -1,6 +1,10 @@
 //! Background task detail list and cancellation controls.
 
-use crate::{config::color::SparrowColor, window_tab::WindowTabData};
+use crate::{
+    config::{color::SparrowColor, icon::SparrowIcons},
+    widgets::{action_link, clickable_icon, progress_bar, sparrow_scroll},
+    window_tab::WindowTabData,
+};
 use floem::{
     View,
     event::{Event, EventListener, EventPropagation},
@@ -11,8 +15,6 @@ use floem::{
 use std::rc::Rc;
 
 use super::activity::activities;
-use crate::widgets::progress_bar;
-use crate::widgets::sparrow_scroll;
 
 pub fn panel(window: Rc<WindowTabData>) -> impl View {
     let config = window.common.config;
@@ -30,7 +32,14 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     format!("Background Tasks ({})", items.with(|items| items.len()))
                 })
                 .style(|s| s.flex_grow(1.0_f32).font_bold()),
-                label(|| "×").on_click_stop(move |_| open.set(false)),
+                clickable_icon(
+                    || SparrowIcons::CLOSE,
+                    move || open.set(false),
+                    || false,
+                    || false,
+                    || "Close Background Tasks",
+                    config,
+                ),
             ))
             .style(|s| s.width_full().items_center()),
             sparrow_scroll(
@@ -69,15 +78,9 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                                     .min_width(0.0)
                                     .gap(4.0)
                             }),
-                            label(|| "Cancel")
-                                .on_click_stop(move |_| cancel_tasks.cancel(&id))
+                            action_link(|| "Cancel", move || cancel_tasks.cancel(&id), config)
                                 .style(move |s| {
-                                    s.color(
-                                        config
-                                            .get()
-                                            .color(SparrowColor::EDITOR_LINK),
-                                    )
-                                    .apply_if(!current.get().is_some_and(|a| a.cancellable && !a.cancelling), |s| s.hide())
+                                    s                                    .apply_if(!current.get().is_some_and(|a| a.cancellable && !a.cancelling), |s| s.hide())
                                 }),
                         ))
                         .style(|s| {

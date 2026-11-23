@@ -17,8 +17,7 @@ use crate::{
     doc::Doc,
     editor::location::{EditorLocation, EditorPosition},
     widgets::{
-        ButtonKind, button,
-        button_with_content,
+        ButtonKind, button, button_with_content,
         popup_menu::{Menu, MenuItem, show_context_menu},
         sparrow_scroll, tooltip_label,
     },
@@ -177,8 +176,9 @@ pub(super) fn details(
                         related.location.uri.path(),
                         related.location.range.start.line + 1
                     );
-                    label(move || text.clone())
-                        .on_click_stop(move |_| {
+                    crate::widgets::action_link(
+                        move || text.clone(),
+                        move || {
                             if let Ok(path) = related.location.uri.to_file_path() {
                                 links.common.internal_command.send(
                                     InternalCommand::JumpToLocation {
@@ -196,11 +196,10 @@ pub(super) fn details(
                                     },
                                 );
                             }
-                        })
-                        .style(move |s| {
-                            s.width_full()
-                                .color(config.get().color(SparrowColor::EDITOR_LINK))
-                        })
+                        },
+                        config,
+                    )
+                    .style(|s| s.width_full().justify_start())
                 },
             )
             .style(|s| s.flex_col().width_full()),

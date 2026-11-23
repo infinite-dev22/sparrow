@@ -254,11 +254,11 @@ pub fn source_control_panel(
                 || "Refresh changes",
                 config,
             ),
-            label(|| "Show Git Log")
-                .on_click_stop(move |_| window.show_panel(PanelKind::GitHistory))
-                .style(move |s| {
-                    s.color(config.get().color(SparrowColor::EDITOR_LINK))
-                }),
+            crate::widgets::action_link(
+                || "Show Git Log",
+                move || window.show_panel(PanelKind::GitHistory),
+                config,
+            ),
         ))
         .style(|s| s.height(28.0).gap(8.0).items_center().padding_horiz(6.0)),
         sparrow_scroll(
