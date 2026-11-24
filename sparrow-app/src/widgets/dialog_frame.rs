@@ -4,13 +4,16 @@ use floem::{
     peniko::Color,
     views::Decorators,
 };
-use std::any::Any;
+use std::{any::Any, ops::Deref};
 
 pub(crate) const DIALOG_RADIUS: f64 = 8.0;
 
+// Floem exposes its concrete renderer through PaintCx's Deref implementation.
+type ActiveRenderer = <PaintCx<'static> as Deref>::Target;
+
 struct DialogFrame {
     id: ViewId,
-    matte: Option<Color>,
+    matte: Color,
 }
 
 struct Activate;
@@ -22,11 +25,13 @@ impl View for DialogFrame {
 
     fn paint(&mut self, cx: &mut PaintCx) {
         if let Some(size) = self.id.get_size() {
-            if let Some(matte) = self.matte {
-                cx.fill(&size.to_rect(), matte, 0.0);
+            let bounds = size.to_rect();
+            // TinySkia clears to white and presents an opaque softbuffer surface.
+            if matches!(&**cx, ActiveRenderer::TinySkia(_)) {
+                cx.fill(&bounds, self.matte, 0.0);
             }
             cx.save();
-            cx.clip(&size.to_rect().to_rounded_rect(DIALOG_RADIUS));
+            cx.clip(&bounds.to_rounded_rect(DIALOG_RADIUS));
             cx.paint_children(self.id);
             cx.restore();
         }
@@ -45,10 +50,6 @@ pub(crate) fn dialog_frame(
 ) -> impl View {
     let id = ViewId::new();
     id.set_children([child]);
-    // The TinySkia surface clears to opaque white and presents through softbuffer.
-    let matte = std::env::var("FLOEM_FORCE_TINY_SKIA")
-        .is_ok_and(|value| value == "1")
-        .then_some(matte);
     DialogFrame { id, matte }.style(|s| s.size_full())
 }
 
