@@ -18,7 +18,6 @@ use floem::{
 };
 use sparrow_rpc::{
     file::{FileNodeItem, FileNodeViewData, FileNodeViewKind},
-    source_control::FileDiffKind,
 };
 
 use crate::file_explorer::{
@@ -116,36 +115,18 @@ fn file_node_text_color(
     config: ReadSignal<Arc<SparrowConfig>>,
     node: FileNodeViewData,
     source_control: SourceControlData,
+    main_split: &crate::main_split::MainSplitData,
 ) -> Color {
-    let diff = source_control.file_diffs.with(|file_diffs| {
-        let FileNodeViewKind::Path(path) = &node.kind else {
-            return None;
-        };
-
-        if node.is_dir {
-            None
-        } else {
-            file_diffs.get(path).map(|(diff, _)| diff.kind())
+    let color = node.kind.path().and_then(|path| {
+        if node.is_dir { None } else {
+            crate::widgets::file_decoration::git_color(path, &source_control, main_split)
         }
-    });
-
-    let color = match diff {
-        Some(FileDiffKind::Modified | FileDiffKind::Renamed) => {
-            SparrowColor::SOURCE_CONTROL_MODIFIED
-        }
-        Some(FileDiffKind::Added) => SparrowColor::SOURCE_CONTROL_ADDED,
-        Some(FileDiffKind::Deleted) => SparrowColor::SOURCE_CONTROL_REMOVED,
-        None => {
-            if node.kind.path().and_then(|path| {
-                project::role(path, source_control.common.workspace.path.as_deref())
-            }) == Some("excluded")
-            {
-                return Color::from_rgb8(184, 133, 88);
-            }
-            SparrowColor::PANEL_FOREGROUND
-        }
-    };
-
+    }).unwrap_or(SparrowColor::PANEL_FOREGROUND);
+    if color == SparrowColor::PANEL_FOREGROUND && node.kind.path().and_then(|path| {
+        project::role(path, source_control.common.workspace.path.as_deref())
+    }) == Some("excluded") {
+        return Color::from_rgb8(184, 133, 88);
+    }
     config.get().color(color)
 }
 
@@ -154,6 +135,7 @@ fn file_node_text_view(
     node: FileNodeViewData,
     source_control: SourceControlData,
     project_info: RwSignal<project::ProjectInfo>,
+    main_split: crate::main_split::MainSplitData,
 ) -> impl View {
     let config = data.common.config;
     let ui_line_height = data.common.ui_line_height;
@@ -162,8 +144,10 @@ fn file_node_text_view(
         FileNodeViewKind::Path(path) => {
             if node.is_root {
                 let file = path.clone();
+                let root_path = path.clone();
+                let diagnostics = main_split.clone();
                 container((
-                    label(move || root_name(&file)).style(move |s| {
+                    crate::widgets::file_decoration::error_underline(label(move || root_name(&file)).style(move |s| {
                         s.height(ui_line_height.get())
                             .items_center()
                             .font_weight(EMPHASIZED)
@@ -171,10 +155,11 @@ fn file_node_text_view(
                                 config,
                                 node.clone(),
                                 source_control.clone(),
+                                &main_split,
                             ))
                             .padding_right(ROOT_LABEL_GAP)
                             .selectable(false)
-                    }),
+                    }), config, move || crate::widgets::file_decoration::has_error(&root_path, &diagnostics, true)),
                     label(move || root_location(&path)).style(move |s| {
                         s.height(ui_line_height.get())
                             .color(
@@ -186,12 +171,15 @@ fn file_node_text_view(
                     }),
                 ))
             } else {
+                let diagnostic_path = path.clone();
+                let diagnostics = main_split.clone();
+                let is_dir = node.is_dir;
                 let platform = platform_folder(
                     &path,
                     node.is_dir,
                     data.common.workspace.path.as_deref(),
                 );
-                container(
+                container(crate::widgets::file_decoration::error_underline(
                     label(move || {
                         project_info.with(|info| project::node_label(&path, info))
                     })
@@ -203,10 +191,11 @@ fn file_node_text_view(
                                 config,
                                 node.clone(),
                                 source_control.clone(),
+                                &main_split,
                             ))
                             .selectable(false)
-                    }),
-                )
+                    }), config, move || crate::widgets::file_decoration::has_error(&diagnostic_path, &diagnostics, is_dir),
+                ))
             }
         }
         _ => container(label(String::new)),
@@ -232,6 +221,7 @@ pub(super) fn file_explorer_view(
     let horizontal_delta = create_rw_signal(Vec2::ZERO);
     let focus = data.common.focus;
 
+    let main_split = window.main_split.clone();
     let external = project::external_libraries(window, project_info, library_watch);
     let workspace_root = data.common.workspace.path.clone();
     let width_workspace = workspace_root.clone();
@@ -350,6 +340,7 @@ pub(super) fn file_explorer_view(
                                 node,
                                 source_control.clone(),
                                 project_info,
+                                main_split.clone(),
                             ),
                         ))
                         .style({

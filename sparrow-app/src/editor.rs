@@ -972,77 +972,8 @@ impl EditorData {
                 self.select_completion();
                 self.cancel_inline_completion();
             }
-            FocusCommand::JumpToNextSnippetPlaceholder => {
-                self.snippet.update(|snippet| {
-                    if let Some(snippet_mut) = snippet.as_mut() {
-                        let mut current = 0;
-                        let offset = self.cursor().get_untracked().offset();
-                        for (i, (_, (start, end))) in snippet_mut.iter().enumerate()
-                        {
-                            if *start <= offset && offset <= *end {
-                                current = i;
-                                break;
-                            }
-                        }
-
-                        let last_placeholder = current + 1 >= snippet_mut.len() - 1;
-
-                        if let Some((_, (start, end))) = snippet_mut.get(current + 1)
-                        {
-                            let mut selection =
-                                sparrow_core::selection::Selection::new();
-                            let region = sparrow_core::selection::SelRegion::new(
-                                *start, *end, None,
-                            );
-                            selection.add_region(region);
-                            self.cursor().update(|cursor| {
-                                cursor.set_insert(selection);
-                            });
-                        }
-
-                        if last_placeholder {
-                            *snippet = None;
-                        }
-                        // self.update_signature();
-                        self.cancel_completion();
-                        self.cancel_inline_completion();
-                    }
-                });
-            }
-            FocusCommand::JumpToPrevSnippetPlaceholder => {
-                self.snippet.update(|snippet| {
-                    if let Some(snippet_mut) = snippet.as_mut() {
-                        let mut current = 0;
-                        let offset = self.cursor().get_untracked().offset();
-                        for (i, (_, (start, end))) in snippet_mut.iter().enumerate()
-                        {
-                            if *start <= offset && offset <= *end {
-                                current = i;
-                                break;
-                            }
-                        }
-
-                        if current > 0 {
-                            if let Some((_, (start, end))) =
-                                snippet_mut.get(current - 1)
-                            {
-                                let mut selection =
-                                    sparrow_core::selection::Selection::new();
-                                let region = sparrow_core::selection::SelRegion::new(
-                                    *start, *end, None,
-                                );
-                                selection.add_region(region);
-                                self.cursor().update(|cursor| {
-                                    cursor.set_insert(selection);
-                                });
-                            }
-                            // self.update_signature();
-                            self.cancel_completion();
-                            self.cancel_inline_completion();
-                        }
-                    }
-                });
-            }
+            FocusCommand::JumpToNextSnippetPlaceholder => self.jump_snippet(true),
+            FocusCommand::JumpToPrevSnippetPlaceholder => self.jump_snippet(false),
             FocusCommand::GotoDefinition => {
                 self.go_to_definition();
             }
@@ -2195,7 +2126,7 @@ impl EditorData {
         }
 
         // ── Dart fast path ─────────────────────────────────────────
-        if crate::dart::is_dart_path(&path) && self.common.dart_lsp.is_available() {
+        if crate::dart::is_dart_path(&path) && (self.common.dart_lsp.is_available() || input.starts_with("st")) {
             // `display_if_empty_input` is true only for explicit Ctrl+Space.
             self.update_completion_dart(
                 path,
@@ -2342,6 +2273,26 @@ impl EditorData {
             c.latest_editor_id = Some(self.id());
         });
 
+        let snippets = if char_before == "." {
+            Vec::new()
+        } else {
+            self.doc().buffer.with_untracked(|buffer| {
+                let line_start = buffer.offset_of_line(buffer.line_of_offset(start_offset));
+                let prefix = buffer.slice_to_cow(line_start..start_offset);
+                if prefix.chars().all(|c| c == ' ' || c == '\t') {
+                    crate::dart::widget_snippets::items(&self.common.completion.with_untracked(|c| c.input.clone()), &prefix)
+                } else {
+                    Vec::new()
+                }
+            })
+        };
+        if !self.common.dart_lsp.is_available() {
+            self.common.completion.update(|completion| {
+                completion.receive_direct(request_id, snippets, PluginId(0));
+            });
+            return;
+        }
+
         let editor = self.clone();
         let common = self.common.clone();
 
@@ -2361,6 +2312,10 @@ impl EditorData {
                     tracing::debug!("dart completion: null result (server returned nothing)");
                 }
                 
+                let mut items = items.unwrap_or_default();
+                items.retain(|item| !snippets.iter().any(|snippet| snippet.label == item.label));
+                items.extend(snippets);
+                let items = Some(items);
                 let mut completion_data = common.completion.get_untracked();
                 match items {
                     Some(items) if !items.is_empty() => {
@@ -2572,11 +2527,7 @@ impl EditorData {
             return Ok(());
         }
 
-        let mut selection = sparrow_core::selection::Selection::new();
-        let (_tab, (start, end)) = &snippet_tabs[0];
-        let region = sparrow_core::selection::SelRegion::new(*start, *end, None);
-        selection.add_region(region);
-        cursor.set_insert(selection);
+        cursor.set_insert(Self::snippet_selection(&snippet_tabs, snippet_tabs[0].0));
 
         doc.buffer.update(|buffer| {
             buffer.set_cursor_before(old_cursor);
@@ -2586,6 +2537,35 @@ impl EditorData {
         self.apply_deltas(&[(b_text, delta, inval_lines)]);
         self.add_snippet_placeholders(snippet_tabs);
         Ok(())
+    }
+
+    fn snippet_selection(tabs: &SnippetIndex, group: usize) -> Selection {
+        let mut selection = Selection::new();
+        for (_, (start, end)) in tabs.iter().filter(|(index, _)| *index == group) {
+            selection.add_region(sparrow_core::selection::SelRegion::new(*start, *end, None));
+        }
+        selection
+    }
+
+    fn jump_snippet(&self, forward: bool) {
+        self.snippet.update(|snippet| {
+            let Some(tabs) = snippet.as_ref() else { return };
+            let offset = self.cursor().with_untracked(|cursor| cursor.offset());
+            let Some((group, _)) = tabs.iter().find(|(_, (start, end))| *start <= offset && offset <= *end) else { return };
+            let mut seen = std::collections::HashSet::new();
+            let groups = tabs.iter().map(|(index, _)| *index).filter(|index| seen.insert(*index)).collect::<Vec<_>>();
+            let Some(index) = groups.iter().position(|index| index == group) else { return };
+            let next = if forward { Some(index + 1) } else { index.checked_sub(1) };
+            if let Some((next, group)) = next.and_then(|i| groups.get(i).map(|group| (i, *group))) {
+                let selection = Self::snippet_selection(tabs, group);
+                self.cursor().update(|cursor| cursor.set_insert(selection));
+                if forward && next + 1 == groups.len() {
+                    *snippet = None;
+                }
+                self.cancel_completion();
+                self.cancel_inline_completion();
+            }
+        });
     }
 
     fn add_snippet_placeholders(
@@ -2611,9 +2591,18 @@ impl EditorData {
                 }
             }
 
-            let v = placeholders.split_off(current);
-            placeholders.extend_from_slice(&new_placeholders);
-            placeholders.extend_from_slice(&v[1..]);
+            let mut next_group = placeholders.iter().map(|(index, _)| *index).max().unwrap_or(0) + 1;
+            let mut remap = std::collections::HashMap::new();
+            let remaining = placeholders.split_off(current);
+            placeholders.extend(new_placeholders.into_iter().map(|(index, span)| {
+                let mapped = *remap.entry(index).or_insert_with(|| {
+                    let group = next_group;
+                    next_group += 1;
+                    group
+                });
+                (mapped, span)
+            }));
+            placeholders.extend_from_slice(&remaining[1..]);
         });
     }
 
@@ -2776,6 +2765,16 @@ impl EditorData {
             Result<(PluginId, Vec<lsp_types::CodeActionOrCommand>), String>,
         ) + 'static,
     ) {
+        let offset = self.cursor().with_untracked(|c| c.offset());
+        self.request_code_actions_at(offset, kind, callback);
+    }
+
+    fn request_code_actions_at(
+        &self,
+        offset: usize,
+        kind: Option<String>,
+        callback: impl FnOnce(Result<(PluginId, Vec<lsp_types::CodeActionOrCommand>), String>) + 'static,
+    ) {
         let doc = self.doc();
         let Some(path) = doc
             .content
@@ -2785,7 +2784,6 @@ impl EditorData {
             callback(Err("The source document is not ready.".into()));
             return;
         };
-        let offset = self.cursor().with_untracked(|c| c.offset());
         let position = doc.buffer.with_untracked(|b| b.offset_to_position(offset));
         let diagnostics: Vec<_> = doc
             .diagnostics()
@@ -2815,7 +2813,11 @@ impl EditorData {
             let content = doc.buffer.with_untracked(|b| b.to_string());
             let request_kind=kind.clone();
             let selection=self.cursor().with_untracked(|cursor|doc.buffer.with_untracked(|b|cursor.edit_selection(b)));
-            let range=doc.buffer.with_untracked(|b|lsp_types::Range::new(b.offset_to_position(selection.min_offset()),b.offset_to_position(selection.max_offset())));
+            let range = if self.cursor().with_untracked(|cursor| cursor.offset()) == offset {
+                doc.buffer.with_untracked(|b| lsp_types::Range::new(b.offset_to_position(selection.min_offset()), b.offset_to_position(selection.max_offset())))
+            } else {
+                lsp_types::Range::new(position, position)
+            };
             let local = crate::dart::generate_flutter_code_actions(
                 &path,
                 &content,
@@ -3412,29 +3414,15 @@ impl EditorData {
                 cursor.set_offset(offset, true, pointer_event.modifiers.alt())
             });
         }
-        if self.common.hover.active.get_untracked() {
-            let hover_editor_id = self.common.hover.editor_id.get_untracked();
-            if hover_editor_id != self.id() {
-                self.common.hover.active.set(false);
-            } else {
-                let current_offset = self.common.hover.offset.get_untracked();
-                let start_offset = self
-                    .doc()
-                    .buffer
-                    .with_untracked(|buffer| buffer.prev_code_boundary(offset));
-                if current_offset != start_offset {
-                    self.common.hover.active.set(false);
-                }
-            }
+        let hover = &self.common.hover;
+        let start_offset = self.doc().buffer.with_untracked(|b| b.prev_code_boundary(offset));
+        if hover.editor_id.get_untracked() != self.id() || hover.offset.get_untracked() != start_offset {
+            hover.active.set(false);
+            hover.request.update(|request| *request = request.wrapping_add(1));
         }
         let hover_delay = self.common.config.get_untracked().editor.hover_delay;
         if hover_delay > 0 {
             if is_inside {
-                let start_offset = self
-                    .doc()
-                    .buffer
-                    .with_untracked(|buffer| buffer.prev_code_boundary(offset));
-
                 let editor = self.clone();
                 let mouse_hover_timer = self.common.mouse_hover_timer;
                 let timer_token =
@@ -3645,6 +3633,41 @@ impl EditorData {
         let editor_id = self.id();
         let revision = doc.rev();
         let hover_focus = self.common.focus;
+        let request = hover_data.request.get_untracked().wrapping_add(1);
+        hover_data.request.set(request);
+        hover_data.offset.set(offset);
+        hover_data.editor_id.set(editor_id);
+
+        let diagnostics = doc.diagnostics.diagnostics_span.with_untracked(|spans| {
+            spans.iter_chunks(offset..offset).filter(|(range, item)| {
+                range.start <= offset && offset <= range.end && matches!(item.severity,
+                    Some(lsp_types::DiagnosticSeverity::ERROR | lsp_types::DiagnosticSeverity::WARNING))
+            }).map(|(_, item)| item.message.clone()).collect::<Vec<_>>()
+        });
+        let has_diagnostics = !diagnostics.is_empty();
+        hover_data.diagnostics.set(diagnostics);
+        hover_data.suggestion.set(None);
+        if has_diagnostics {
+            hover_data.content.set(Vec::new());
+            hover_data.offset.set(offset);
+            hover_data.editor_id.set(editor_id);
+            hover_data.active.set(true);
+            let hover = hover_data.clone();
+            let source = doc.clone();
+            self.request_code_actions_at(offset, Some("quickfix".into()), move |result| {
+                if source.rev() != revision || hover.request.get_untracked() != request || !hover.active.get_untracked()
+                    || hover.offset.get_untracked() != offset || hover.editor_id.get_untracked() != editor_id {
+                    return;
+                }
+                if let Ok((_, items)) = result {
+                    hover.suggestion.set(items.into_iter().find_map(|item| match item {
+                        lsp_types::CodeActionOrCommand::CodeAction(action) if action.disabled.is_none() => Some(action.title),
+                        lsp_types::CodeActionOrCommand::Command(command) => Some(command.title),
+                        _ => None,
+                    }));
+                }
+            });
+        }
 
         // ── Dart fast path ─────────────────────────────────────────
         // Skip the proxy round-trip; talk directly to the warm LSP.
@@ -3657,7 +3680,7 @@ impl EditorData {
             let trigger = create_ext_action(
                 self.scope,
                 move |hover: Option<lsp_types::Hover>| {
-                    if doc.rev() != revision || hover_focus.get_untracked() == Focus::CodeAction { return; }
+                    if doc.rev() != revision || hover_data_cb.request.get_untracked() != request || hover_focus.get_untracked() == Focus::CodeAction { return; }
                     let Some(hover) = hover else { return };
                     let content = parse_hover_resp(hover, &config.get_untracked());
                     hover_data_cb.content.set(content);
@@ -3676,7 +3699,7 @@ impl EditorData {
         }
 
         let send = create_ext_action(self.scope, move |resp| {
-            if doc.rev() != revision || hover_focus.get_untracked() == Focus::CodeAction { return; }
+            if doc.rev() != revision || hover_data.request.get_untracked() != request || hover_focus.get_untracked() == Focus::CodeAction { return; }
             if let Ok(ProxyResponse::HoverResponse { hover, .. }) = resp {
                 let content = parse_hover_resp(hover, &config.get_untracked());
                 hover_data.content.set(content);

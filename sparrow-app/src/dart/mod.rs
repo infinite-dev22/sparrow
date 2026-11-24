@@ -55,3 +55,5 @@ pub mod run_config;
 pub mod run_config_view;
 
 pub mod library_access;
+
+pub(crate) mod widget_snippets;

@@ -45,6 +45,7 @@ pub(super) fn editor_tab_header(
 ) -> impl View {
     let main_split = window_tab_data.main_split.clone();
     let plugin = window_tab_data.plugin.clone();
+    let source_control = window_tab_data.source_control.clone();
     let editors = window_tab_data.main_split.editors;
     let diff_editors = window_tab_data.main_split.diff_editors;
     let focus = window_tab_data.common.focus;
@@ -90,6 +91,7 @@ pub(super) fn editor_tab_header(
         let child_for_mouse_close_2 = child.clone();
         let main_split = main_split.clone();
         let plugin = plugin.clone();
+        let source_control = source_control.clone();
         let child_view = {
             let info = child.view_info(editors, diff_editors, plugin, config);
             let hovered = create_rw_signal(false);
@@ -118,8 +120,10 @@ pub(super) fn editor_tab_header(
             })
             .style(|s| s.padding(4.));
 
+            let diagnostics = main_split.clone();
+            let git_docs = main_split.clone();
             let tab_content = crate::widgets::tooltip::tooltip(
-                label(move || info.with(|info| info.name.clone())).style(move |s| {
+                crate::widgets::file_decoration::error_underline(label(move || info.with(|info| info.name.clone())).style(move |s| {
                     s.apply_if(
                         !info
                             .with(|info| info.confirmed)
@@ -127,8 +131,13 @@ pub(super) fn editor_tab_header(
                             .unwrap_or(true),
                         |s| s.font_style(FontStyle::Italic),
                     )
+                    .apply_opt(info.with(|info| info.path.as_deref().and_then(|path|
+                        crate::widgets::file_decoration::git_color(path, &source_control, &git_docs)
+                    )), |s, color| s.color(config.get().color(color)))
                     .selectable(false)
-                }),
+                }), config, move || info.with(|info| info.path.as_deref().is_some_and(|path|
+                    crate::widgets::file_decoration::has_error(path, &diagnostics, false)
+                ))),
                 move || {
                     tooltip_tip(
                         config,

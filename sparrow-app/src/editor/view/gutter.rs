@@ -685,6 +685,21 @@ pub(super) fn editor_gutter(
     .on_event(EventListener::PointerDown, move |event| {
         if let Event::PointerDown(pointer) = event {
             if !pointer.button.is_primary() { return EventPropagation::Continue; }
+            let editor = e_data.get_untracked();
+            let width = gutter_rect.get_untracked().width();
+            if editor.kind.get_untracked().is_normal() && pointer.pos.x >= width - 7.0
+                && pointer.pos.x <= width {
+                let doc = editor.doc();
+                let items = super::diff_markers::hunks(&doc, &doc.head_changes().get_untracked());
+                let y = pointer.pos.y + viewport.get_untracked().y0;
+                if let Some(index) = items.iter().position(|hunk| {
+                    let (top, bottom) = super::diff_markers::gutter_span(&editor, hunk);
+                    y >= top && y < bottom
+                }) {
+                    super::diff_markers::show_hunk_menu(&editor, &items, index);
+                    return EventPropagation::Stop;
+                }
+            }
             let height = config.get_untracked().editor.line_height() as f64;
             let line = screen_lines.with_untracked(|lines|lines.iter_lines_y()
                 .find(|(_,y)|pointer.pos.y>=*y-viewport.get_untracked().y0 && pointer.pos.y<*y-viewport.get_untracked().y0+height)

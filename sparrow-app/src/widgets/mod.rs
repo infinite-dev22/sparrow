@@ -67,3 +67,5 @@ pub use tab::{TabStrip, tab_button, tab_strip};
 pub use text_input::text_input;
 pub use toggle_row::toggle_row;
 pub use tooltip::tooltip_label;
+
+pub(crate) mod file_decoration;

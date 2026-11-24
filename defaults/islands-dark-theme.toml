@@ -150,6 +150,9 @@ dim-text = "#6F737A"
 
 "completion_lens.foreground" = "$dim-text"
 
+"source_control.untracked" = "#E88B79"
+"source_control.whitespace" = "#AC7952"
+"source_control.deletion_marker" = "#9299A4"
 "source_control.added" = "#57955CCC"
 "source_control.removed" = "#F75464CC"
 "source_control.modified" = "#548AF7CC"

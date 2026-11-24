@@ -1502,6 +1502,12 @@ impl Doc {
         self.head_changes
     }
 
+    pub(crate) fn head_text(&self) -> Option<Rope> {
+        self.histories.with_untracked(|histories| {
+            histories.get("head").map(|history| history.buffer.text().clone())
+        })
+    }
+
     /// Retrieve the `head` version of the buffer
     pub fn retrieve_head(&self) {
         if let DocContent::File { path, .. } = self.content.get_untracked() {

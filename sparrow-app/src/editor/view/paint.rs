@@ -1,6 +1,6 @@
 //! Editor painting, including breakpoint highlights, search and inline guides.
 
-use std::{cmp, collections::BTreeMap, sync::Arc};
+use std::{cmp, collections::BTreeMap};
 
 use floem::{
     Renderer,
@@ -28,7 +28,7 @@ use crate::{
     debug::SparrowBreakpoint,
 };
 
-use super::{EditorView, changes_colors_all};
+use super::EditorView;
 
 // Editor painting uses document coordinates; the scroll view applies the
 // viewport translation. Gutter overlays apply that translation themselves.
@@ -391,63 +391,6 @@ impl EditorView {
                     .with_origin(Point::new(x0, line_info.vline_y));
                 cx.stroke(&rect, color, &Stroke::new(1.0));
             }
-        }
-    }
-
-    fn paint_scroll_bar(
-        &self,
-        cx: &mut PaintCx,
-        viewport: Rect,
-        is_local: bool,
-        config: Arc<SparrowConfig>,
-    ) {
-        const BAR_WIDTH: f64 = 10.0;
-
-        if is_local {
-            return;
-        }
-
-        cx.fill(
-            &Rect::ZERO
-                .with_size(Size::new(1.0, viewport.height()))
-                .with_origin(Point::new(
-                    viewport.x0 + viewport.width() - BAR_WIDTH,
-                    viewport.y0,
-                ))
-                .inflate(0.0, 10.0),
-            config.color(SparrowColor::SPARROW_SCROLL_BAR),
-            0.0,
-        );
-
-        if !self.editor.kind.get_untracked().is_normal() {
-            return;
-        }
-
-        let doc = self.editor.doc();
-        let total_len = doc.buffer.with_untracked(|buffer| buffer.last_line());
-        let changes = doc.head_changes().get_untracked();
-        let total_height = viewport.height();
-        let total_width = viewport.width();
-        let line_height = config.editor.line_height();
-        let content_height = if config.editor.scroll_beyond_last_line {
-            (total_len * line_height) as f64 + total_height - line_height as f64
-        } else {
-            (total_len * line_height) as f64
-        };
-
-        let colors = changes_colors_all(&config, &self.editor.editor, changes);
-        for (y, height, _, color) in colors {
-            let y = y / content_height * total_height;
-            let height = ((height * line_height) as f64 / content_height
-                * total_height)
-                .max(3.0);
-            let rect = Rect::ZERO.with_size(Size::new(3.0, height)).with_origin(
-                Point::new(
-                    viewport.x0 + total_width - BAR_WIDTH + 1.0,
-                    y + viewport.y0,
-                ),
-            );
-            cx.fill(&rect, color, 0.0);
         }
     }
 
@@ -876,7 +819,6 @@ impl EditorView {
         );
         let screen_lines = ed.screen_lines.get_untracked();
         self.paint_sticky_headers(cx, viewport, &screen_lines);
-        self.paint_scroll_bar(cx, viewport, is_local, config);
     }
 }
 

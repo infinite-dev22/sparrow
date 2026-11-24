@@ -97,7 +97,8 @@ pub fn editor_container_view(
                     screen_lines,
                     viewport,
                 ),
-                editor_content(editor, debug_breakline, is_active, false),
+                editor_content(editor, debug_breakline, is_active, false)
+                    .style(move |s| s.apply_if(editor_view.get().is_normal(), |s| s.margin_right(10.0))),
                 empty().style(move |s| {
                     let config = config.get();
                     s.absolute()
@@ -115,6 +116,7 @@ pub fn editor_container_view(
                             |s| s.hide(),
                         )
                 }),
+                super::overview::overview(editor),
                 inspection_widget(window_tab_data.clone(), editor),
             ))
             .style(move |s| {

@@ -9,7 +9,7 @@ use im::HashMap;
 use serde::{Deserialize, Serialize};
 use sparrow_core::{buffer::rope_text::RopeText, mode::Mode};
 
-use super::{EditorData, view::changes_colors_screen};
+use super::{EditorData, view::diff_markers::{gutter_span, hunks}};
 use crate::config::{SparrowConfig, color::SparrowColor};
 
 pub struct EditorGutterView {
@@ -59,27 +59,17 @@ impl EditorGutterView {
             return;
         }
 
-        let changes = e_data.doc().head_changes().get_untracked();
-        let line_height = config.editor.line_height() as f64;
-
-        let changes = changes_colors_screen(config, &e_data.editor, changes);
-        for (y, height, removed, color) in changes {
-            let height = if removed {
-                10.0
-            } else {
-                height as f64 * line_height
-            };
-            let mut y = y - viewport.y0;
-            if removed {
-                y -= 5.0;
+        let doc = e_data.doc();
+        for hunk in hunks(&doc, &doc.head_changes().get_untracked()) {
+            let (top, bottom) = gutter_span(e_data, &hunk);
+            if bottom < viewport.y0 || top > viewport.y1 {
+                continue;
             }
             cx.fill(
-                &Size::new(3.0, height)
-                    .to_rect()
-                    .with_origin(Point::new(self.width - 3.0, y)),
-                color,
+                &Rect::new(self.width - 5.0, top - viewport.y0, self.width - 1.0, bottom - viewport.y0).to_rounded_rect(2.0),
+                config.color(hunk.color),
                 0.0,
-            )
+            );
         }
     }
 

@@ -105,6 +105,9 @@ impl SparrowColor {
     pub const COMPLETION_LENS_FOREGROUND: &'static str =
         "completion_lens.foreground";
 
+    pub const SOURCE_CONTROL_UNTRACKED: &'static str = "source_control.untracked";
+    pub const SOURCE_CONTROL_WHITESPACE: &'static str = "source_control.whitespace";
+    pub const SOURCE_CONTROL_DELETION_MARKER: &'static str = "source_control.deletion_marker";
     pub const SOURCE_CONTROL_ADDED: &'static str = "source_control.added";
     pub const SOURCE_CONTROL_REMOVED: &'static str = "source_control.removed";
     pub const SOURCE_CONTROL_MODIFIED: &'static str = "source_control.modified";
