@@ -16,6 +16,7 @@ mod leading;
 mod project_switcher;
 mod window_controls;
 mod workspace;
+pub mod run_config_menu;
 
 pub use branch_switcher::branch_switcher;
 pub use device_selector::device_selector_overlay;

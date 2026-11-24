@@ -1,5 +1,3 @@
-//! Run, debug, device and application actions in the title bar.
-
 use crate::widgets::popup_menu::PopupMenuExt;
 use crate::widgets::popup_menu::{Menu, MenuItem};
 use floem::{
@@ -13,7 +11,6 @@ use floem::{
     views::{Decorators, container, label, stack, svg},
 };
 use sparrow_core::meta;
-use std::path::Path;
 use std::{rc::Rc, sync::Arc};
 
 use crate::debug::RunDebugMode;
@@ -58,103 +55,9 @@ pub(super) fn run_actions(
 
     let has_update = move || latest_version.with(|v| v.is_some());
 
-    // THE RUN CONFIG SELECTOR CHIP
-    let run_config_chip = {
-        container(
-            stack((
-                svg({
-                    let window = window_tab_data.clone();
-                    move || {
-                        let index = window.active_run_config_idx.get();
-                        let icon = window.run_configs.with(|configs| {
-                            configs
-                                .get(index)
-                                .map(|config| {
-                                    if Path::new(&config.program)
-                                        .file_stem()
-                                        .is_some_and(|stem| {
-                                            stem.eq_ignore_ascii_case("flutter")
-                                        })
-                                    {
-                                        SparrowIcons::FLUTTER
-                                    } else {
-                                        SparrowIcons::DART
-                                    }
-                                })
-                                .unwrap_or(SparrowIcons::SETTINGS)
-                        });
-                        config.get().ui_svg(icon)
-                    }
-                })
-                .style(move |s| s.size(16.0, 16.0).margin_right(6.0)),
-                label({
-                    let wt_data = window_tab_data.clone();
-                    move || {
-                        let idx = wt_data.active_run_config_idx.get();
-                        wt_data.run_configs.with(|c| {
-                            c.get(idx).map(|c| c.name.clone()).unwrap_or_else(|| {
-                                "Add Configuration...".to_string()
-                            })
-                        })
-                    }
-                })
-                .style(move |s| s.selectable(false)),
-                svg(move || config.get().ui_svg(SparrowIcons::DROPDOWN_ARROW))
-                    .style(move |s| {
-                        let size = config.get().ui.icon_size() as f32;
-                        s.size(size, size).margin_left(4.0).color(
-                            config.get().color(SparrowColor::SPARROW_ICON_INACTIVE),
-                        )
-                    }),
-            ))
-            .style(|s| s.items_center()),
-        )
-        .ide_popout_menu({
-            let wt_data = window_tab_data.clone();
-            move || {
-                let mut menu = Menu::new("");
-                let configs = wt_data.run_configs.get_untracked();
-                let active = wt_data.active_run_config_idx.get_untracked();
-
-                // Config list
-                for (i, c) in configs.iter().enumerate() {
-                    let c_name = c.name.clone();
-                    let label = if i == active {
-                        format!("✓ {}", c_name)
-                    } else {
-                        format!("   {}", c_name)
-                    };
-                    let wt_clone = wt_data.clone();
-                    menu = menu.entry(MenuItem::new(label).action(move || {
-                        wt_clone.active_run_config_idx.set(i);
-                    }));
-                }
-
-                if !configs.is_empty() {
-                    menu = menu.separator();
-                }
-                let wt_clone = wt_data.clone();
-                menu = menu.entry(MenuItem::new("Edit Configurations...").action(
-                    move || {
-                        wt_clone.run_config_modal_visible.set(true);
-                    },
-                ));
-                menu
-            }
-        })
-        .style(move |s| {
-            s.height(28.0)
-                .padding_horiz(10.0)
-                .margin_horiz(6.0)
-                .items_center()
-                .border_radius(6.0)
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer).background(
-                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                    )
-                })
-        })
-    };
+    // Run configuration chip + JetBrains-style dropdown (see run_config_menu.rs)
+    let run_config_chip =
+        super::run_config_menu::run_config_chip(window_tab_data.clone());
 
     let run_state = hot_reload.state;
     let is_running =
@@ -188,27 +91,27 @@ pub(super) fn run_actions(
                     })
                 },
             ))
-            .on_click_stop(move |_| {
-                if let Some((id, paused)) = debug_target.get_untracked() {
-                    if paused { wt_data.terminal.dap_continue(id); }
-                    else { wt_data.terminal.dap_pause(id); }
-                } else { wt_data.launch_selected_configuration(RunDebugMode::Run) }
-            })
-            .style(move |s| {
-                s.padding(4.0)
-                    .margin_horiz(2.0)
-                    .border_radius(4.0)
-                    .apply_if(is_running() && !debugging.get(), |s| {
-                        s.background(Color::from_rgb8(0x2D, 0x85, 0x50))
-                    })
-                    .hover(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config
-                                .get()
-                                .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
-            }),
+                .on_click_stop(move |_| {
+                    if let Some((id, paused)) = debug_target.get_untracked() {
+                        if paused { wt_data.terminal.dap_continue(id); }
+                        else { wt_data.terminal.dap_pause(id); }
+                    } else { wt_data.launch_selected_configuration(RunDebugMode::Run) }
+                })
+                .style(move |s| {
+                    s.padding(4.0)
+                        .margin_horiz(2.0)
+                        .border_radius(4.0)
+                        .apply_if(is_running() && !debugging.get(), |s| {
+                            s.background(Color::from_rgb8(0x2D, 0x85, 0x50))
+                        })
+                        .hover(|s| {
+                            s.cursor(CursorStyle::Pointer).background(
+                                config
+                                    .get()
+                                    .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                            )
+                        })
+                }),
             move || match debug_target.get() {
                 Some((_, true)) => "Resume Debugger",
                 Some((_, false)) => "Pause Debugger",
@@ -228,28 +131,28 @@ pub(super) fn run_actions(
                     })
             },
         ))
-        .on_click_stop(move |_| {
-            if let Some((id, _)) = debug_target.get_untracked() {
-                debug_window
-                    .terminal
-                    .select_console(id, RunDebugMode::Debug);
-                debug_window.show_panel(crate::panel::kind::PanelKind::Debug);
-            } else {
-                debug_window.launch_selected_configuration(RunDebugMode::Debug)
-            }
-        })
-        .style(move |s| {
-            s.padding(4.0)
-                .border_radius(4.0)
-                .apply_if(debugging.get(), |s| s.background(Color::from_rgb8(45, 133, 80)))
-                .cursor(CursorStyle::Pointer)
-                .hover(|s| {
-                    s.background(
-                        if debugging.get() { Color::from_rgb8(45, 133, 80) }
-                        else { config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND) },
-                    )
-                })
-        }),
+            .on_click_stop(move |_| {
+                if let Some((id, _)) = debug_target.get_untracked() {
+                    debug_window
+                        .terminal
+                        .select_console(id, RunDebugMode::Debug);
+                    debug_window.show_panel(crate::panel::kind::PanelKind::Debug);
+                } else {
+                    debug_window.launch_selected_configuration(RunDebugMode::Debug)
+                }
+            })
+            .style(move |s| {
+                s.padding(4.0)
+                    .border_radius(4.0)
+                    .apply_if(debugging.get(), |s| s.background(Color::from_rgb8(45, 133, 80)))
+                    .cursor(CursorStyle::Pointer)
+                    .hover(|s| {
+                        s.background(
+                            if debugging.get() { Color::from_rgb8(45, 133, 80) }
+                            else { config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND) },
+                        )
+                    })
+            }),
         move || if debugging.get() { "Show Debug Session" } else { "Debug (Shift+F9)" },
     );
 
@@ -257,9 +160,9 @@ pub(super) fn run_actions(
     let has_running_process = create_memo(move |_| {
         is_running()
             || terminal
-                .run_debug_process(true)
-                .iter()
-                .any(|(_, process)| !process.stopped)
+            .run_debug_process(true)
+            .iter()
+            .any(|(_, process)| !process.stopped)
     });
     let execution_window = window_tab_data.clone();
     let execution_menu = label(|| "⋮")
@@ -272,7 +175,7 @@ pub(super) fn run_actions(
                     s.background(
                         config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
                     )
-                    .border_radius(4.0)
+                        .border_radius(4.0)
                 })
         })
         .ide_popout_menu(move || {
@@ -314,23 +217,23 @@ pub(super) fn run_actions(
                         }))
                     }),
             )
-            .disabled(move || !is_running())
-            .on_click_stop(move |_| {
-                hr.common
-                    .workbench_command
-                    .send(SparrowWorkbenchCommand::FlutterHotReload);
-            })
-            .style(move |s| {
-                let config = config.get();
-                s.padding(4.0)
-                    .margin_horiz(2.0)
-                    .border_radius(6.0)
-                    .hover(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
-            }),
+                .disabled(move || !is_running())
+                .on_click_stop(move |_| {
+                    hr.common
+                        .workbench_command
+                        .send(SparrowWorkbenchCommand::FlutterHotReload);
+                })
+                .style(move |s| {
+                    let config = config.get();
+                    s.padding(4.0)
+                        .margin_horiz(2.0)
+                        .border_radius(6.0)
+                        .hover(|s| {
+                            s.cursor(CursorStyle::Pointer).background(
+                                config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                            )
+                        })
+                }),
             || "Hot Reload (Ctrl+F5)",
         )
     };
@@ -352,23 +255,23 @@ pub(super) fn run_actions(
                         }))
                     }),
             )
-            .disabled(move || !is_running())
-            .on_click_stop(move |_| {
-                hr.common
-                    .workbench_command
-                    .send(SparrowWorkbenchCommand::FlutterHotRestart);
-            })
-            .style(move |s| {
-                let config = config.get();
-                s.padding(4.0)
-                    .margin_horiz(2.0)
-                    .border_radius(6.0)
-                    .hover(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
-            }),
+                .disabled(move || !is_running())
+                .on_click_stop(move |_| {
+                    hr.common
+                        .workbench_command
+                        .send(SparrowWorkbenchCommand::FlutterHotRestart);
+                })
+                .style(move |s| {
+                    let config = config.get();
+                    s.padding(4.0)
+                        .margin_horiz(2.0)
+                        .border_radius(6.0)
+                        .hover(|s| {
+                            s.cursor(CursorStyle::Pointer).background(
+                                config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                            )
+                        })
+                }),
             || "Hot Restart (Ctrl+Shift+F5)",
         )
     };
@@ -386,27 +289,27 @@ pub(super) fn run_actions(
                     },
                 ),
             )
-            .disabled(move || !has_running_process.get())
-            .on_click_stop(move |_| {
-                // The active Debug task/session takes priority over an older
-                // Flutter Run session that may still be alive.
-                workbench_command.send(SparrowWorkbenchCommand::RunAndDebugStop);
-            })
-            .style(move |s| {
-                let config = config.get();
-                s.padding(4.0)
-                    .margin_horiz(2.0)
-                    .border_radius(4.0)
-                    .background(config.color(SparrowColor::SPARROW_STOP_ICON))
-                    .hover(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
-            }),
+                .disabled(move || !has_running_process.get())
+                .on_click_stop(move |_| {
+                    // The active Debug task/session takes priority over an older
+                    // Flutter Run session that may still be alive.
+                    workbench_command.send(SparrowWorkbenchCommand::RunAndDebugStop);
+                })
+                .style(move |s| {
+                    let config = config.get();
+                    s.padding(4.0)
+                        .margin_horiz(2.0)
+                        .border_radius(4.0)
+                        .background(config.color(SparrowColor::SPARROW_STOP_ICON))
+                        .hover(|s| {
+                            s.cursor(CursorStyle::Pointer).background(
+                                config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                            )
+                        })
+                }),
             || "Stop (Ctrl+F2)",
         )
-        .style(move |s| s.apply_if(!has_running_process.get(), |s| s.hide()))
+            .style(move |s| s.apply_if(!has_running_process.get(), |s| s.hide()))
     };
 
     // Flutter Inspector toggle button
@@ -423,22 +326,22 @@ pub(super) fn run_actions(
                             .color(config.color(SparrowColor::SPARROW_ICON_ACTIVE))
                     }),
             )
-            .on_click_stop(move |_| {
-                wt_data.toggle_panel_visual(
-                    crate::panel::kind::PanelKind::FlutterInspector,
-                );
-            })
-            .style(move |s| {
-                let config = config.get();
-                s.padding(4.0)
-                    .margin_horiz(2.0)
-                    .border_radius(6.0)
-                    .hover(|s| {
-                        s.cursor(CursorStyle::Pointer).background(
-                            config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                        )
-                    })
-            }),
+                .on_click_stop(move |_| {
+                    wt_data.toggle_panel_visual(
+                        crate::panel::kind::PanelKind::FlutterInspector,
+                    );
+                })
+                .style(move |s| {
+                    let config = config.get();
+                    s.padding(4.0)
+                        .margin_horiz(2.0)
+                        .border_radius(6.0)
+                        .hover(|s| {
+                            s.cursor(CursorStyle::Pointer).background(
+                                config.color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                            )
+                        })
+                }),
             || "Flutter Inspector",
         )
     };
@@ -480,51 +383,51 @@ pub(super) fn run_actions(
                 || "Settings",
                 config,
             )
-            .ide_popout_menu(move || {
-                Menu::new("")
-                    .entry(MenuItem::new("Command Palette").action(move || {
-                        workbench_command
-                            .send(SparrowWorkbenchCommand::PaletteCommand)
-                    }))
-                    .separator()
-                    .entry(MenuItem::new("Open Settings").action(move || {
-                        workbench_command.send(SparrowWorkbenchCommand::OpenSettings)
-                    }))
-                    .entry(MenuItem::new("Open Keyboard Shortcuts").action(
-                        move || {
+                .ide_popout_menu(move || {
+                    Menu::new("")
+                        .entry(MenuItem::new("Command Palette").action(move || {
                             workbench_command
-                                .send(SparrowWorkbenchCommand::OpenKeyboardShortcuts)
-                        },
-                    ))
-                    .entry(MenuItem::new("Open Theme Color Settings").action(
-                        move || {
-                            workbench_command.send(
-                                SparrowWorkbenchCommand::OpenThemeColorSettings,
-                            )
-                        },
-                    ))
-                    .separator()
-                    .entry(if let Some(v) = latest_version.get_untracked() {
-                        if update_in_progress.get_untracked() {
-                            MenuItem::new(format!("Update in progress ({v})"))
-                                .enabled(false)
+                                .send(SparrowWorkbenchCommand::PaletteCommand)
+                        }))
+                        .separator()
+                        .entry(MenuItem::new("Open Settings").action(move || {
+                            workbench_command.send(SparrowWorkbenchCommand::OpenSettings)
+                        }))
+                        .entry(MenuItem::new("Open Keyboard Shortcuts").action(
+                            move || {
+                                workbench_command
+                                    .send(SparrowWorkbenchCommand::OpenKeyboardShortcuts)
+                            },
+                        ))
+                        .entry(MenuItem::new("Open Theme Color Settings").action(
+                            move || {
+                                workbench_command.send(
+                                    SparrowWorkbenchCommand::OpenThemeColorSettings,
+                                )
+                            },
+                        ))
+                        .separator()
+                        .entry(if let Some(v) = latest_version.get_untracked() {
+                            if update_in_progress.get_untracked() {
+                                MenuItem::new(format!("Update in progress ({v})"))
+                                    .enabled(false)
+                            } else {
+                                MenuItem::new(format!("Restart to update ({v})")).action(
+                                    move || {
+                                        workbench_command.send(
+                                            SparrowWorkbenchCommand::RestartToUpdate,
+                                        )
+                                    },
+                                )
+                            }
                         } else {
-                            MenuItem::new(format!("Restart to update ({v})")).action(
-                                move || {
-                                    workbench_command.send(
-                                        SparrowWorkbenchCommand::RestartToUpdate,
-                                    )
-                                },
-                            )
-                        }
-                    } else {
-                        MenuItem::new("No update available").enabled(false)
-                    })
-                    .separator()
-                    .entry(MenuItem::new("About Sparrow").action(move || {
-                        workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
-                    }))
-            }),
+                            MenuItem::new("No update available").enabled(false)
+                        })
+                        .separator()
+                        .entry(MenuItem::new("About Sparrow").action(move || {
+                            workbench_command.send(SparrowWorkbenchCommand::ShowAbout)
+                        }))
+                }),
             container(label(|| "1".to_string()).style(move |s| {
                 let config = config.get();
                 s.font_size(10.0)
@@ -534,17 +437,17 @@ pub(super) fn run_actions(
                     .margin_top(10.0)
                     .background(config.color(SparrowColor::EDITOR_CARET))
             }))
-            .style(move |s| {
-                let has_update = has_update();
-                s.absolute()
-                    .size_pct(100.0, 100.0)
-                    .justify_end()
-                    .items_end()
-                    .pointer_events_none()
-                    .apply_if(!has_update, |s| s.hide())
-            }),
+                .style(move |s| {
+                    let has_update = has_update();
+                    s.absolute()
+                        .size_pct(100.0, 100.0)
+                        .justify_end()
+                        .items_end()
+                        .pointer_events_none()
+                        .apply_if(!has_update, |s| s.hide())
+                }),
         ))
-        .style(move |s| s.margin_horiz(6.0)),
+            .style(move |s| s.margin_horiz(6.0)),
         window_controls_view(
             window_command,
             true,
@@ -553,6 +456,6 @@ pub(super) fn run_actions(
             config,
         ),
     ))
-    .style(|s| s.items_center().height_pct(100.0))
-    .debug_name("Right of top bar")
+        .style(|s| s.items_center().height_pct(100.0))
+        .debug_name("Right of top bar")
 }
