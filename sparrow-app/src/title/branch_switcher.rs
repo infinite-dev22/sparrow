@@ -981,7 +981,7 @@ fn entry_view(config: ReadSignal<Arc<SparrowConfig>>, e: Entry) -> AnyView {
                 .font_size(13.0)
                 .selectable(false)
         }),
-        empty().style(|s| s.flex_grow(1.0).min_width(16.0)),
+        empty().style(|s| s.flex_grow(1.0_f32).min_width(16.0)),
         label(move || shortcut.to_string()).style(move |s| {
             s.color(dim(&config.get())).font_size(13.0).selectable(false)
         }),
@@ -1174,7 +1174,7 @@ fn ref_row(ctx: Ctx, target: Target, ahead: u32, behind: u32, idx: usize) -> Any
                     .flex_shrink(0.0_f32)
                     .apply_if(behind == 0, |s| s.hide())
             }),
-        empty().style(|s| s.flex_grow(1.0).min_width(8.0)),
+        empty().style(|s| s.flex_grow(1.0_f32).min_width(8.0)),
         label(move || upstream_text.clone()).style(move |s| {
             s.font_size(13.0)
                 .color(dim(&config.get()))
@@ -1508,7 +1508,7 @@ pub fn branch_switcher(
                 .build_editor(search_editor)
                 .placeholder(|| "Search for branches and actions".to_string())
                 .style(|s| {
-                    s.flex_grow(1.0)
+                    s.flex_grow(1.0_f32)
                         .min_width(0.0)
                         .height(24.0)
                         .padding_horiz(0.0)
@@ -1519,7 +1519,7 @@ pub fn branch_switcher(
             .style(|s| s.items_center().width_full()))
             .style(move |s| {
                 let c = config.get();
-                s.flex_grow(1.0)
+                s.flex_grow(1.0_f32)
                     .min_width(0.0)
                     .height(28.0)
                     .padding_horiz(8.0)
