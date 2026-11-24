@@ -1,6 +1,7 @@
 use floem::{
     IntoView, Renderer, View, ViewId,
     context::{PaintCx, UpdateCx},
+    kurbo::Shape,
     peniko::Color,
     views::Decorators,
 };
@@ -26,12 +27,22 @@ impl View for DialogFrame {
     fn paint(&mut self, cx: &mut PaintCx) {
         if let Some(size) = self.id.get_size() {
             let bounds = size.to_rect();
+            let rounded = bounds.to_rounded_rect(DIALOG_RADIUS);
             // TinySkia clears to white and presents an opaque softbuffer surface.
             if matches!(&**cx, ActiveRenderer::TinySkia(_)) {
                 cx.fill(&bounds, self.matte, 0.0);
+                cx.paint_children(self.id);
+
+                // Floem restores the inherited clip for every child, rebuilding
+                // a surface-sized TinySkia mask each time. Paint the outside of
+                // the rounded rectangle once instead on the opaque surface.
+                let mut corners = bounds.to_path(0.1);
+                corners.extend(rounded.to_path(0.1).reverse_subpaths());
+                cx.fill(&corners, self.matte, 0.0);
+                return;
             }
             cx.save();
-            cx.clip(&bounds.to_rounded_rect(DIALOG_RADIUS));
+            cx.clip(&rounded);
             cx.paint_children(self.id);
             cx.restore();
         }
