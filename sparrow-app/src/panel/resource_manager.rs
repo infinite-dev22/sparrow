@@ -681,88 +681,570 @@ fn drawable_svg(path: &Path, depth: usize) -> Option<String> {
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {width} {height}\">{body}</svg>"
     ))
 }
-fn register_asset(source: &str, path: &str) -> Result<String, String> {
-    let doc: serde_yaml::Value =
-        serde_yaml::from_str(source).map_err(|e| e.to_string())?;
-    if doc["flutter"]["assets"]
-        .as_sequence()
-        .is_some_and(|values| {
-            values.iter().any(|value| value.as_str() == Some(path))
-        })
-    {
-        return Ok(source.into());
+#[derive(Clone, Copy)]
+struct ManifestLine {
+    start: usize,
+    content_end: usize,
+    end: usize,
+}
+
+fn manifest_lines(source: &str) -> Vec<ManifestLine> {
+    let bytes = source.as_bytes();
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'\n' {
+            let content_end = if index > start && bytes[index - 1] == b'\r' {
+                index - 1
+            } else {
+                index
+            };
+            lines.push(ManifestLine {
+                start,
+                content_end,
+                end: index + 1,
+            });
+            start = index + 1;
+        }
     }
-    let mut lines = source.lines().map(String::from).collect::<Vec<_>>();
-    let flutter = lines.iter().position(|line| line.trim_end() == "flutter:");
-    if let Some(flutter) = flutter {
-        let end = (flutter + 1..lines.len())
-            .find(|&i| {
-                !lines[i].trim().is_empty()
-                    && !lines[i].starts_with(char::is_whitespace)
-                    && !lines[i].starts_with('#')
-            })
-            .unwrap_or(lines.len());
-        if let Some(assets) =
-            (flutter + 1..end).find(|&i| lines[i].trim() == "assets:")
+    if start < source.len() {
+        lines.push(ManifestLine {
+            start,
+            content_end: source.len(),
+            end: source.len(),
+        });
+    }
+    lines
+}
+
+fn manifest_line_text<'a>(source: &'a str, line: ManifestLine) -> &'a str {
+    &source[line.start..line.content_end]
+}
+
+fn manifest_newline(source: &str) -> &'static str {
+    source
+        .find('\n')
+        .map(|index| {
+            if index > 0 && source.as_bytes()[index - 1] == b'\r' {
+                "\r\n"
+            } else {
+                "\n"
+            }
+        })
+        .unwrap_or("\n")
+}
+
+fn line_indent(line: &str) -> usize {
+    line.bytes().take_while(|byte| *byte == b' ').count()
+}
+
+fn is_mapping_key(line: &str, indent: usize, key: &str) -> bool {
+    if line_indent(line) != indent {
+        return false;
+    }
+    line[indent..]
+        .strip_prefix(key)
+        .is_some_and(|rest| rest.starts_with(':'))
+}
+
+fn mapping_value<'a>(line: &'a str, indent: usize, key: &str) -> Option<&'a str> {
+    line[indent..]
+        .strip_prefix(key)?
+        .strip_prefix(':')
+        .map(str::trim)
+}
+
+fn mapping_end(source: &str, lines: &[ManifestLine], start: usize, indent: usize) -> usize {
+    (start + 1..lines.len())
+        .find(|index| {
+            let line = manifest_line_text(source, lines[*index]);
+            let trimmed = line.trim_start();
+            !trimmed.is_empty()
+                && !trimmed.starts_with('#')
+                && line_indent(line) <= indent
+        })
+        .unwrap_or(lines.len())
+}
+
+fn yaml_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn yaml_scalar_end(value: &str) -> Option<usize> {
+    let first = value.as_bytes().first().copied()?;
+    match first {
+        b'\'' => {
+            let bytes = value.as_bytes();
+            let mut index = 1;
+            while index < bytes.len() {
+                if bytes[index] == b'\'' {
+                    if bytes.get(index + 1) == Some(&b'\'') {
+                        index += 2;
+                    } else {
+                        return Some(index + 1);
+                    }
+                } else {
+                    index += 1;
+                }
+            }
+            None
+        }
+        b'"' => {
+            let bytes = value.as_bytes();
+            let mut index = 1;
+            while index < bytes.len() {
+                match bytes[index] {
+                    b'\\' => index += 2,
+                    b'"' => return Some(index + 1),
+                    _ => index += 1,
+                }
+            }
+            None
+        }
+        _ => {
+            let end = value.find(" #").unwrap_or(value.len());
+            Some(value[..end].trim_end().len())
+        }
+    }
+}
+
+fn asset_entry(source: &str, line: ManifestLine, indent: usize) -> Option<(String, usize, usize)> {
+    let text = manifest_line_text(source, line);
+    let rest = text.get(indent..)?.strip_prefix('-')?;
+    let leading = rest.len() - rest.trim_start().len();
+    let scalar_start = indent + 1 + leading;
+    let scalar = text.get(scalar_start..)?;
+    let scalar_end = yaml_scalar_end(scalar)?;
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&scalar[..scalar_end]).ok()?;
+    Some((parsed.as_str()?.to_string(), scalar_start, scalar_start + scalar_end))
+}
+
+fn insert_after_line(source: &str, line: ManifestLine, text: &str) -> String {
+    let ending = if line.end > line.content_end {
+        &source[line.content_end..line.end]
+    } else {
+        manifest_newline(source)
+    };
+    let mut updated = String::with_capacity(source.len() + text.len() + ending.len());
+    updated.push_str(&source[..line.end]);
+    if line.end == line.content_end {
+        updated.push_str(ending);
+    }
+    updated.push_str(text);
+    if line.end > line.content_end {
+        updated.push_str(ending);
+    }
+    updated.push_str(&source[line.end..]);
+    updated
+}
+
+fn insert_before_line(source: &str, line: ManifestLine, text: &str) -> String {
+    let mut updated = String::with_capacity(source.len() + text.len());
+    updated.push_str(&source[..line.start]);
+    updated.push_str(text);
+    updated.push_str(&source[line.start..]);
+    updated
+}
+
+fn append_lines(source: &str, additions: &[String]) -> String {
+    let newline = manifest_newline(source);
+    let has_trailing_newline = source.ends_with('\n');
+    let mut updated = String::with_capacity(source.len() + additions.join(newline).len() + 8);
+    updated.push_str(source);
+    if !source.is_empty() && !has_trailing_newline {
+        updated.push_str(newline);
+    }
+    updated.push_str(&additions.join(newline));
+    if has_trailing_newline {
+        updated.push_str(newline);
+    }
+    updated
+}
+
+fn edit_pubspec_asset(
+    source: &str,
+    old_path: Option<&str>,
+    new_path: Option<&str>,
+) -> Result<String, String> {
+    let doc: serde_yaml::Value =
+        serde_yaml::from_str(source).map_err(|error| error.to_string())?;
+    let lines = manifest_lines(source);
+    let flutter_value = doc.get("flutter");
+
+    if let Some(path) = new_path {
+        if path.trim().is_empty()
+            || path.contains(['\n', '\r'])
+            || std::path::Path::new(path).is_absolute()
+            || std::path::Path::new(path)
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
         {
-            let indent = lines[assets].len() - lines[assets].trim_start().len();
-            lines.insert(
-                assets + 1,
-                format!(
-                    "{}- '{}'",
-                    " ".repeat(indent + 2),
-                    path.replace('\'', "''")
-                ),
-            );
-        } else if (flutter + 1..end)
-            .any(|i| lines[i].trim_start().starts_with("assets:"))
+            return Err("Choose a project-relative asset path without parent-directory segments.".into());
+        }
+    }
+    if old_path == new_path {
+        return Ok(source.to_string());
+    }
+
+    if flutter_value.is_none() {
+        if old_path.is_some() {
+            return Err("The asset is not declared in pubspec.yaml.".into());
+        }
+        let path = new_path.ok_or("A new asset path is required")?;
+        let additions = vec![
+            "flutter:".to_string(),
+            "  assets:".to_string(),
+            format!("    - {}", yaml_string(path)),
+        ];
+        let updated = append_lines(source, &additions);
+        serde_yaml::from_str::<serde_yaml::Value>(&updated)
+            .map_err(|error| error.to_string())?;
+        return Ok(updated);
+    }
+
+    let flutter_value = flutter_value.unwrap();
+    if !flutter_value.is_mapping() {
+        return Err("Convert flutter to a YAML block mapping before importing.".into());
+    }
+    let Some(flutter_line) = lines.iter().position(|line| {
+        let text = manifest_line_text(source, *line);
+        is_mapping_key(text, 0, "flutter")
+    }) else {
+        return Err("Could not safely locate the flutter mapping in pubspec.yaml.".into());
+    };
+    let flutter_indent = line_indent(manifest_line_text(source, lines[flutter_line]));
+    if mapping_value(
+        manifest_line_text(source, lines[flutter_line]),
+        flutter_indent,
+        "flutter",
+    )
+    .is_some_and(|value| !value.is_empty() && !value.starts_with('#'))
+    {
+        return Err("Convert flutter to a YAML block mapping before importing.".into());
+    }
+    let flutter_end = mapping_end(source, &lines, flutter_line, flutter_indent);
+    let child_indent = (flutter_line + 1..flutter_end)
+        .map(|index| manifest_line_text(source, lines[index]))
+        .filter(|text| {
+            let trimmed = text.trim_start();
+            !trimmed.is_empty() && !trimmed.starts_with('#')
+        })
+        .map(line_indent)
+        .filter(|indent| *indent > flutter_indent)
+        .min()
+        .unwrap_or(flutter_indent + 2);
+
+    let assets_value = flutter_value.get("assets");
+    let assets_line = (flutter_line + 1..flutter_end).find(|index| {
+        let text = manifest_line_text(source, lines[*index]);
+        is_mapping_key(text, child_indent, "assets")
+    });
+    if assets_value.is_some() && assets_line.is_none() {
+        return Err("The flutter.assets entry is not a supported block-style mapping.".into());
+    }
+    if let Some(value) = assets_value
+        && !value.is_null()
+        && !value.is_sequence()
+    {
+        return Err("Convert flutter.assets to a YAML block list before editing it.".into());
+    }
+
+    if let Some(assets_line) = assets_line {
+        let assets_indent = line_indent(manifest_line_text(source, lines[assets_line]));
+        let value_text = mapping_value(
+            manifest_line_text(source, lines[assets_line]),
+            assets_indent,
+            "assets",
+        )
+        .unwrap_or_default();
+        if !value_text.is_empty() && !value_text.starts_with('#') {
+            return Err("Convert flutter.assets to a YAML block list before editing it.".into());
+        }
+        let assets_end = mapping_end(source, &lines, assets_line, assets_indent);
+        let item_indent = (assets_line + 1..assets_end)
+            .filter_map(|index| {
+                let text = manifest_line_text(source, lines[index]);
+                let indent = line_indent(text);
+                (indent > assets_indent && text[indent..].starts_with('-'))
+                    .then_some(indent)
+            })
+            .min();
+        let entries = item_indent
+            .map(|indent| {
+                (assets_line + 1..assets_end)
+                    .filter(|index| {
+                        let text = manifest_line_text(source, lines[*index]);
+                        line_indent(text) == indent
+                            && text[indent..].starts_with('-')
+                    })
+                    .filter_map(|index| {
+                        asset_entry(source, lines[index], indent)
+                            .map(|(value, start, end)| (index, value, start, end))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if let Some(new_path) = new_path
+            && entries.iter().any(|(_, value, _, _)| value == new_path)
+        {
+            if old_path.is_none() {
+                return Ok(source.to_string());
+            }
+            return Err("The new asset path is already declared in pubspec.yaml.".into());
+        }
+
+        if let Some(old_path) = old_path {
+            let Some((index, _, scalar_start, scalar_end)) =
+                entries.iter().find(|(_, value, _, _)| value == old_path)
+            else {
+                return Err("The asset is not declared in pubspec.yaml.".into());
+            };
+            let line = lines[*index];
+            if let Some(new_path) = new_path {
+                let mut updated = String::with_capacity(source.len() + new_path.len());
+                updated.push_str(&source[..line.start + scalar_start]);
+                updated.push_str(&yaml_string(new_path));
+                updated.push_str(&source[line.start + scalar_end..]);
+                serde_yaml::from_str::<serde_yaml::Value>(&updated)
+                    .map_err(|error| error.to_string())?;
+                return Ok(updated);
+            }
+            let text = manifest_line_text(source, line);
+            let suffix = &text[*scalar_end..];
+            if let Some(comment) = suffix.find('#')
+                && suffix[..comment].trim().is_empty()
+            {
+                let replacement = format!(
+                    "{}{}",
+                    &text[..line_indent(text)],
+                    suffix[comment..].trim_start()
+                );
+                let mut updated = String::with_capacity(source.len());
+                updated.push_str(&source[..line.start]);
+                updated.push_str(&replacement);
+                updated.push_str(&source[line.content_end..]);
+                serde_yaml::from_str::<serde_yaml::Value>(&updated)
+                    .map_err(|error| error.to_string())?;
+                return Ok(updated);
+            }
+            let mut updated = String::with_capacity(source.len());
+            updated.push_str(&source[..line.start]);
+            updated.push_str(&source[line.end..]);
+            serde_yaml::from_str::<serde_yaml::Value>(&updated)
+                .map_err(|error| error.to_string())?;
+            return Ok(updated);
+        }
+
+        let path = new_path.ok_or("A new asset path is required")?;
+        let list_indent = item_indent.unwrap_or(assets_indent + 2);
+        let entry = format!("{}- {}", " ".repeat(list_indent), yaml_string(path));
+        let insert_after = entries
+            .last()
+            .map(|(index, _, _, _)| *index)
+            .or_else(|| {
+                (assets_line + 1..assets_end).find(|index| {
+                    let text = manifest_line_text(source, lines[*index]);
+                    let trimmed = text.trim_start();
+                    !trimmed.is_empty()
+                        && !trimmed.starts_with('#')
+                        && line_indent(text) > assets_indent
+                })
+            })
+            .unwrap_or(assets_line);
+        let updated = insert_after_line(source, lines[insert_after], &entry);
+        serde_yaml::from_str::<serde_yaml::Value>(&updated)
+            .map_err(|error| error.to_string())?;
+        return Ok(updated);
+    }
+
+    if old_path.is_some() {
+        return Err("The asset is not declared in pubspec.yaml.".into());
+    }
+    let path = new_path.ok_or("A new asset path is required")?;
+    let block = format!(
+        "{}assets:{}{}- {}{}",
+        " ".repeat(child_indent),
+        manifest_newline(source),
+        " ".repeat(child_indent + 2),
+        yaml_string(path),
+        manifest_newline(source)
+    );
+    let updated = if flutter_end < lines.len() {
+        insert_before_line(source, lines[flutter_end], &block)
+    } else {
+        let additions = vec![
+            format!("{}assets:", " ".repeat(child_indent)),
+            format!(
+                "{}- {}",
+                " ".repeat(child_indent + 2),
+                yaml_string(path)
+            ),
+        ];
+        append_lines(source, &additions)
+    };
+    serde_yaml::from_str::<serde_yaml::Value>(&updated)
+        .map_err(|error| error.to_string())?;
+    Ok(updated)
+}
+
+fn register_asset(source: &str, path: &str) -> Result<String, String> {
+    edit_pubspec_asset(source, None, Some(path))
+}
+
+fn manifest_diff(before: &str, after: &str) -> String {
+    let before = before.lines().collect::<Vec<_>>();
+    let after = after.lines().collect::<Vec<_>>();
+    let prefix = before
+        .iter()
+        .zip(&after)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let suffix = before[prefix..]
+        .iter()
+        .rev()
+        .zip(after[prefix..].iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut diff = String::new();
+    for line in &before[prefix..before.len() - suffix] {
+        diff.push_str("− ");
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    for line in &after[prefix..after.len() - suffix] {
+        diff.push_str("+ ");
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    if diff.is_empty() {
+        "No pubspec.yaml changes are needed.".into()
+    } else {
+        format!("pubspec.yaml changes:\n{diff}")
+    }
+}
+
+fn resolve_import_destination(source: &Path, destination: &Path) -> Result<PathBuf, String> {
+    let destination_text = destination.to_string_lossy();
+    if destination_text.ends_with(std::path::MAIN_SEPARATOR)
+        || destination.is_dir()
+    {
+        let filename = source
+            .file_name()
+            .ok_or("The selected source file has no filename")?;
+        Ok(destination.join(filename))
+    } else {
+        Ok(destination.to_path_buf())
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct AssetImportPlan {
+    root: PathBuf,
+    source: PathBuf,
+    destination: PathBuf,
+    pubspec_change: Option<(String, String)>,
+    details: String,
+}
+
+impl AssetImportPlan {
+    pub(super) fn details(&self) -> &str {
+        &self.details
+    }
+
+    fn apply(&self) -> Result<(), String> {
+        let target = self.root.join(&self.destination);
+        if target.exists() {
+            return Err("A file already exists at the destination.".into());
+        }
+        let pubspec = self.root.join("pubspec.yaml");
+        if let Some((original, _)) = &self.pubspec_change
+            && std::fs::read_to_string(&pubspec).ok().as_deref()
+                != Some(original.as_str())
         {
             return Err(
-                "Convert flutter.assets to a YAML block list before importing."
+                "pubspec.yaml changed after preview. Review the current manifest and retry."
                     .into(),
             );
-        } else {
-            lines.insert(
-                end,
-                format!("  assets:\n    - '{}'", path.replace('\'', "''")),
+        }
+        let parent = target.parent().ok_or("Invalid destination")?;
+        let canonical_root = self.root.canonicalize().map_err(|error| error.to_string())?;
+        let existing = parent
+            .ancestors()
+            .find(|path| path.exists())
+            .ok_or("Invalid destination")?;
+        if !existing
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            .starts_with(&canonical_root)
+        {
+            return Err("The destination resolves outside the project.".into());
+        }
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        if !parent
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            .starts_with(&canonical_root)
+        {
+            return Err("The destination resolves outside the project.".into());
+        }
+        let temporary =
+            tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
+        std::fs::copy(&self.source, temporary.path())
+            .map_err(|error| error.to_string())?;
+        temporary
+            .persist_noclobber(&target)
+            .map_err(|error| error.to_string())?;
+        let Some((original, updated)) = &self.pubspec_change else {
+            return Ok(());
+        };
+        if std::fs::read_to_string(&pubspec).ok().as_deref()
+            != Some(original.as_str())
+        {
+            let _ = std::fs::remove_file(&target);
+            return Err(
+                "pubspec.yaml changed during import. Review the current manifest and retry."
+                    .into(),
             );
         }
-    } else if doc.get("flutter").is_none() {
-        lines.push(format!(
-            "flutter:\n  assets:\n    - '{}'",
-            path.replace('\'', "''")
-        ));
-    } else {
-        return Err(
-            "Convert flutter to a YAML block mapping before importing.".into()
-        );
+        if updated != original
+            && let Err(error) = crate::persistence::write_files(vec![(
+                pubspec,
+                updated.clone(),
+            )])
+        {
+            let _ = std::fs::remove_file(&target);
+            return Err(error);
+        }
+        Ok(())
     }
-    let text = lines.join("\n") + "\n";
-    serde_yaml::from_str::<serde_yaml::Value>(&text).map_err(|e| e.to_string())?;
-    Ok(text)
 }
-pub fn import_asset(
+
+pub(super) fn preview_asset_import(
     root: &Path,
     source: &Path,
     destination: &Path,
-) -> Result<(), String> {
+) -> Result<AssetImportPlan, String> {
     use std::path::Component;
-    if destination.is_absolute()
-        || destination.components().any(|c| {
+    if !source.is_file() {
+        return Err("Choose an existing local file to import.".into());
+    }
+    if destination.as_os_str().is_empty()
+        || destination.is_absolute()
+        || destination.components().any(|component| {
             matches!(
-                c,
+                component,
                 Component::ParentDir | Component::RootDir | Component::Prefix(_)
             )
         })
     {
         return Err("Choose a destination inside the project.".into());
     }
-    let target = root.join(destination);
+    let destination = resolve_import_destination(source, destination)?;
+    let target = root.join(&destination);
     if target.exists() {
         return Err("A file already exists at the destination.".into());
     }
-    let pubspec = root.join("pubspec.yaml");
-    let original = std::fs::read_to_string(&pubspec).map_err(|e| e.to_string())?;
     let android = destination.starts_with("android")
         && destination
             .components()
@@ -770,66 +1252,61 @@ pub fn import_asset(
     if android {
         let stem = destination
             .file_stem()
-            .and_then(|s| s.to_str())
+            .and_then(|value| value.to_str())
             .unwrap_or("");
         if stem.is_empty()
-            || !stem.chars().all(|c| {
-                c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '.'
+            || !stem.chars().all(|character| {
+                character.is_ascii_lowercase()
+                    || character.is_ascii_digit()
+                    || character == '_'
+                    || character == '.'
             })
         {
             return Err("Android resource filenames must use lowercase letters, digits and underscores.".into());
         }
     }
-    let updated = if android {
-        None
+    let (pubspec_change, changes) = if android {
+        (
+            None,
+            "Android resources do not require a pubspec.yaml change.".to_string(),
+        )
     } else {
-        Some(register_asset(
+        let pubspec = root.join("pubspec.yaml");
+        let original = std::fs::read_to_string(&pubspec)
+            .map_err(|error| error.to_string())?;
+        let updated = register_asset(
             &original,
             &destination.to_string_lossy().replace('\\', "/"),
-        )?)
+        )?;
+        (
+            Some((original.clone(), updated.clone())),
+            manifest_diff(&original, &updated),
+        )
     };
-    let parent = target.parent().ok_or("Invalid destination")?;
-    let canonical_root = root.canonicalize().map_err(|e| e.to_string())?;
-    let existing = parent
-        .ancestors()
-        .find(|path| path.exists())
-        .ok_or("Invalid destination")?;
-    if !existing
-        .canonicalize()
-        .map_err(|e| e.to_string())?
-        .starts_with(&canonical_root)
-    {
-        return Err("The destination resolves outside the project.".into());
-    }
-    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    if !parent
-        .canonicalize()
-        .map_err(|e| e.to_string())?
-        .starts_with(root.canonicalize().map_err(|e| e.to_string())?)
-    {
-        return Err("The destination resolves outside the project.".into());
-    }
-    let temporary =
-        tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-    std::fs::copy(source, temporary.path()).map_err(|e| e.to_string())?;
-    temporary
-        .persist_noclobber(&target)
-        .map_err(|e| e.to_string())?;
-    let Some(updated) = updated else {
-        return Ok(());
-    };
-    if std::fs::read_to_string(&pubspec).ok().as_deref() != Some(original.as_str()) {
-        let _ = std::fs::remove_file(&target);
-        return Err(
-            "pubspec.yaml changed during import. Retry using the current manifest."
-                .into(),
-        );
-    }
-    if let Err(error) = crate::persistence::write_files(vec![(pubspec, updated)]) {
-        let _ = std::fs::remove_file(target);
-        return Err(error);
-    }
-    Ok(())
+    Ok(AssetImportPlan {
+        root: root.to_path_buf(),
+        source: source.to_path_buf(),
+        destination: destination.clone(),
+        pubspec_change,
+        details: format!(
+            "Copy {} to {}\n{changes}",
+            source.file_name().unwrap_or_default().to_string_lossy(),
+            destination.display()
+        ),
+    })
+}
+
+pub(super) fn apply_asset_import(plan: AssetImportPlan) -> Result<(), String> {
+    plan.apply()
+}
+
+pub fn import_asset(
+    root: &Path,
+    source: &Path,
+    destination: &Path,
+) -> Result<(), String> {
+    let plan = preview_asset_import(root, source, destination)?;
+    apply_asset_import(plan)
 }
 pub fn create_value(
     root: &Path,
@@ -967,6 +1444,159 @@ mod tests {
         assert!(
             import_asset(root.path(), source.path(), Path::new("assets/icon.png"))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn asset_registration_preserves_pubspec_formatting_outside_the_inserted_entry() {
+        let source = concat!(
+            "name: probe\r\n",
+            "# top-level note\r\n",
+            "flutter:\r\n",
+            "   uses-material-design: true\r\n",
+            "   assets:\r\n",
+            "      # assets header\r\n",
+            "      - 'assets/existing/' # keep inline\r\n",
+            "\r\n",
+            "      # keep later comment\r\n",
+            "   fonts:\r\n",
+            "     - family: Demo\r\n",
+            "       fonts:\r\n",
+            "         - asset: fonts/demo.ttf\r\n",
+        );
+        let expected = concat!(
+            "name: probe\r\n",
+            "# top-level note\r\n",
+            "flutter:\r\n",
+            "   uses-material-design: true\r\n",
+            "   assets:\r\n",
+            "      # assets header\r\n",
+            "      - 'assets/existing/' # keep inline\r\n",
+            "      - 'assets/new.json'\r\n",
+            "\r\n",
+            "      # keep later comment\r\n",
+            "   fonts:\r\n",
+            "     - family: Demo\r\n",
+            "       fonts:\r\n",
+            "         - asset: fonts/demo.ttf\r\n",
+        );
+        assert_eq!(register_asset(source, "assets/new.json").unwrap(), expected);
+    }
+
+    #[test]
+    fn asset_manifest_entries_can_be_renamed_and_removed_without_losing_comments() {
+        let source = concat!(
+            "name: probe\r\n",
+            "flutter:\r\n",
+            "   assets:\r\n",
+            "      - 'assets/old.png' # keep this note\r\n",
+            "   fonts:\r\n",
+            "     - family: Demo\r\n",
+            "       fonts:\r\n",
+            "         - asset: fonts/demo.ttf\r\n",
+        );
+        let renamed = edit_pubspec_asset(
+            source,
+            Some("assets/old.png"),
+            Some("assets/new.png"),
+        )
+        .unwrap();
+        assert_eq!(
+            renamed,
+            source.replace("assets/old.png", "assets/new.png")
+        );
+
+        let removed =
+            edit_pubspec_asset(&renamed, Some("assets/new.png"), None).unwrap();
+        assert_eq!(
+            removed,
+            concat!(
+                "name: probe\r\n",
+                "flutter:\r\n",
+                "   assets:\r\n",
+                "      # keep this note\r\n",
+                "   fonts:\r\n",
+                "     - family: Demo\r\n",
+                "       fonts:\r\n",
+                "         - asset: fonts/demo.ttf\r\n",
+            )
+        );
+    }
+
+    #[test]
+    fn asset_manifest_editor_is_idempotent_and_rejects_flow_style_assets() {
+        let source = "name: probe\nflutter:\n  assets:\n    - assets/old.png\n";
+        assert_eq!(
+            register_asset(source, "assets/old.png").unwrap(),
+            source
+        );
+        assert!(register_asset(
+            "name: probe\nflutter:\n  assets: [assets/old.png]\n",
+            "assets/new.png"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn asset_import_preview_is_read_only_and_folder_destination_uses_filename() {
+        let root = tempfile::tempdir().unwrap();
+        let pubspec = root.path().join("pubspec.yaml");
+        let original = "name: probe\nflutter:\n  uses-material-design: true\n";
+        std::fs::write(&pubspec, original).unwrap();
+        let source = root.path().join("outside/icon.png");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, [1_u8, 2, 3]).unwrap();
+        let plan = preview_asset_import(
+            root.path(),
+            &source,
+            Path::new("assets/"),
+        )
+        .unwrap();
+        assert!(plan.details().contains("to assets/icon.png"));
+        assert!(plan.details().contains("+     - 'assets/icon.png'"));
+        assert!(plan.details().contains("pubspec.yaml changes:"));
+        assert!(!root.path().join("assets").exists());
+        assert_eq!(std::fs::read_to_string(&pubspec).unwrap(), original);
+
+        apply_asset_import(plan)
+            .unwrap();
+        assert!(root.path().join("assets").is_dir());
+        assert!(root.path().join("assets/icon.png").is_file());
+        assert!(std::fs::read_to_string(&pubspec)
+            .unwrap()
+            .contains("assets/icon.png"));
+    }
+
+    #[test]
+    fn asset_import_plan_rejects_stale_manifest_and_new_destination_collisions() {
+        let root = tempfile::tempdir().unwrap();
+        let pubspec = root.path().join("pubspec.yaml");
+        std::fs::write(&pubspec, "name: probe\nflutter:\n  assets:\n").unwrap();
+        let source = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(source.path(), [7_u8, 8, 9]).unwrap();
+
+        let stale_plan = preview_asset_import(
+            root.path(),
+            source.path(),
+            Path::new("assets/icon.png"),
+        )
+        .unwrap();
+        std::fs::write(&pubspec, "name: changed\nflutter:\n  assets:\n").unwrap();
+        assert!(apply_asset_import(stale_plan).is_err());
+        assert!(!root.path().join("assets/icon.png").exists());
+
+        let collision_plan = preview_asset_import(
+            root.path(),
+            source.path(),
+            Path::new("assets/icon.png"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.path().join("assets")).unwrap();
+        std::fs::write(root.path().join("assets/icon.png"), "keep existing").unwrap();
+        assert!(apply_asset_import(collision_plan).is_err());
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("assets/icon.png")).unwrap(),
+            "keep existing"
         );
     }
 }

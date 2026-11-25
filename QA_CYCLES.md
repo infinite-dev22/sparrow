@@ -67,3 +67,12 @@
 - `cargo test -p sparrow-app ai_commit -- --nocapture`: 6 passed, 0 failed. No live Ollama model or desktop interaction was used.
 - `cargo test -p sparrow-app --locked -- --quiet`: 498 passed, 0 failed, 17 ignored; doc tests: 0 failures, 8 ignored. `cargo check -p sparrow-app --locked`, targeted Rust formatting, and `git diff --check` passed.
 - Cloud providers, OAuth, real consent, cancellation, style matching, and per-repository disable remain partial/unimplemented; see `BUGS.md` and `QUESTIONS.md`.
+
+## Cycle D — Resource Manager import and manifest edits
+
+- Regression fixture uses CRLF, comments, blank lines, odd indentation, an existing scalar asset entry, and fonts; it confirms add, rename, and remove affect only intended lines and preserve the inline comment.
+- Preview/apply tests confirm preview does not write, folder destinations append the source basename, application updates the file and manifest, stale manifests are rejected, and a destination occupied after preview is preserved. Flow-style asset blocks are rejected safely.
+- `cargo test -p sparrow-app --locked panel::resource_manager::tests:: -- --nocapture`: 7 passed, 0 failed. `rustfmt --edition 2024 --check --config skip_children=true sparrow-app/src/panel/resource_manager/view/import_form.rs` and `git diff --check` passed.
+- Full validation: `cargo test -p sparrow-app --locked -- --quiet` — 503 passed, 0 failed, 17 ignored; doctests had 0 failures, 8 ignored. `cargo check -p sparrow-app --locked` passed.
+- The upstream `android/ui.resourcemanager/` source could not be fetched because DNS resolution timed out; the official Android Resource Manager guide was reviewed and confirms drag-and-drop and bulk import conventions.
+- No GUI, drag-and-drop, Flutter build/pub-get, font registration, or real project test was run. Batch import, conflict choices, undo, full asset management, and visual acceptance remain open; see `OVERNIGHT_LOG.md`, `BUGS.md`, and `QUESTIONS.md`.

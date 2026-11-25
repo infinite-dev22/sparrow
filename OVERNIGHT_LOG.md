@@ -177,3 +177,38 @@
 - Six focused tests pass: selected paths/exclusions/redaction/capping, bounded path-scoped tracked diff and traversal rejection, private-key/authorization/key redaction, loopback-only validation, subject cleanup, and a local Ollama mock for model discovery/completion. UI visual acceptance and real Ollama execution were not available.
 - Final verification: `cargo test -p sparrow-app --locked -- --quiet` passed (498 passed, 0 failed, 17 ignored; doc tests 0 failed, 8 ignored); `cargo check -p sparrow-app --locked`, targeted `rustfmt --check`, and `git diff --check` passed. Three existing unused-import/dead-code warnings remain in the pre-existing welcome/input/branch-switcher code.
 - Still partial: OpenRouter PKCE, GitHub Models, BYO/OpenAI-compatible cloud endpoints with consent/keyring, streaming and cancellation, per-repository disable, recent-commit style matching, provider-specific terms, and the manual live-provider script. The panel's Close hides its preview but cannot interrupt a blocking inference request; the local request has a 90-second timeout.
+
+## Workstream D — Resource Manager audit and plan
+
+### Audit
+
+- The panel scans Flutter assets and fonts declared in `pubspec.yaml`, plus Android drawable/value resources; it provides list/grid views, filters, thumbnails, variant grouping, open/find/reveal actions, and Android resource previews.
+- Existing writes include a single-file Flutter asset import, Android resource import, new Android color/string values, Android resource rename with an explicit reference preview, and file rename delegated to Project Explorer.
+- Before this checkpoint, asset import accepted manually entered source/destination paths, rejected traversal and collisions, and added a `flutter.assets` entry. It lacked a picker, batch import, conflict policy, undo, and visible manifest diff; fonts were scanned but not registered by the import path.
+- Baseline `register_asset` validated with `serde_yaml` then inserted at a hard-coded indentation. A valid list with unusual indentation could become invalid YAML, and rebuilding the file normalized CRLF/no-final-newline formatting. The prior code had no D3 fixture covering add/remove/rename, comments, blank lines, unusual indentation, and an existing assets block.
+- The official Android Resource Manager guide confirms drag-and-drop and bulk import conventions. The requested upstream source directory could not be fetched because DNS/network resolution timed out; no Android Studio code was copied.
+
+### Plan
+
+1. Add a failing formatting-preservation regression for an existing block-style asset list using comments, blank lines, unusual indentation, and CRLF. — Done; the baseline inserted a misindented list item and failed YAML validation.
+2. Replace the line reconstruction with a surgical block-list editor for asset add/remove/rename; preserve surrounding bytes, validate the resulting YAML, and reject unsupported flow-style manifests rather than rewriting them. — Done for scalar entries in block-style `flutter.assets` lists.
+3. Use the resulting helper in the asset import flow and test add/remove/rename on the same fixture. Then document which D capabilities remain incomplete and provide a short manual script. — Single-file preview/apply flow and tests done; full D remains partial.
+
+### D implementation and verification
+
+- The import dialog now has a local-file picker and a two-step Preview changes / Apply import flow. The preview shows the resolved destination and a focused `pubspec.yaml` diff; the exact plan is retained and applied only after confirmation.
+- Applying rechecks the target and manifest snapshot, rejects path traversal and collisions, copies through a temporary file with no-clobber semantics, then writes the manifest atomically. Folder destinations append the chosen source filename; existing collisions are refused rather than overwritten.
+- `flutter.assets` add/remove/rename edits preserve CRLF, unrelated comments, ordering, blank lines, quotes, and unusual indentation in the regression fixture. Unsupported flow-style manifests are rejected. The helper is currently exercised for add by import; rename/remove UI integration is not yet done.
+- Focused verification: `cargo test -p sparrow-app --locked panel::resource_manager::tests:: -- --nocapture` — 7 passed, 0 failed. The tests cover surgical add/rename/remove, duplicate idempotency, flow-style rejection, preview read-only behavior, plan application, stale-manifest rejection, post-preview collision, and existing inventory/import behavior.
+- Full verification: `cargo test -p sparrow-app --locked -- --quiet` — 503 passed, 0 failed, 17 ignored; doctests had 0 failures and 8 ignored. `cargo check -p sparrow-app --locked`, edited-dialog `rustfmt --check`, and `git diff --check` passed; the three warnings are pre-existing in `welcome.rs`, `text_input.rs`, and `branch_switcher.rs`.
+- UI visual/drag-drop behavior and actual Flutter consumption were not tested. No `flutter pub get` was run; the current import flow does not yet offer to run it.
+
+### D manual verification script (not run in this environment)
+
+1. Open a local Flutter project in Sparrow, open Resource Manager, choose Import, select an image outside the project, and set destination to `assets/`.
+2. Choose Preview changes; verify it shows `assets/<filename>`, a single added `flutter.assets` line, and no new project file or manifest write yet.
+3. Apply the import; verify the file appears under the destination, the manifest changes once, and the Resource Manager inventory refreshes.
+4. Repeat with an occupied destination and with `flutter.assets` in flow style; both should stop before writing and explain the conflict/unsupported format.
+5. In a disposable project, use a CRLF manifest with comments/blank lines and verify surrounding bytes stay unchanged. Then open the imported resource and check the app with Flutter.
+
+- Still outstanding for D: multiple-file import, drag-and-drop, type-specific destination defaults, skip/replace/keep-both conflict choices, folder registration strategy, font family/weight/style registration, resolution variants in the editor, asset rename/reference preview, replace/delete/duplicate, session undo/trash cleanup, built-in image editing, transparency checkerboard/zoom, font preview, and an explicit `flutter pub get` offer. See `BUGS.md` and `QUESTIONS.md`.
