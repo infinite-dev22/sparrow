@@ -1138,6 +1138,45 @@ fn resolve_import_destination(source: &Path, destination: &Path) -> Result<PathB
     }
 }
 
+fn keep_both_destination(
+    root: &Path,
+    destination: &Path,
+    planned_destinations: &HashSet<PathBuf>,
+) -> Result<PathBuf, String> {
+    let stem = destination
+        .file_stem()
+        .ok_or("The destination file has no name")?;
+    let extension = destination.extension();
+    for suffix in 2_u64.. {
+        let mut filename = stem.to_os_string();
+        filename.push(format!("_{suffix}"));
+        if let Some(extension) = extension {
+            filename.push(".");
+            filename.push(extension);
+        }
+        let candidate = destination.with_file_name(filename);
+        if !root.join(&candidate).exists() && !planned_destinations.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err("Could not find an unused destination filename.".into())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum AssetImportConflictPolicy {
+    Skip,
+    KeepBoth,
+}
+
+impl std::fmt::Display for AssetImportConflictPolicy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Skip => "Skip",
+            Self::KeepBoth => "Keep both",
+        })
+    }
+}
+
 #[derive(Clone)]
 struct AssetImportEntry {
     source: PathBuf,
@@ -1156,6 +1195,12 @@ pub(super) struct AssetImportPlan {
 impl AssetImportPlan {
     pub(super) fn details(&self) -> &str {
         &self.details
+    }
+
+    pub(super) fn changes_pubspec(&self) -> bool {
+        self.pubspec_change
+            .as_ref()
+            .is_some_and(|(original, updated)| original != updated)
     }
 
     fn apply(&self) -> Result<(), String> {
@@ -1270,6 +1315,20 @@ pub(super) fn preview_asset_import_batch(
     sources: &[PathBuf],
     destination: &Path,
 ) -> Result<AssetImportPlan, String> {
+    preview_asset_import_batch_with_policy(
+        root,
+        sources,
+        destination,
+        AssetImportConflictPolicy::Skip,
+    )
+}
+
+pub(super) fn preview_asset_import_batch_with_policy(
+    root: &Path,
+    sources: &[PathBuf],
+    destination: &Path,
+    conflict_policy: AssetImportConflictPolicy,
+) -> Result<AssetImportPlan, String> {
     use std::path::Component;
     if sources.is_empty() {
         return Err("Choose one or more existing local files to import.".into());
@@ -1295,7 +1354,18 @@ pub(super) fn preview_asset_import_batch(
         if !source.is_file() {
             return Err(format!("Choose an existing local file to import: {}", source.display()));
         }
-        let entry_destination = resolve_import_destination(source, destination)?;
+        let requested_destination = resolve_import_destination(source, destination)?;
+        let conflict = root.join(&requested_destination).exists()
+            || planned_destinations.contains(&requested_destination);
+        let (entry_destination, skipped) = match (conflict_policy, conflict) {
+            (AssetImportConflictPolicy::Skip, true) => (requested_destination, true),
+            (AssetImportConflictPolicy::KeepBoth, true) => (
+                keep_both_destination(root, &requested_destination, &planned_destinations)?,
+                false,
+            ),
+            (_, false) => (requested_destination, false),
+        };
+        planned_destinations.insert(entry_destination.clone());
         let android = entry_destination.starts_with("android")
             && entry_destination
                 .components()
@@ -1316,9 +1386,6 @@ pub(super) fn preview_asset_import_batch(
                 return Err("Android resource filenames must use lowercase letters, digits and underscores.".into());
             }
         }
-        let target_exists = root.join(&entry_destination).exists();
-        let duplicate_destination = !planned_destinations.insert(entry_destination.clone());
-        let skipped = target_exists || duplicate_destination;
         let name = source.file_name().unwrap_or_default().to_string_lossy();
         if skipped {
             skipped_count += 1;
@@ -1328,7 +1395,14 @@ pub(super) fn preview_asset_import_batch(
             ));
         } else {
             copied_count += 1;
-            details.push(format!("Copy {name} to {}", entry_destination.display()));
+            if conflict {
+                details.push(format!(
+                    "Keep both {name} → {}",
+                    entry_destination.display()
+                ));
+            } else {
+                details.push(format!("Copy {name} to {}", entry_destination.display()));
+            }
             if !android {
                 let pubspec = root.join("pubspec.yaml");
                 let (original, current) = match &manifest {
@@ -1627,6 +1701,7 @@ mod tests {
             Path::new("assets/"),
         )
         .unwrap();
+        assert!(plan.changes_pubspec());
         assert!(plan.details().contains("to assets/icon.png"));
         assert!(plan.details().contains("+     - 'assets/icon.png'"));
         assert!(plan.details().contains("pubspec.yaml changes:"));
@@ -1640,6 +1715,24 @@ mod tests {
         assert!(std::fs::read_to_string(&pubspec)
             .unwrap()
             .contains("assets/icon.png"));
+    }
+
+    #[test]
+    fn asset_import_does_not_offer_pub_get_when_manifest_is_unchanged() {
+        let root = tempfile::tempdir().unwrap();
+        let pubspec = root.path().join("pubspec.yaml");
+        std::fs::write(
+            &pubspec,
+            "name: probe\nflutter:\n  assets:\n    - assets/icon.png\n",
+        )
+        .unwrap();
+        let source = root.path().join("outside/icon.png");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, [1_u8, 2, 3]).unwrap();
+
+        let plan = preview_asset_import(root.path(), &source, Path::new("assets/")).unwrap();
+
+        assert!(!plan.changes_pubspec());
     }
 
     #[test]
@@ -1682,6 +1775,76 @@ mod tests {
         let manifest = std::fs::read_to_string(pubspec).unwrap();
         assert!(manifest.contains("assets/fresh.png"));
         assert!(!manifest.contains("assets/existing.png"));
+    }
+
+    #[test]
+    fn batch_asset_import_keep_both_suffixes_existing_and_duplicate_names() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = tempfile::tempdir().unwrap();
+        let pubspec = root.path().join("pubspec.yaml");
+        std::fs::write(&pubspec, "name: probe\nflutter:\n  assets:\n").unwrap();
+        let assets = root.path().join("assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::write(assets.join("icon.png"), "keep original").unwrap();
+        std::fs::write(assets.join("icon_2.png"), "keep suffix").unwrap();
+        let first_source = sources.path().join("first/icon.png");
+        let second_source = sources.path().join("second/icon.png");
+        std::fs::create_dir_all(first_source.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(second_source.parent().unwrap()).unwrap();
+        std::fs::write(&first_source, "first import").unwrap();
+        std::fs::write(&second_source, "second import").unwrap();
+
+        let plan = preview_asset_import_batch_with_policy(
+            root.path(),
+            &[first_source, second_source],
+            Path::new("assets/"),
+            AssetImportConflictPolicy::KeepBoth,
+        )
+        .unwrap();
+        assert!(plan.details().contains("Keep both icon.png → assets/icon_3.png"));
+        assert!(plan.details().contains("Keep both icon.png → assets/icon_4.png"));
+        assert!(plan.details().contains("2 file(s) to copy; 0 skipped."));
+        apply_asset_import(plan).unwrap();
+
+        assert_eq!(std::fs::read_to_string(assets.join("icon.png")).unwrap(), "keep original");
+        assert_eq!(std::fs::read_to_string(assets.join("icon_2.png")).unwrap(), "keep suffix");
+        assert_eq!(std::fs::read_to_string(assets.join("icon_3.png")).unwrap(), "first import");
+        assert_eq!(std::fs::read_to_string(assets.join("icon_4.png")).unwrap(), "second import");
+        let manifest = std::fs::read_to_string(pubspec).unwrap();
+        assert!(manifest.contains("assets/icon_3.png"));
+        assert!(manifest.contains("assets/icon_4.png"));
+        assert!(!manifest.contains("assets/icon.png"));
+    }
+
+    #[test]
+    fn keep_both_import_rejects_a_collision_created_after_preview() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = tempfile::tempdir().unwrap();
+        let pubspec = root.path().join("pubspec.yaml");
+        let original_manifest = "name: probe\nflutter:\n  assets:\n";
+        std::fs::write(&pubspec, original_manifest).unwrap();
+        let assets = root.path().join("assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::write(assets.join("icon.png"), "keep original").unwrap();
+        let source = sources.path().join("icon.png");
+        std::fs::write(&source, "import").unwrap();
+
+        let plan = preview_asset_import_batch_with_policy(
+            root.path(),
+            &[source],
+            Path::new("assets/"),
+            AssetImportConflictPolicy::KeepBoth,
+        )
+        .unwrap();
+        assert!(plan.details().contains("assets/icon_2.png"));
+        std::fs::write(assets.join("icon_2.png"), "appeared after preview").unwrap();
+
+        assert!(apply_asset_import(plan).is_err());
+        assert_eq!(
+            std::fs::read_to_string(assets.join("icon_2.png")).unwrap(),
+            "appeared after preview"
+        );
+        assert_eq!(std::fs::read_to_string(pubspec).unwrap(), original_manifest);
     }
 
     #[test]

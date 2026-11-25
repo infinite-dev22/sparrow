@@ -1,8 +1,8 @@
 //! Resource imports and new Android resource values.
 
 use crate::panel::resource_manager::{
-    AssetImportPlan, Kind, apply_asset_import, create_value,
-    preview_asset_import_batch,
+    AssetImportConflictPolicy, AssetImportPlan, Kind, apply_asset_import,
+    create_value, preview_asset_import_batch_with_policy,
 };
 use crate::{
     config::color::SparrowColor,
@@ -27,6 +27,15 @@ use std::{
     rc::Rc,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PubGetState {
+    Hidden,
+    Offer,
+    Running,
+    Complete,
+    Failed,
+}
+
 #[derive(Clone, Copy)]
 pub(super) struct ImportForm {
     import_open: RwSignal<bool>,
@@ -34,10 +43,12 @@ pub(super) struct ImportForm {
     source: RwSignal<String>,
     selected_sources: RwSignal<Vec<PathBuf>>,
     destination: RwSignal<String>,
+    conflict_policy: RwSignal<AssetImportConflictPolicy>,
     error: RwSignal<String>,
     preview: RwSignal<String>,
     pending_plan: RwSignal<Option<AssetImportPlan>>,
     importing: RwSignal<bool>,
+    pub_get_state: RwSignal<PubGetState>,
 }
 
 fn source_selection_label(paths: &[PathBuf]) -> String {
@@ -91,10 +102,12 @@ impl ImportForm {
             source: create_rw_signal(String::new()),
             selected_sources: create_rw_signal(Vec::new()),
             destination: create_rw_signal(String::from("assets/")),
+            conflict_policy: create_rw_signal(AssetImportConflictPolicy::Skip),
             error: create_rw_signal(String::new()),
             preview: create_rw_signal(String::new()),
             pending_plan: create_rw_signal(None),
             importing: create_rw_signal(false),
+            pub_get_state: create_rw_signal(PubGetState::Hidden),
         }
     }
 
@@ -103,9 +116,11 @@ impl ImportForm {
         self.source.set(source.into());
         self.selected_sources.set(Vec::new());
         self.destination.set(destination.into());
+        self.conflict_policy.set(AssetImportConflictPolicy::Skip);
         self.error.set(String::new());
         self.preview.set(String::new());
         self.pending_plan.set(None);
+        self.pub_get_state.set(PubGetState::Hidden);
         self.import_open.set(true);
     }
 
@@ -123,18 +138,53 @@ impl ImportForm {
             source,
             selected_sources,
             destination,
+            conflict_policy,
             error,
             preview,
             pending_plan,
             importing,
+            pub_get_state,
         } = self;
         let config = window.common.config;
         create_effect(move |_| {
             source.get();
             destination.get();
+            conflict_policy.get();
             preview.set(String::new());
             pending_plan.set(None);
         });
+        let pub_get_root = import_root.clone();
+        let start_pub_get = move || {
+            let Some(root) = pub_get_root.clone() else {
+                error.set(
+                    "Open a local Flutter project to resolve its packages.".into(),
+                );
+                pub_get_state.set(PubGetState::Failed);
+                return;
+            };
+            pub_get_state.set(PubGetState::Running);
+            error.set("Running flutter pub get…".into());
+            let send =
+                floem::ext_event::create_ext_action(
+                    scope,
+                    move |result| match result {
+                        Ok(()) => {
+                            error.set(
+                                "flutter pub get completed successfully.".into(),
+                            );
+                            pub_get_state.set(PubGetState::Complete);
+                        }
+                        Err(message) => {
+                            error.set(message);
+                            pub_get_state.set(PubGetState::Failed);
+                        }
+                    },
+                );
+            crate::dart::run_pub_get(
+                &root,
+                Some(Box::new(move |result| send(result))),
+            );
+        };
         let browse_source = source;
         let browse_preview = preview;
         let browse = crate::widgets::compact_button(
@@ -182,16 +232,75 @@ impl ImportForm {
                 text_input(destination, config)
                 .placeholder("Destination path / resource name")
                 .disabled(move || importing.get()),
+            stack((
+                label(|| "If a name already exists:"),
+                crate::widgets::radio_group(
+                    conflict_policy,
+                    [
+                        AssetImportConflictPolicy::Skip,
+                        AssetImportConflictPolicy::KeepBoth,
+                    ],
+                    config,
+                ),
+                label(|| "Keep both adds _2, _3, and so on before the extension; files are never replaced."),
+            ))
+            .style(move |s| {
+                s.flex_col()
+                    .gap(4.0)
+                    .apply_if(create_kind.get().is_some(), |s| s.hide())
+            }),
             sparrow_scroll(label(move || preview.get()))
                 .style(move |s| s.width_full().max_height(180.0).apply_if(preview.get().is_empty(), |s| s.hide())),
             label(move || error.get()),
             crate::widgets::action_group((
-                crate::widgets::compact_button(|| "Cancel", crate::widgets::ButtonKind::Outlined, config)
-                    .disabled(move || importing.get())
-                    .on_click_stop(move |_| import_open.set(false)),
-                crate::widgets::compact_button(move ||if create_kind.get().is_some(){"Create"}else if pending_plan.get().is_some(){"Apply import"}else{"Preview changes"}, crate::widgets::ButtonKind::Primary, config)
-                    .disabled(move || importing.get())
+                crate::widgets::compact_button(
+                    move || match pub_get_state.get() {
+                        PubGetState::Offer | PubGetState::Failed => "Not now",
+                        PubGetState::Complete => "Close",
+                        _ => "Cancel",
+                    },
+                    crate::widgets::ButtonKind::Outlined,
+                    config,
+                )
+                    .disabled(move || importing.get() || pub_get_state.get() == PubGetState::Running)
                     .on_click_stop(move |_| {
+                        pub_get_state.set(PubGetState::Hidden);
+                        import_open.set(false);
+                    }),
+                crate::widgets::compact_button(
+                    move || match pub_get_state.get() {
+                        PubGetState::Offer => "Run flutter pub get",
+                        PubGetState::Running => "Resolving dependencies…",
+                        PubGetState::Complete => "Close",
+                        PubGetState::Failed => "Retry flutter pub get",
+                        PubGetState::Hidden => {
+                            if create_kind.get().is_some() {
+                                "Create"
+                            } else if pending_plan.get().is_some() {
+                                "Apply import"
+                            } else {
+                                "Preview changes"
+                            }
+                        }
+                    },
+                    crate::widgets::ButtonKind::Primary,
+                    config,
+                )
+                    .disabled(move || importing.get() || pub_get_state.get() == PubGetState::Running)
+                    .on_click_stop(move |_| {
+                    match pub_get_state.get_untracked() {
+                        PubGetState::Offer | PubGetState::Failed => {
+                            start_pub_get();
+                            return;
+                        }
+                        PubGetState::Running => return,
+                        PubGetState::Complete => {
+                            pub_get_state.set(PubGetState::Hidden);
+                            import_open.set(false);
+                            return;
+                        }
+                        PubGetState::Hidden => {}
+                    }
                     let Some(root) = import_root.clone() else {
                         return;
                     };
@@ -218,21 +327,8 @@ impl ImportForm {
                     let source_value = source_signal.get_untracked();
                     let destination_value = destination_signal.get_untracked();
                     let selected_source_paths = selected_sources.get_untracked();
-                    let source_paths = if !selected_source_paths.is_empty()
-                        && (source_value == format!("{} files selected", selected_source_paths.len())
-                            || (selected_source_paths.len() == 1
-                                && source_value
-                                    == selected_source_paths[0].to_string_lossy().as_ref()))
-                    {
-                        selected_source_paths.clone()
-                    } else {
-                        source_value
-                            .lines()
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .map(PathBuf::from)
-                            .collect()
-                    };
+                    let source_paths =
+                        source_paths_from_input(&source_value, &selected_source_paths);
                     let create=create_kind.get_untracked();let selected_module=module.get_untracked();
                     let selected_plan = pending_plan.get_untracked();
                     if create.is_none() && selected_plan.is_none() {
@@ -241,10 +337,12 @@ impl ImportForm {
                         let requested_source = source_value.clone();
                         let requested_destination = destination_value.clone();
                         let requested_sources = selected_source_paths.clone();
+                        let requested_policy = conflict_policy.get_untracked();
                         let root = root.clone();
                         let current_source = source_signal;
                         let current_destination = destination_signal;
                         let current_sources = selected_sources;
+                        let current_policy = conflict_policy;
                         let send = floem::ext_event::create_ext_action(
                             scope,
                             move |result: Result<AssetImportPlan, String>| {
@@ -253,6 +351,7 @@ impl ImportForm {
                                     || current_destination.get_untracked()
                                         != requested_destination
                                     || current_sources.get_untracked() != requested_sources
+                                    || current_policy.get_untracked() != requested_policy
                                 {
                                     return;
                                 }
@@ -267,24 +366,35 @@ impl ImportForm {
                             },
                         );
                         std::thread::spawn(move || {
-                            send(preview_asset_import_batch(
+                            send(preview_asset_import_batch_with_policy(
                                 &root,
                                 &source_paths,
                                 Path::new(&destination_value),
+                                requested_policy,
                             ));
                         });
                         return;
                     }
                     importing.set(true);
                     error.set("Importing…".into());
+                    let should_offer_pub_get = selected_plan
+                        .as_ref()
+                        .is_some_and(AssetImportPlan::changes_pubspec);
                     let send = floem::ext_event::create_ext_action(
                         scope,
                         move |result: Result<(), String>| {
                             importing.set(false);
                             match result {
                                 Ok(()) => {
-                                    import_open.set(false);
-                                    error.set(String::new());
+                                    if should_offer_pub_get {
+                                        pub_get_state.set(PubGetState::Offer);
+                                        error.set(
+                                            "Import complete. Run flutter pub get to refresh package resolution, or choose Not now.".into(),
+                                        );
+                                    } else {
+                                        import_open.set(false);
+                                        error.set(String::new());
+                                    }
                                     preview.set(String::new());
                                     pending_plan.set(None);
                                     refresh.update(|n| *n += 1);
