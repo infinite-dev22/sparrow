@@ -15,6 +15,7 @@ use crate::{
 };
 use floem::{
     View,
+    event::{Event, EventListener, EventPropagation},
     reactive::{
         RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_effect,
         create_rw_signal,
@@ -37,6 +38,49 @@ pub(super) struct ImportForm {
     preview: RwSignal<String>,
     pending_plan: RwSignal<Option<AssetImportPlan>>,
     importing: RwSignal<bool>,
+}
+
+fn source_selection_label(paths: &[PathBuf]) -> String {
+    match paths {
+        [path] => path.to_string_lossy().into_owned(),
+        [] => String::new(),
+        paths => format!("{} files selected", paths.len()),
+    }
+}
+
+fn source_selection_matches(label: &str, paths: &[PathBuf]) -> bool {
+    match paths {
+        [path] => label == path.to_string_lossy(),
+        [] => false,
+        paths => label == format!("{} files selected", paths.len()),
+    }
+}
+
+fn source_paths_from_input(source: &str, selected: &[PathBuf]) -> Vec<PathBuf> {
+    if source_selection_matches(source, selected) {
+        selected.to_vec()
+    } else {
+        source
+            .lines()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .collect()
+    }
+}
+
+fn append_dropped_source(
+    paths: &mut Vec<PathBuf>,
+    path: PathBuf,
+) -> Result<bool, String> {
+    if !path.is_file() {
+        return Err(format!("Drop a file, not a folder: {}", path.display()));
+    }
+    if paths.contains(&path) {
+        return Ok(false);
+    }
+    paths.push(path);
+    Ok(true)
 }
 
 impl ImportForm {
@@ -112,11 +156,7 @@ impl ImportForm {
                     if let Some(paths) = info.map(|info| info.path().clone())
                         && !paths.is_empty()
                     {
-                        let source_label = if paths.len() == 1 {
-                            paths[0].to_string_lossy().into_owned()
-                        } else {
-                            format!("{} files selected", paths.len())
-                        };
+                        let source_label = source_selection_label(&paths);
                         selected_sources.set(paths);
                         source.set(source_label);
                         preview.set(String::new());
@@ -134,10 +174,12 @@ impl ImportForm {
                     .placeholder("Source file path / resource value; Browse supports multiple files")
                     .disabled(move || importing.get())
                     .style(|s| s.flex_grow(1.0_f32).min_width(0.0)),
-                browse,
-            ))
-            .style(|s| s.width_full().items_center().gap(6.0)),
-            text_input(destination, config)
+                    browse,
+                ))
+                .style(|s| s.width_full().items_center().gap(6.0)),
+                label(|| "Drop one or more files anywhere in this dialog, or use Browse…")
+                    .style(move |s| s.apply_if(create_kind.get().is_some(), |s| s.hide())),
+                text_input(destination, config)
                 .placeholder("Destination path / resource name")
                 .disabled(move || importing.get()),
             sparrow_scroll(label(move || preview.get()))
@@ -269,6 +311,39 @@ impl ImportForm {
                 }),
             )),
         ))
+        .on_event(EventListener::DroppedFile, move |event| {
+            if !import_open.get_untracked() {
+                return EventPropagation::Continue;
+            }
+            let Event::DroppedFile(file) = event else {
+                return EventPropagation::Continue;
+            };
+            if create_kind.get_untracked().is_some() {
+                error.set("File drops are available while importing resources.".into());
+            } else if importing.get_untracked() {
+                error.set("Wait for the current import operation to finish before adding files.".into());
+            } else {
+                let mut paths = source_paths_from_input(
+                    &source.get_untracked(),
+                    &selected_sources.get_untracked(),
+                );
+                match append_dropped_source(&mut paths, file.path.clone()) {
+                    Ok(added) => {
+                        source.set(source_selection_label(&paths));
+                        selected_sources.set(paths);
+                        preview.set(String::new());
+                        pending_plan.set(None);
+                        error.set(if added {
+                            "File added. Preview the changes before applying the import.".into()
+                        } else {
+                            "That file is already selected.".into()
+                        });
+                    }
+                    Err(message) => error.set(message),
+                }
+            }
+            EventPropagation::Stop
+        })
         .style(move |s| {
             s.absolute()
                 .inset_left(12.0)
@@ -284,5 +359,49 @@ impl ImportForm {
                 .z_index(50)
                 .apply_if(!import_open.get(), |s| s.hide())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropped_sources_are_deduplicated_and_folders_are_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("image.png");
+        std::fs::write(&file, b"image").unwrap();
+        let mut sources = Vec::new();
+
+        assert_eq!(append_dropped_source(&mut sources, file.clone()), Ok(true));
+        assert_eq!(append_dropped_source(&mut sources, file.clone()), Ok(false));
+        assert_eq!(sources, vec![file]);
+        assert!(
+            append_dropped_source(&mut sources, directory.path().to_path_buf())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn source_selection_labels_round_trip_without_losing_manual_paths() {
+        let first = PathBuf::from("/tmp/first.png");
+        let second = PathBuf::from("/tmp/second.json");
+        let paths = vec![first.clone(), second.clone()];
+
+        let label = source_selection_label(&paths);
+        assert_eq!(label, "2 files selected");
+        assert!(source_selection_matches(&label, &paths));
+        assert_eq!(source_paths_from_input(&label, &paths), paths);
+        assert_eq!(
+            source_selection_label(std::slice::from_ref(&first)),
+            first.to_string_lossy()
+        );
+        assert_eq!(
+            source_paths_from_input("/tmp/manual.png\n/tmp/other.json", &[]),
+            vec![
+                PathBuf::from("/tmp/manual.png"),
+                PathBuf::from("/tmp/other.json")
+            ]
+        );
     }
 }
