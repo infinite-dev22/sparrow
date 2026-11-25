@@ -17,6 +17,7 @@ use crate::{
 };
 
 use super::{
+    device::{CutoutShape, NavigationIndicator},
     files,
     renderer::Input,
     session::{App, Screen, Session},
@@ -24,13 +25,40 @@ use super::{
 
 pub(super) type Config = ReadSignal<Arc<SparrowConfig>>;
 
-pub(super) fn phone(session: Session, available: RwSignal<f64>, config: Config) -> impl View {
+pub(super) fn phone(
+    session: Session,
+    available: RwSignal<f64>,
+    config: Config,
+) -> impl View {
     let screen = session.screen;
     let content = session.clone();
     let sizing = session.clone();
     let dark = session.dark;
     let status = session.clone();
     let nav = session.clone();
+    let cutout_state = session.clone();
+    let frame_state = session.clone();
+    let cutout = dyn_container(
+        move || {
+            cutout_state
+                .device
+                .get()
+                .device()
+                .map(|device| device.cutout)
+        },
+        move |shape| match shape {
+            Some(shape) => cutout_shape(shape).into_any(),
+            None => empty().into_any(),
+        },
+    )
+    .style(|s| {
+        s.absolute()
+            .inset_top(0)
+            .width_full()
+            .height(32.0)
+            .items_center()
+            .pointer_events_none()
+    });
     let screen_body = dyn_container(
         move || screen.get(),
         move |screen| match screen {
@@ -52,24 +80,34 @@ pub(super) fn phone(session: Session, available: RwSignal<f64>, config: Config) 
         stack((
             screen_body,
             stack((
-                label(|| "Simulated device").style(|s| s.font_size(10).selectable(false)),
+                label(|| "Simulated device")
+                    .style(|s| s.font_size(10).selectable(false)),
                 empty().style(|s| s.flex_grow(1.0_f32)),
-                label(move || if dark.get() { "Dark" } else { "Light" }).style(|s| s.font_size(10)),
+                label(move || if dark.get() { "Dark" } else { "Light" })
+                    .style(|s| s.font_size(10)),
             ))
             .style(move |s| {
                 s.absolute()
                     .inset_top(0)
                     .width_full()
-                    .height(23)
+                    .height(
+                        status
+                            .device
+                            .get()
+                            .device()
+                            .map_or(24.0, |device| device.status_bar_height),
+                    )
                     .padding_horiz(12.0)
                     .items_center()
                     .pointer_events_none()
                     .background(chrome(dark.get()))
                     .color(foreground(dark.get()))
-                    .apply_if(!status.status_sticky.get() && !status.bars.get(), |s| {
-                        s.hide()
-                    })
+                    .apply_if(
+                        !status.status_sticky.get() && !status.bars.get(),
+                        |s| s.hide(),
+                    )
             }),
+            cutout,
             navigation(nav, config),
         ))
         .style(|s| s.size_full()),
@@ -78,12 +116,25 @@ pub(super) fn phone(session: Session, available: RwSignal<f64>, config: Config) 
         let (w, h) = sizing.viewport().map(|v| v.size).unwrap_or((400, 800));
         let width = available.get().min(520.0);
         let scale = (width / f64::from(w)).min(700.0 / f64::from(h));
+        let (corner_radius, frame_color) = frame_state.device.get().device().map_or(
+            (22.0, Color::from_rgb8(65, 69, 77)),
+            |device| {
+                (
+                    device.corner_radius,
+                    Color::from_rgb8(
+                        device.frame_color.0,
+                        device.frame_color.1,
+                        device.frame_color.2,
+                    ),
+                )
+            },
+        );
         s.width(f64::from(w) * scale)
             .height(f64::from(h) * scale)
             .min_width(0)
             .border(3.0)
-            .border_radius(22.0)
-            .border_color(Color::from_rgb8(65, 69, 77))
+            .border_radius(corner_radius)
+            .border_color(frame_color)
             .background(chrome(dark.get()))
             .color(foreground(dark.get()))
     });
@@ -98,6 +149,20 @@ pub(super) fn phone(session: Session, available: RwSignal<f64>, config: Config) 
         {
             session.reveal_bars();
         }
+    })
+}
+
+fn cutout_shape(shape: CutoutShape) -> impl View {
+    let (width, height, radius) = match shape {
+        CutoutShape::None => (0.0, 0.0, 0.0),
+        CutoutShape::Notch => (116.0, 30.0, 12.0),
+        CutoutShape::Pill => (104.0, 30.0, 15.0),
+        CutoutShape::PunchHole => (12.0, 12.0, 6.0),
+    };
+    empty().style(move |s| {
+        s.size(width, height)
+            .border_radius(radius)
+            .background(Color::from_rgb8(12, 14, 18))
     })
 }
 
@@ -174,8 +239,9 @@ fn recents(session: Session, config: Config) -> impl View {
                         app.url.clone()
                     };
                     crate::widgets::button_with_content(
-                        label(move || title.clone())
-                            .style(|s| s.text_ellipsis().width_full().selectable(false)),
+                        label(move || title.clone()).style(|s| {
+                            s.text_ellipsis().width_full().selectable(false)
+                        }),
                         ButtonKind::Outlined,
                         config,
                     )
@@ -206,23 +272,72 @@ fn navigation(session: Session, config: Config) -> impl View {
     let screen = session.screen;
     let gestures = session.gestures;
     let dark = session.dark;
+    let indicator_state = session.clone();
+    let sizing = session.clone();
     let sticky = session.navigation_sticky;
     let bars = session.bars;
     let back = session.clone();
     let origin = Rc::new(Cell::new(None::<Point>));
     let start = origin.clone();
+    let indicator = dyn_container(
+        move || {
+            indicator_state
+                .device
+                .get()
+                .device()
+                .map(|device| device.navigation)
+        },
+        move |indicator| match indicator.unwrap_or(NavigationIndicator::GesturePill)
+        {
+            NavigationIndicator::HomeIndicator => empty()
+                .style(move |s| {
+                    s.size(108, 4)
+                        .border_radius(2)
+                        .background(foreground(dark.get()))
+                })
+                .into_any(),
+            NavigationIndicator::GesturePill => empty()
+                .style(move |s| {
+                    s.size(65, 4)
+                        .border_radius(2)
+                        .background(foreground(dark.get()))
+                })
+                .into_any(),
+            NavigationIndicator::NavigationBar => stack((
+                empty().style(move |s| {
+                    s.size(13, 3)
+                        .border_radius(2)
+                        .background(foreground(dark.get()))
+                }),
+                empty().style(move |s| {
+                    s.size(13, 3)
+                        .border_radius(2)
+                        .background(foreground(dark.get()))
+                }),
+                empty().style(move |s| {
+                    s.size(13, 3)
+                        .border_radius(2)
+                        .background(foreground(dark.get()))
+                }),
+            ))
+            .style(|s| s.gap(8.0).items_center())
+            .into_any(),
+        },
+    );
     let pill = tooltip_label(
         config,
-        empty().style(move |s| {
-            s.size(65, 4)
-                .border_radius(2)
-                .background(foreground(dark.get()))
-        }),
+        indicator,
         || "Tap for Home · Swipe up for Recent apps",
     );
     let gesture = stack((pill,)).style(move |s| {
         s.width_full()
-            .height(31.0)
+            .height(
+                sizing
+                    .device
+                    .get()
+                    .device()
+                    .map_or(31.0, |device| device.navigation_height),
+            )
             .flex_shrink(0.0_f32)
             .justify_center()
             .items_center()
@@ -249,7 +364,8 @@ fn navigation(session: Session, config: Config) -> impl View {
         });
     stack((
         stack((
-            button(|| "Back", ButtonKind::Plain, config).on_click_stop(move |_| back.back()),
+            button(|| "Back", ButtonKind::Plain, config)
+                .on_click_stop(move |_| back.back()),
             button(|| "Home", ButtonKind::Plain, config)
                 .on_click_stop(move |_| screen.set(Screen::Home)),
             button(|| "Recents", ButtonKind::Plain, config)
@@ -267,7 +383,13 @@ fn navigation(session: Session, config: Config) -> impl View {
         s.absolute()
             .inset_bottom(0)
             .width_full()
-            .height(31.0)
+            .height(
+                sizing
+                    .device
+                    .get()
+                    .device()
+                    .map_or(31.0, |device| device.navigation_height),
+            )
             .items_center()
             .background(chrome(dark.get()))
             .color(foreground(dark.get()))
@@ -310,7 +432,8 @@ fn surface(session: Session) -> impl View {
                     && (pointer.pos.x < 12.0 || size.width - pointer.pos.x < 12.0)
                     || (!session.navigation_sticky.get_untracked()
                         && size.height - pointer.pos.y < 12.0)
-                    || (!session.status_sticky.get_untracked() && pointer.pos.y < 12.0);
+                    || (!session.status_sticky.get_untracked()
+                        && pointer.pos.y < 12.0);
                 origin.set(Some(pointer.pos));
                 edge.set(from_edge);
                 if !from_edge {
@@ -344,7 +467,8 @@ fn surface(session: Session) -> impl View {
                 };
                 if edge.get() {
                     let movement = pointer.pos - start;
-                    if movement.x.abs() > 24.0 && movement.x.abs() > movement.y.abs() {
+                    if movement.x.abs() > 24.0 && movement.x.abs() > movement.y.abs()
+                    {
                         session.back();
                     } else if movement.y.abs() > 15.0 {
                         session.reveal_bars();
@@ -364,7 +488,12 @@ fn surface(session: Session) -> impl View {
                 if let Event::PointerWheel(pointer) = event
                     && let Some((x, y)) = position(&session, id, pointer.pos)
                 {
-                    session.send(Input::Wheel(x, y, pointer.delta.x, pointer.delta.y));
+                    session.send(Input::Wheel(
+                        x,
+                        y,
+                        pointer.delta.x,
+                        pointer.delta.y,
+                    ));
                     return EventPropagation::Stop;
                 }
                 EventPropagation::Continue
@@ -376,9 +505,9 @@ fn surface(session: Session) -> impl View {
             };
             match &key.key.logical_key {
                 Key::Character(text)
-                    if !key
-                        .modifiers
-                        .intersects(Modifiers::ALT | Modifiers::CONTROL | Modifiers::META) =>
+                    if !key.modifiers.intersects(
+                        Modifiers::ALT | Modifiers::CONTROL | Modifiers::META,
+                    ) =>
                 {
                     controller.send(Input::Text(text.to_string()));
                 }
@@ -403,7 +532,11 @@ fn surface(session: Session) -> impl View {
         })
 }
 
-fn position(session: &Session, id: floem::ViewId, point: Point) -> Option<(f64, f64)> {
+fn position(
+    session: &Session,
+    id: floem::ViewId,
+    point: Point,
+) -> Option<(f64, f64)> {
     let viewport = session.viewport()?;
     let size = id.get_size()?;
     if size.width <= 0.0 || size.height <= 0.0 {

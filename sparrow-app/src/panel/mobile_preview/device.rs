@@ -1,4 +1,10 @@
 //! Published panel resolutions and the corresponding preview viewports.
+use std::collections::HashSet;
+
+use once_cell::sync::Lazy;
+use serde::Deserialize;
+use std::fmt;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Display {
     pub pixels: (u32, u32),
@@ -7,234 +13,278 @@ pub(super) struct Display {
     pub derived: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum DevicePlatform {
+    Android,
+    #[serde(rename = "ios")]
+    Ios,
+    #[serde(rename = "ipad-os")]
+    IpadOs,
+    Generic,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum DeviceCategory {
+    Phone,
+    Tablet,
+    Generic,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum CutoutShape {
+    None,
+    Notch,
+    Pill,
+    PunchHole,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum NavigationIndicator {
+    HomeIndicator,
+    GesturePill,
+    NavigationBar,
+}
+
+#[derive(Clone, Debug)]
 pub(super) struct Device {
-    pub id: &'static str,
-    pub name: &'static str,
+    pub id: String,
+    pub name: String,
+    pub platform: DevicePlatform,
+    pub category: DeviceCategory,
     pub display: Display,
     pub cover: Option<Display>,
     pub ios: bool,
+    pub corner_radius: f64,
+    pub status_bar_height: f64,
+    pub navigation_height: f64,
+    pub cutout: CutoutShape,
+    pub navigation: NavigationIndicator,
+    pub frame_color: (u8, u8, u8),
+    pub source_url: String,
+    pub source_date: String,
+    pub frame_source: String,
+    pub frame_source_date: String,
 }
 
-const fn android(width: u32, height: u32, ppi: f64) -> Display {
-    // A reproducible dp preview from the published physical density and Android's
-    // 160 dpi baseline. OEM user-selectable display scaling can change actual dp.
-    let scale = ppi / 160.0;
-    Display {
-        pixels: (width, height),
-        logical: (
-            (width as f64 / scale + 0.5) as u32,
-            (height as f64 / scale + 0.5) as u32,
-        ),
-        scale,
-        derived: true,
-    }
+#[derive(Deserialize)]
+struct DeviceCatalog {
+    devices: Vec<DeviceDefinition>,
 }
-const fn retina(pixels: (u32, u32), logical: (u32, u32), scale: f64) -> Display {
-    Display {
-        pixels,
-        logical,
-        scale,
-        derived: false,
-    }
-}
-const fn phone(
-    id: &'static str,
-    name: &'static str,
-    display: Display,
+
+#[derive(Deserialize)]
+struct DeviceDefinition {
+    id: String,
+    name: String,
     ios: bool,
-) -> Device {
-    Device {
-        id,
-        name,
-        display,
-        cover: None,
-        ios,
-    }
-}
-const fn fold(
-    id: &'static str,
-    name: &'static str,
-    display: Display,
-    cover: Display,
-) -> Device {
-    Device {
-        id,
-        name,
-        display,
-        cover: Some(cover),
-        ios: false,
-    }
+    platform: DevicePlatform,
+    category: DeviceCategory,
+    display: DisplayDefinition,
+    #[serde(default)]
+    cover: Option<DisplayDefinition>,
+    corner_radius: f64,
+    status_bar_height: f64,
+    navigation_height: f64,
+    cutout: CutoutShape,
+    navigation: NavigationIndicator,
+    frame_color: (u8, u8, u8),
+    source_url: String,
+    source_date: String,
+    frame_source: String,
+    frame_source_date: String,
 }
 
-pub(super) const DEVICES: &[Device] = &[
-    // Google Pixel Help hardware specs (7158570). Pixel 10 Pro XL uses the Android
-    // SDK AVD profile's 480 dpi setting. The Fold uses Google's two panel specs.
-    phone("pixel-10", "Pixel 10", android(1080, 2424, 422.0), false),
-    phone("pixel-10a", "Pixel 10a", android(1080, 2424, 422.2), false),
-    phone(
-        "pixel-10-pro",
-        "Pixel 10 Pro",
-        android(1280, 2856, 495.0),
-        false,
-    ),
-    phone(
-        "pixel-10-pro-xl",
-        "Pixel 10 Pro XL",
-        retina((1344, 2992), (448, 997), 3.0),
-        false,
-    ),
-    fold(
-        "pixel-10-pro-fold",
-        "Pixel 10 Pro Fold",
-        android(2076, 2152, 373.0),
-        android(1080, 2364, 408.0),
-    ),
-    phone("pixel-8", "Pixel 8", android(1080, 2400, 428.0), false),
-    phone("pixel-8a", "Pixel 8a", android(1080, 2400, 430.0), false),
-    phone(
-        "pixel-8-pro",
-        "Pixel 8 Pro",
-        android(1344, 2992, 489.0),
-        false,
-    ),
-    // Samsung Electronics 2025 Business Report, p. 335, and Samsung S23 FE specs.
-    phone(
-        "galaxy-s23",
-        "Galaxy S23",
-        android(1080, 2340, 425.0),
-        false,
-    ),
-    phone(
-        "galaxy-s23-plus",
-        "Galaxy S23+",
-        android(1080, 2340, 393.0),
-        false,
-    ),
-    phone(
-        "galaxy-s23-ultra",
-        "Galaxy S23 Ultra",
-        android(1440, 3088, 500.0),
-        false,
-    ),
-    phone(
-        "galaxy-s23-fe",
-        "Galaxy S23 FE",
-        android(1080, 2340, 403.0),
-        false,
-    ),
-    // Apple iOS Device Compatibility Reference and individual Support tech specs.
-    phone(
-        "iphone-8",
-        "iPhone 8",
-        retina((750, 1334), (375, 667), 2.0),
-        true,
-    ),
-    phone(
-        "iphone-8-plus",
-        "iPhone 8 Plus",
-        retina((1080, 1920), (414, 736), 3.0),
-        true,
-    ),
-    phone(
-        "iphone-x",
-        "iPhone X",
-        retina((1125, 2436), (375, 812), 3.0),
-        true,
-    ),
-    phone(
-        "iphone-xs",
-        "iPhone XS",
-        retina((1125, 2436), (375, 812), 3.0),
-        true,
-    ),
-    phone(
-        "iphone-xs-max",
-        "iPhone XS Max",
-        retina((1242, 2688), (414, 896), 3.0),
-        true,
-    ),
-    phone(
-        "iphone-xr",
-        "iPhone XR",
-        retina((828, 1792), (414, 896), 2.0),
-        true,
-    ),
-    phone(
-        "iphone-12-mini",
-        "iPhone 12 mini",
-        retina((1080, 2340), (375, 812), 3.0),
-        true,
-    ),
-    phone(
-        "iphone-12",
-        "iPhone 12",
-        retina((1170, 2532), (390, 844), 3.0),
-        true,
-    ),
-    phone(
-        "iphone-12-pro",
-        "iPhone 12 Pro",
-        retina((1170, 2532), (390, 844), 3.0),
-        true,
-    ),
-    phone(
-        "iphone-12-pro-max",
-        "iPhone 12 Pro Max",
-        retina((1284, 2778), (428, 926), 3.0),
-        true,
-    ),
-    phone(
-        "iphone-18-pro",
-        "iPhone 18 Pro",
-        retina((1206, 2622), (402, 874), 3.0),
-        true,
-    ),
-    phone(
-        "iphone-18-pro-max",
-        "iPhone 18 Pro Max",
-        retina((1320, 2868), (440, 956), 3.0),
-        true,
-    ),
-    // Apple Support 148588. Map the two panels to a 3× Retina preview.
-    Device {
-        id: "iphone-duo",
-        name: "iPhone Duo",
-        display: retina((2670, 1878), (890, 626), 3.0),
-        cover: Some(retina((1398, 2034), (466, 678), 3.0)),
-        ios: true,
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+enum DisplayDefinition {
+    Android {
+        pixels: (u32, u32),
+        ppi: f64,
     },
-    // Samsung Newsroom Galaxy Z Fold6 and Z Flip6 launch specifications.
-    fold(
-        "galaxy-z-fold6",
-        "Galaxy Z Fold6",
-        android(1856, 2160, 374.0),
-        android(968, 2376, 410.0),
-    ),
-    fold(
-        "galaxy-z-flip6",
-        "Galaxy Z Flip6",
-        android(1080, 2640, 425.0),
-        android(720, 748, 306.0),
-    ),
-];
+    Retina {
+        pixels: (u32, u32),
+        logical: (u32, u32),
+        scale: f64,
+    },
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl DisplayDefinition {
+    fn into_display(self) -> Result<Display, String> {
+        let display = match self {
+            Self::Android { pixels, ppi } => {
+                if !ppi.is_finite() || ppi <= 0.0 {
+                    return Err(
+                        "Android display density must be finite and positive."
+                            .into(),
+                    );
+                }
+                let scale = ppi / 160.0;
+                Display {
+                    pixels,
+                    logical: (
+                        (pixels.0 as f64 / scale + 0.5) as u32,
+                        (pixels.1 as f64 / scale + 0.5) as u32,
+                    ),
+                    scale,
+                    derived: true,
+                }
+            }
+            Self::Retina {
+                pixels,
+                logical,
+                scale,
+            } => Display {
+                pixels,
+                logical,
+                scale,
+                derived: false,
+            },
+        };
+        if display.pixels.0 == 0
+            || display.pixels.1 == 0
+            || display.logical.0 == 0
+            || display.logical.1 == 0
+            || !display.scale.is_finite()
+            || display.scale <= 0.0
+        {
+            return Err(
+                "Device display dimensions and scale must be positive.".into()
+            );
+        }
+        Ok(display)
+    }
+}
+
+fn parse_device_catalog(source: &str) -> Result<Vec<Device>, String> {
+    let catalog: DeviceCatalog = toml::from_str(source)
+        .map_err(|error| format!("Invalid device catalog: {error}"))?;
+    let mut ids = HashSet::with_capacity(catalog.devices.len());
+    catalog
+        .devices
+        .into_iter()
+        .map(|definition| {
+            if definition.id.trim().is_empty() || definition.name.trim().is_empty() {
+                return Err("Device catalog ids and names must not be empty.".into());
+            }
+            if !ids.insert(definition.id.clone()) {
+                return Err(format!("Duplicate device id: {}", definition.id));
+            }
+            if definition.source_url.trim().is_empty()
+                || definition.source_date.trim().is_empty()
+                || definition.frame_source.trim().is_empty()
+                || definition.frame_source_date.trim().is_empty()
+            {
+                return Err(format!(
+                    "Device {} is missing spec or frame provenance.",
+                    definition.id
+                ));
+            }
+            if !definition.corner_radius.is_finite()
+                || definition.corner_radius < 0.0
+                || !definition.status_bar_height.is_finite()
+                || definition.status_bar_height < 0.0
+                || !definition.navigation_height.is_finite()
+                || definition.navigation_height < 0.0
+            {
+                return Err(format!(
+                    "Device {} has invalid frame dimensions.",
+                    definition.id
+                ));
+            }
+            Ok(Device {
+                id: definition.id,
+                name: definition.name,
+                platform: definition.platform,
+                category: definition.category,
+                display: definition.display.into_display()?,
+                cover: definition
+                    .cover
+                    .map(DisplayDefinition::into_display)
+                    .transpose()?,
+                ios: definition.ios,
+                corner_radius: definition.corner_radius,
+                status_bar_height: definition.status_bar_height,
+                navigation_height: definition.navigation_height,
+                cutout: definition.cutout,
+                navigation: definition.navigation,
+                frame_color: definition.frame_color,
+                source_url: definition.source_url,
+                source_date: definition.source_date,
+                frame_source: definition.frame_source,
+                frame_source_date: definition.frame_source_date,
+            })
+        })
+        .collect()
+}
+
+static DEVICES: Lazy<Vec<Device>> = Lazy::new(|| {
+    parse_device_catalog(include_str!("device-presets.toml"))
+        .expect("Invalid built-in mobile preview device catalog")
+});
+
+pub(super) fn devices() -> &'static [Device] {
+    DEVICES.as_slice()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum DeviceChoice {
-    Preset(&'static str),
+    Preset(String),
     Flexible,
 }
 
 impl DeviceChoice {
-    pub fn device(self) -> Option<&'static Device> {
+    pub fn device(&self) -> Option<&'static Device> {
         match self {
-            Self::Preset(id) => DEVICES.iter().find(|device| device.id == id),
+            Self::Preset(id) => devices()
+                .iter()
+                .find(|device| device.id.as_str() == id.as_str()),
             Self::Flexible => None,
         }
     }
 
-    pub fn is_flexible(self) -> bool {
+    pub fn is_flexible(&self) -> bool {
         matches!(self, Self::Flexible)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum PreviewLocale {
+    EnglishUnitedStates,
+    EnglishUnitedKingdom,
+    FrenchFrance,
+    GermanGermany,
+    JapaneseJapan,
+    ArabicSaudiArabia,
+}
+
+impl PreviewLocale {
+    pub const ALL: [Self; 6] = [
+        Self::EnglishUnitedStates,
+        Self::EnglishUnitedKingdom,
+        Self::FrenchFrance,
+        Self::GermanGermany,
+        Self::JapaneseJapan,
+        Self::ArabicSaudiArabia,
+    ];
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::EnglishUnitedStates => "en-US",
+            Self::EnglishUnitedKingdom => "en-GB",
+            Self::FrenchFrance => "fr-FR",
+            Self::GermanGermany => "de-DE",
+            Self::JapaneseJapan => "ja-JP",
+            Self::ArabicSaudiArabia => "ar-SA",
+        }
+    }
+}
+
+impl fmt::Display for PreviewLocale {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.code())
     }
 }
 
@@ -246,10 +296,17 @@ pub(super) struct Viewport {
     pub dark: bool,
     pub ios: bool,
     pub mobile: bool,
+    pub locale: PreviewLocale,
 }
 
 impl Viewport {
-    pub fn new(display: Display, landscape: bool, dark: bool, ios: bool) -> Self {
+    pub fn new(
+        display: Display,
+        landscape: bool,
+        dark: bool,
+        ios: bool,
+        locale: PreviewLocale,
+    ) -> Self {
         let (w, h) = display.logical;
         Self {
             size: if landscape { (h, w) } else { (w, h) },
@@ -258,6 +315,7 @@ impl Viewport {
             dark,
             ios,
             mobile: true,
+            locale,
         }
     }
 
@@ -271,14 +329,15 @@ impl Viewport {
         {
             return None;
         }
-        Some(retina(
-            (
+        Some(Display {
+            pixels: (
                 (width as f64 * scale).round() as u32,
                 (height as f64 * scale).round() as u32,
             ),
-            (width, height),
+            logical: (width, height),
             scale,
-        ))
+            derived: false,
+        })
     }
 }
 
@@ -288,16 +347,54 @@ mod tests {
 
     #[test]
     fn rotation_preserves_device_scale_and_fold_displays_are_distinct() {
-        let device = DEVICES
+        let device = devices()
             .iter()
             .find(|d| d.name == "Pixel 10 Pro Fold")
             .unwrap();
-        let inner = Viewport::new(device.display, true, true, false);
-        let outer = Viewport::new(device.cover.unwrap(), false, false, false);
+        let inner = Viewport::new(
+            device.display,
+            true,
+            true,
+            false,
+            PreviewLocale::EnglishUnitedStates,
+        );
+        let outer = Viewport::new(
+            device.cover.unwrap(),
+            false,
+            false,
+            false,
+            PreviewLocale::EnglishUnitedStates,
+        );
         assert_eq!(device.display.pixels, (2076, 2152));
         assert_eq!(inner.size.0, device.display.logical.1);
         assert_eq!(inner.scale, device.display.scale);
         assert_ne!(inner.size, outer.size);
+    }
+
+    #[test]
+    fn tablet_profiles_keep_logical_size_scale_and_platform_identity() {
+        let ipad = devices()
+            .iter()
+            .find(|device| device.id == "ipad-pro-11-m4")
+            .unwrap();
+        let galaxy_tab = devices()
+            .iter()
+            .find(|device| device.id == "galaxy-tab-s9")
+            .unwrap();
+        let viewport = Viewport::new(
+            ipad.display,
+            false,
+            false,
+            ipad.ios,
+            PreviewLocale::JapaneseJapan,
+        );
+
+        assert_eq!(viewport.size, (834, 1210));
+        assert_eq!(viewport.scale, 2.0);
+        assert!(viewport.ios);
+        assert_eq!(viewport.locale, PreviewLocale::JapaneseJapan);
+        assert_eq!(galaxy_tab.display.pixels, (1600, 2560));
+        assert!(!galaxy_tab.ios);
     }
 
     #[test]
@@ -312,18 +409,132 @@ mod tests {
 
     #[test]
     fn device_choices_resolve_by_unique_stable_ids() {
-        let mut ids = DEVICES.iter().map(|device| device.id).collect::<Vec<_>>();
+        let mut ids = devices()
+            .iter()
+            .map(|device| device.id.as_str())
+            .collect::<Vec<_>>();
         ids.sort_unstable();
         ids.dedup();
 
-        assert_eq!(ids.len(), DEVICES.len());
+        assert_eq!(ids.len(), devices().len());
         assert_eq!(
-            DeviceChoice::Preset("iphone-12-pro")
+            devices()
+                .iter()
+                .filter(|device| {
+                    device.category == DeviceCategory::Phone
+                        && device.platform == DevicePlatform::Android
+                })
+                .count(),
+            6
+        );
+        assert_eq!(
+            devices()
+                .iter()
+                .filter(|device| {
+                    device.category == DeviceCategory::Phone
+                        && device.platform == DevicePlatform::Ios
+                })
+                .count(),
+            6
+        );
+        assert_eq!(
+            devices()
+                .iter()
+                .filter(|device| device.category == DeviceCategory::Tablet)
+                .count(),
+            2
+        );
+        assert_eq!(
+            devices()
+                .iter()
+                .filter(|device| device.category == DeviceCategory::Generic)
+                .count(),
+            3
+        );
+        assert!(devices().iter().all(|device| {
+            !device.source_url.is_empty()
+                && device.source_date == "2026-11-25"
+                && !device.frame_source.is_empty()
+                && device.frame_source_date == "2026-11-25"
+        }));
+        assert_eq!(
+            DeviceChoice::Preset("iphone-12-pro".into())
                 .device()
-                .map(|device| device.name),
+                .map(|device| device.name.as_str()),
             Some("iPhone 12 Pro")
         );
         assert!(DeviceChoice::Flexible.is_flexible());
         assert!(DeviceChoice::Flexible.device().is_none());
+    }
+
+    #[test]
+    fn device_catalog_rejects_duplicate_ids_and_invalid_dimensions() {
+        let duplicate = r#"
+            [[devices]]
+            id = "same"
+            name = "One"
+            ios = false
+            platform = "android"
+            category = "phone"
+            display = { kind = "android", pixels = [100, 200], ppi = 160.0 }
+            corner_radius = 10.0
+            status_bar_height = 24.0
+            navigation_height = 24.0
+            cutout = "none"
+            navigation = "gesture-pill"
+            frame_color = [1, 2, 3]
+            source_url = "https://example.test/one"
+            source_date = "2026-11-25"
+            frame_source = "Test approximation"
+            frame_source_date = "2026-11-25"
+
+            [[devices]]
+            id = "same"
+            name = "Two"
+            ios = false
+            platform = "android"
+            category = "phone"
+            display = { kind = "android", pixels = [100, 200], ppi = 160.0 }
+            corner_radius = 10.0
+            status_bar_height = 24.0
+            navigation_height = 24.0
+            cutout = "none"
+            navigation = "gesture-pill"
+            frame_color = [1, 2, 3]
+            source_url = "https://example.test/two"
+            source_date = "2026-11-25"
+            frame_source = "Test approximation"
+            frame_source_date = "2026-11-25"
+        "#;
+        let invalid = r#"
+            [[devices]]
+            id = "zero-size"
+            name = "Zero"
+            ios = false
+            platform = "android"
+            category = "phone"
+            display = { kind = "retina", pixels = [0, 200], logical = [100, 200], scale = 2.0 }
+            corner_radius = 10.0
+            status_bar_height = 24.0
+            navigation_height = 24.0
+            cutout = "none"
+            navigation = "gesture-pill"
+            frame_color = [1, 2, 3]
+            source_url = "https://example.test/zero"
+            source_date = "2026-11-25"
+            frame_source = "Test approximation"
+            frame_source_date = "2026-11-25"
+        "#;
+
+        assert!(
+            parse_device_catalog(duplicate)
+                .unwrap_err()
+                .contains("Duplicate")
+        );
+        assert!(
+            parse_device_catalog(invalid)
+                .unwrap_err()
+                .contains("positive")
+        );
     }
 }

@@ -1,0 +1,322 @@
+# Google Pixel hardware specifications (Google Pixel Help 7158570); Pixel 10 Pro XL
+# uses the Android SDK AVD profile's 480 dpi setting. Fold panels use published specs.
+[[devices]]
+id = "pixel-10"
+name = "Pixel 10"
+ios = false
+platform = "android"
+category = "phone"
+display = { kind = "android", pixels = [1080, 2424], ppi = 422.0 }
+corner_radius = 28.0
+status_bar_height = 24.0
+navigation_height = 24.0
+cutout = "punch-hole"
+navigation = "gesture-pill"
+frame_color = [35, 38, 42]
+source_url = "https://store.google.com/product/pixel_10_specs?hl=en-US"
+source_date = "2026-11-25"
+frame_source = "Sparrow visual estimate from official device imagery and Android system-bar guidance."
+frame_source_date = "2026-11-25"
+
+
+[[devices]]
+id = "pixel-10-pro"
+name = "Pixel 10 Pro"
+ios = false
+platform = "android"
+category = "phone"
+display = { kind = "android", pixels = [1280, 2856], ppi = 495.0 }
+corner_radius = 29.0
+status_bar_height = 24.0
+navigation_height = 24.0
+cutout = "punch-hole"
+navigation = "gesture-pill"
+frame_color = [35, 38, 42]
+source_url = "https://store.google.com/us/product/pixel_10_pro_specs?hl=en-US"
+source_date = "2026-11-25"
+frame_source = "Sparrow visual estimate from official device imagery and Android system-bar guidance."
+frame_source_date = "2026-11-25"
+
+[[devices]]
+id = "pixel-10-pro-xl"
+name = "Pixel 10 Pro XL"
+ios = false
+platform = "android"
+category = "phone"
+display = { kind = "retina", pixels = [1344, 2992], logical = [448, 997], scale = 3.0 }
+corner_radius = 32.0
+status_bar_height = 24.0
+navigation_height = 24.0
+cutout = "punch-hole"
+navigation = "gesture-pill"
+frame_color = [35, 38, 42]
+source_url = "https://store.google.com/us/product/pixel_10_pro_specs?hl=en-US"
+source_date = "2026-11-25"
+frame_source = "Sparrow visual estimate from official device imagery and Android system-bar guidance."
+frame_source_date = "2026-11-25"
+
+[[devices]]
+id = "pixel-10-pro-fold"
+name = "Pixel 10 Pro Fold"
+ios = false
+platform = "android"
+category = "phone"
+display = { kind = "android", pixels = [2076, 2152], ppi = 373.0 }
+cover = { kind = "android", pixels = [1080, 2364], ppi = 408.0 }
+corner_radius = 24.0
+status_bar_height = 24.0
+navigation_height = 24.0
+cutout = "punch-hole"
+navigation = "gesture-pill"
+frame_color = [35, 38, 42]
+source_url = "https://store.google.com/us/product/pixel_10_pro_fold_specs?hl=en-US"
+source_date = "2026-11-25"
+frame_source = "Sparrow visual estimate from official device imagery and Android system-bar guidance."
+frame_source_date = "2026-11-25"
+
+
+# Samsung Electronics 2025 Business Report, p. 335, and Samsung Galaxy S23 FE specs.
+[[devices]]
+id = "galaxy-s23"
+name = "Galaxy S23"
+ios = false
+platform = "android"
+category = "phone"
+display = { kind = "android", pixels = [1080, 2340], ppi = 425.0 }
+corner_radius = 26.0
+status_bar_height = 24.0
+navigation_height = 24.0
+cutout = "punch-hole"
+navigation = "gesture-pill"
+frame_color = [35, 38, 42]
+source_url = "https://www.samsung.com/us/smartphones/galaxy-s23/specs/"
+source_date = "2026-11-25"
+frame_source = "Sparrow visual estimate from official device imagery and Android system-bar guidance."
+frame_source_date = "2026-11-25"
+
+
+# Apple iOS Device Compatibility Reference and individual Apple Support tech specs.
+
+[[devices]]
+id = "iphone-12-mini"
+name = "iPhone 12 mini"
+ios = true
+platform = "ios"
+category = "phone"
+display = { kind = "retina", pixels = [1080, 2340], logical = [375, 812], scale = 3.0 }
+corner_radius = 38.0
+status_bar_height = 47.0
+navigation_height = 34.0
+cutout = "notch"
+navigation = "home-indicator"
+frame_color = [27, 29, 34]
+source_url = "https://support.apple.com/en-us/111877"
+source_date = "2026-11-25"
+frame_source = "Sparrow safe-area/frame estimate; the status and home bars are visual overlays only."
+frame_source_date = "2026-11-25"
+
+[[devices]]
+id = "iphone-12"
+name = "iPhone 12"
+ios = true
+platform = "ios"
+category = "phone"
+display = { kind = "retina", pixels = [1170, 2532], logical = [390, 844], scale = 3.0 }
+corner_radius = 40.0
+status_bar_height = 47.0
+navigation_height = 34.0
+cutout = "notch"
+navigation = "home-indicator"
+frame_color = [27, 29, 34]
+source_url = "https://support.apple.com/en-us/111876"
+source_date = "2026-11-25"
+frame_source = "Sparrow safe-area/frame estimate; the status and home bars are visual overlays only."
+frame_source_date = "2026-11-25"
+
+[[devices]]
+id = "iphone-12-pro"
+name = "iPhone 12 Pro"
+ios = true
+platform = "ios"
+category = "phone"
+display = { kind = "retina", pixels = [1170, 2532], logical = [390, 844], scale = 3.0 }
+corner_radius = 40.0
+status_bar_height = 47.0
+navigation_height = 34.0
+cutout = "notch"
+navigation = "home-indicator"
+frame_color = [27, 29, 34]
+source_url = "https://support.apple.com/en-us/111875"
+source_date = "2026-11-25"
+frame_source = "Sparrow safe-area/frame estimate; the status and home bars are visual overlays only."
+frame_source_date = "2026-11-25"
+
+[[devices]]
+id = "iphone-12-pro-max"
+name = "iPhone 12 Pro Max"
+ios = true
+platform = "ios"
+category = "phone"
+display = { kind = "retina", pixels = [1284, 2778], logical = [428, 926], scale = 3.0 }
+corner_radius = 44.0
+status_bar_height = 47.0
+navigation_height = 34.0
+cutout = "notch"
+navigation = "home-indicator"
+frame_color = [27, 29, 34]
+source_url = "https://support.apple.com/en-us/111874"
+source_date = "2026-11-25"
+frame_source = "Sparrow safe-area/frame estimate; the status and home bars are visual overlays only."
+frame_source_date = "2026-11-25"
+
+[[devices]]
+id = "iphone-18-pro"
+name = "iPhone 18 Pro"
+ios = true
+platform = "ios"
+category = "phone"
+display = { kind = "retina", pixels = [1206, 2622], logical = [402, 874], scale = 3.0 }
+corner_radius = 44.0
+status_bar_height = 59.0
+navigation_height = 34.0
+cutout = "pill"
+navigation = "home-indicator"
+frame_color = [27, 29, 34]
+source_url = "https://support.apple.com/en-us/148590"
+source_date = "2026-11-25"
+frame_source = "Sparrow safe-area/frame estimate; the status and home bars are visual overlays only."
+frame_source_date = "2026-11-25"
+
+
+# Apple Support 148588. The two panels map to a 3x Retina preview.
+[[devices]]
+id = "iphone-duo"
+name = "iPhone Duo"
+ios = true
+platform = "ios"
+category = "phone"
+display = { kind = "retina", pixels = [2670, 1878], logical = [890, 626], scale = 3.0 }
+cover = { kind = "retina", pixels = [1398, 2034], logical = [466, 678], scale = 3.0 }
+corner_radius = 42.0
+status_bar_height = 59.0
+navigation_height = 34.0
+cutout = "pill"
+navigation = "home-indicator"
+frame_color = [27, 29, 34]
+source_url = "https://support.apple.com/en-us/148588"
+source_date = "2026-11-25"
+frame_source = "Sparrow safe-area/frame estimate; the status and home bars are visual overlays only."
+frame_source_date = "2026-11-25"
+
+# Samsung Newsroom Galaxy Z Fold6 and Z Flip6 launch specifications.
+[[devices]]
+id = "galaxy-z-fold6"
+name = "Galaxy Z Fold6"
+ios = false
+platform = "android"
+category = "phone"
+display = { kind = "android", pixels = [1856, 2160], ppi = 374.0 }
+cover = { kind = "android", pixels = [968, 2376], ppi = 410.0 }
+corner_radius = 25.0
+status_bar_height = 24.0
+navigation_height = 24.0
+cutout = "punch-hole"
+navigation = "gesture-pill"
+frame_color = [35, 38, 42]
+source_url = "https://news.samsung.com/global/introducing-galaxy-z-fold6-and-z-flip6"
+source_date = "2026-11-25"
+frame_source = "Sparrow visual estimate from official device imagery and Android system-bar guidance."
+frame_source_date = "2026-11-25"
+
+# Apple iPad Pro 11-inch (M4), Apple Support 119892.
+[[devices]]
+id = "ipad-pro-11-m4"
+name = "iPad Pro 11-inch (M4)"
+ios = true
+platform = "ipad-os"
+category = "tablet"
+display = { kind = "retina", pixels = [1668, 2420], logical = [834, 1210], scale = 2.0 }
+corner_radius = 30.0
+status_bar_height = 24.0
+navigation_height = 20.0
+cutout = "none"
+navigation = "home-indicator"
+frame_color = [27, 29, 34]
+source_url = "https://support.apple.com/en-us/119892"
+source_date = "2026-11-25"
+frame_source = "Sparrow visual estimate from Apple product imagery and iPad safe-area guidance."
+frame_source_date = "2026-11-25"
+
+# Samsung Galaxy Tab S9; Android logical size and scale are explicitly approximate.
+[[devices]]
+id = "galaxy-tab-s9"
+name = "Galaxy Tab S9"
+ios = false
+platform = "android"
+category = "tablet"
+display = { kind = "retina", pixels = [1600, 2560], logical = [800, 1280], scale = 2.0 }
+corner_radius = 26.0
+status_bar_height = 24.0
+navigation_height = 24.0
+cutout = "none"
+navigation = "gesture-pill"
+frame_color = [35, 38, 42]
+source_url = "https://www.samsung.com/levant/tablets/galaxy-tab-s/galaxy-tab-s9-wi-fi-graphite-256gb-sm-x710nzaemea"
+source_date = "2026-11-25"
+frame_source = "Sparrow tablet density and frame estimates; Android system-bar guidance."
+frame_source_date = "2026-11-25"
+
+# Generic baselines are estimates, not representations of a particular handset.
+[[devices]]
+id = "generic-android-phone"
+name = "Generic Android phone"
+ios = false
+platform = "generic"
+category = "generic"
+display = { kind = "retina", pixels = [1080, 2400], logical = [360, 800], scale = 3.0 }
+corner_radius = 26.0
+status_bar_height = 24.0
+navigation_height = 24.0
+cutout = "none"
+navigation = "gesture-pill"
+frame_color = [35, 38, 42]
+source_url = "https://developer.android.com/design/ui/mobile/guides/foundations/system-bars"
+source_date = "2026-11-25"
+frame_source = "Sparrow generic viewport baseline and Android system-bar guidance."
+frame_source_date = "2026-11-25"
+
+[[devices]]
+id = "generic-ios-phone"
+name = "Generic iOS phone"
+ios = true
+platform = "generic"
+category = "generic"
+display = { kind = "retina", pixels = [1170, 2532], logical = [390, 844], scale = 3.0 }
+corner_radius = 40.0
+status_bar_height = 47.0
+navigation_height = 34.0
+cutout = "notch"
+navigation = "home-indicator"
+frame_color = [27, 29, 34]
+source_url = "https://developer.apple.com/design/human-interface-guidelines/layout"
+source_date = "2026-11-25"
+frame_source = "Sparrow generic viewport baseline and iOS safe-area estimate."
+frame_source_date = "2026-11-25"
+
+[[devices]]
+id = "generic-tablet"
+name = "Generic tablet"
+ios = false
+platform = "generic"
+category = "generic"
+display = { kind = "retina", pixels = [1600, 2560], logical = [800, 1280], scale = 2.0 }
+corner_radius = 26.0
+status_bar_height = 24.0
+navigation_height = 24.0
+cutout = "none"
+navigation = "gesture-pill"
+frame_color = [35, 38, 42]
+source_url = "https://developer.android.com/design/ui/adaptive-apps"
+source_date = "2026-11-25"
+frame_source = "Sparrow generic tablet baseline and Android system-bar guidance."
+frame_source_date = "2026-11-25"

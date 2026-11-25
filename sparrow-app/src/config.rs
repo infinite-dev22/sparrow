@@ -95,6 +95,22 @@ pub struct DropdownInfo {
     pub items: im::Vector<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, rename_all = "kebab-case")]
+pub struct MobilePreviewConfig {
+    pub auto_reload_on_save: bool,
+    pub approximation_notice_dismissed: bool,
+}
+
+impl Default for MobilePreviewConfig {
+    fn default() -> Self {
+        Self {
+            auto_reload_on_save: true,
+            approximation_notice_dismissed: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct SparrowConfig {
@@ -108,6 +124,8 @@ pub struct SparrowConfig {
     pub color_theme: ColorThemeConfig,
     #[serde(default)]
     pub icon_theme: IconThemeConfig,
+    #[serde(default)]
+    pub mobile_preview: MobilePreviewConfig,
     #[serde(flatten)]
     pub plugins: HashMap<String, HashMap<String, serde_json::Value>>,
     #[serde(skip)]
@@ -1225,6 +1243,23 @@ mod theme_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod mobile_preview_config_tests {
+    use super::MobilePreviewConfig;
+
+    #[test]
+    fn preview_preferences_default_safely_and_allow_overrides() {
+        let defaults: MobilePreviewConfig = toml::from_str("").unwrap();
+        assert!(defaults.auto_reload_on_save);
+        assert!(!defaults.approximation_notice_dismissed);
+
+        let override_value: MobilePreviewConfig =
+            toml::from_str("auto-reload-on-save = false").unwrap();
+        assert!(!override_value.auto_reload_on_save);
+        assert!(!override_value.approximation_notice_dismissed);
     }
 }
 

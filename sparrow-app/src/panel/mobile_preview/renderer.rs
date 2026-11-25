@@ -363,6 +363,10 @@ impl Cdp {
 
     fn configure(&mut self, viewport: Viewport) -> Result<(), String> {
         let (width, height) = viewport.size;
+        self.call(
+            "Emulation.setLocaleOverride",
+            json!({"locale": viewport.locale.code()}),
+        )?;
         self.call("Emulation.setDeviceMetricsOverride", json!({
             "width":width,"height":height,"deviceScaleFactor":viewport.scale,
             "mobile":viewport.mobile,"screenWidth":width,"screenHeight":height,
@@ -464,6 +468,7 @@ mod tests {
             dark: true,
             ios: true,
             mobile: true,
+            locale: super::super::device::PreviewLocale::FrenchFrance,
         };
         cdp.configure(portrait).unwrap();
         let html = "<meta name=viewport content='width=device-width,initial-scale=1'><button style='width:100px;height:100px' onclick='this.textContent=1'>0</button>";
@@ -489,9 +494,9 @@ mod tests {
         assert_eq!(
             eval(
                 &mut cdp,
-                "[innerWidth,innerHeight,devicePixelRatio,matchMedia('(prefers-color-scheme: dark)').matches]"
+                "[innerWidth,innerHeight,devicePixelRatio,matchMedia('(prefers-color-scheme: dark)').matches,new Intl.NumberFormat().resolvedOptions().locale]"
             ),
-            json!([390, 844, 3, true])
+            json!([390, 844, 3, true, "fr-FR"])
         );
         cdp.call(
             "Input.dispatchTouchEvent",

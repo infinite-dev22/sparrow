@@ -7,6 +7,10 @@ icon-theme = "sparrow Modern"
 custom-titlebar = true
 file-explorer-double-click = true
 
+[mobile-preview]
+auto-reload-on-save = true
+approximation-notice-dismissed = false
+
 [editor]
 font-family = "JetBrains Mono, Noto Sans Mono, monospace"
 font-size = 14
