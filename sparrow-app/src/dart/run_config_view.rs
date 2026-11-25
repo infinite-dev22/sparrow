@@ -18,9 +18,11 @@ use floem::{
 };
 use std::rc::Rc;
 mod sidebar;
+mod popups;
 mod task_list;
 
 use crate::widgets::sparrow_scroll;
+use popups::{Popups, add_task_popup, env_dialog};
 use sidebar::configuration_sidebar;
 use task_list::task_list;
 
@@ -419,9 +421,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         .as_deref()
                         .unwrap_or(std::path::Path::new(".")),
                 )
-                .into_iter()
-                .map(Draft::from_config)
-                .collect::<Vec<_>>();
+                    .into_iter()
+                    .map(Draft::from_config)
+                    .collect::<Vec<_>>();
                 d.templates.set(templates.clone());
                 d.baseline_templates.set(templates);
                 d.error.set(String::new());
@@ -463,6 +465,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let sidebar = configuration_sidebar(d.clone(), has_selected, cx);
     let name_input = d.name_input;
     let task_program_focus = cx.create_rw_signal(None::<floem::ViewId>);
+    let popups = Popups::new(cx);
     let entry_focus = cx.create_rw_signal(None::<floem::ViewId>);
     let cwd_focus = cx.create_rw_signal(None::<floem::ViewId>);
     let form_keyboard = keyboard.clone();
@@ -478,28 +481,28 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             _ => {}
         }
         stack((
-                stack((
-                    label(move || {
-                        if title == "Dart entrypoint:" && !is_flutter.get() {
-                            if is_dart_entry.get() { "Dart file:" } else { "Dart SDK executable:" }
-                        } else if title == "Additional run args:" && is_dart_entry.get() { "Program arguments:" } else { title }
-                    })
+            stack((
+                label(move || {
+                    if title == "Dart entrypoint:" && !is_flutter.get() {
+                        if is_dart_entry.get() { "Dart file:" } else { "Dart SDK executable:" }
+                    } else if title == "Additional run args:" && is_dart_entry.get() { "Program arguments:" } else { title }
+                })
                     .style(move |s| {
                         s.width(if title == "Name:" { 64.0 } else { 154.0 })
                             .flex_shrink(0.0_f32)
                     }),
-                    input.style(|s| s.min_width(0.0).flex_grow(1.0_f32)),
-                ))
+                input.style(|s| s.min_width(0.0).flex_grow(1.0_f32)),
+            ))
                 .style(|s| s.items_center().width_full()),
-                label(move || {
-                    if !is_flutter.get() && title == "Dart entrypoint:" {
-                        if is_dart_entry.get() { "The Dart file to run. The configured Dart SDK remains the executable." } else { "Dart SDK executable or its full path." }
-                    } else if !is_flutter.get() && title == "Additional run args:" {
-                        if is_dart_entry.get() { "Arguments passed to the Dart application." } else { "Arguments for Dart, for example: run bin/main.dart." }
-                    } else {
-                        help
-                    }
-                })
+            label(move || {
+                if !is_flutter.get() && title == "Dart entrypoint:" {
+                    if is_dart_entry.get() { "The Dart file to run. The configured Dart SDK remains the executable." } else { "Dart SDK executable or its full path." }
+                } else if !is_flutter.get() && title == "Additional run args:" {
+                    if is_dart_entry.get() { "Arguments passed to the Dart application." } else { "Arguments for Dart, for example: run bin/main.dart." }
+                } else {
+                    help
+                }
+            })
                 .style(move |s| {
                     s.margin_left(154.0)
                         .margin_top(6.0)
@@ -507,7 +510,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                         .color(config.get().color(SparrowColor::EDITOR_DIM))
                         .apply_if(help.is_empty(), |s| s.hide())
                 }),
-            ))
+        ))
             .style(move |s| {
                 s.flex_col()
                     .margin_bottom(if title == "Name:" { 0.0 } else { 15.0 })
@@ -531,7 +534,6 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let editing_task = cx.create_memo(move |_| task_count.get() > 0);
     let selected_task = d.task_selected;
     let tasks = task_list(d.clone());
-    let add_task = d.clone();
     let remove_task = d.clone();
     let up_task = d.clone();
     let down_task = d.clone();
@@ -553,7 +555,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 move |checked| value.set(checked),
                 config,
             )
-            .style(|s| s.padding_vert(4.0).flex_shrink(0.0_f32)),
+                .style(|s| s.padding_vert(4.0).flex_shrink(0.0_f32)),
         )
     };
     let button_keyboard = keyboard.clone();
@@ -570,7 +572,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 },
                 config,
             )
-            .style(|s| s.min_width(72.0).height(24.0).padding_horiz(14.0)),
+                .style(|s| s.min_width(72.0).height(24.0).padding_horiz(14.0)),
             move || match text {
                 "Apply" => draft.dirty(),
                 "▷ Run" | "▾" => {
@@ -595,7 +597,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 ModalChoice::new("Attach to Flutter App", move || {
                     attach.launch(RunDebugMode::Run, true)
                 })
-                .enabled(is_flutter.get_untracked()),
+                    .enabled(is_flutter.get_untracked()),
             ]
         },
     );
@@ -681,7 +683,11 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         || "Browse working directory",
         config,
     );
-    let dialog = container(container(stack((
+    let env_edit = keyboard.control(label(||"…").on_click_stop(move |_|popups.env.set(true)).style(move |s|{let c=config.get();s.size(26.0,26.0).margin_left(6.0).items_center().justify_center().border(1.0).border_radius(4.0).border_color(c.color(SparrowColor::SPARROW_BORDER)).hover(|s|s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND)))}));
+    let add_new_task = keyboard.icon(||SparrowIcons::ADD,move ||popups.open_add(),||false,||false,||"Add new task",config);
+    let env_overlay = env_dialog(d.clone(), popups, cx);
+    let add_overlay = add_task_popup(d.clone(), popups, cx);
+    let dialog = stack((container(stack((
         stack((empty().style(|s|s.width(26.0)),label(||"Run/Debug Configurations").style(|s|s.flex_grow(1.0_f32).items_center().justify_center().font_bold()),clickable_icon(||SparrowIcons::CLOSE,move ||visible.set(false),||false,||false,||"Close",config)))
             .style(move |s|s.height(36.0).width_full().items_center().flex_shrink(0.0_f32).background(floem::peniko::Color::from_rgb8(40,40,40))),
         stack((sidebar,label(||"Add a Dart or Flutter configuration to get started.").style(move |s|s.flex_grow(1.0_f32).items_center().justify_center().apply_if(has_selected.get(),|s|s.hide())),sparrow_scroll(stack((
@@ -691,18 +697,11 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             form_row("Additional run args:",d.fields[2],"Additional arguments to 'flutter run'."),
             form_row("Additional attach args:",d.fields[3],"Additional arguments to 'flutter attach'.").style(move |s|s.apply_if(!is_flutter.get(),|s|s.hide())),
             form_row("Build flavor:",d.fields[4],"Optional Gradle product flavor or Xcode custom scheme.").style(move |s|s.apply_if(!is_flutter.get(),|s|s.hide())),
-            form_row("Environment variables:",d.fields[5],"Additional environment variables. Format: KEY=value; KEY2=value."),
+            stack((form_row("Environment variables:",d.fields[5],"Additional environment variables. Format: KEY=value; KEY2=value.").style(|s|s.flex_grow(1.0_f32).flex_basis(0.0).min_width(0.0)),env_edit)).style(|s|s.items_start()),
             stack((crate::widgets::tree_chevron(config, || true, || true), label(||"Before launch"))).style(|s|s.margin_top(6.0).margin_bottom(10.0).items_center().gap(5)),
             stack((
                 stack((
-                    keyboard.icon(||SparrowIcons::ADD,move ||{add_task.edit_task(0);floem::action::exec_after(std::time::Duration::from_millis(30),move |_|{if visible.get_untracked(){if let Some(id)=task_program_focus.get_untracked(){id.request_focus();}}});},||false,||false,||"Add before-launch task",config),
-                    keyboard.menu(label(||"Task type ▾"),{let presets=d.clone();move ||{
-                        let browser=if cfg!(target_os="macos"){("open", "https://localhost:7357")}else if cfg!(windows){("rundll32", "url.dll,FileProtocolHandler https://localhost:7357")}else{("xdg-open", "http://localhost:7357")};
-                        let mut choices=[("Launch Web Browser",browser.0,browser.1),("External Tool","",""),("Run Gradle Task",if cfg!(windows){"android\\gradlew.bat"}else{"./android/gradlew"},"assembleDebug"),("Build APK Artifact","flutter","build apk"),("Dart Code Generation","dart","run build_runner build --delete-conflicting-outputs")].into_iter().map(|(title,program,args)|{let d=presets.clone();ModalChoice::new(title,move ||{d.edit_task(0);d.fields[6].set(program.into());d.fields[7].set(args.into());d.capture();})}).collect::<Vec<_>>();
-                        presets.capture();
-                        for draft in presets.drafts.get_untracked(){if let Ok(mut config)=draft.build(){if let Some(root)=presets.window.workspace.path.as_deref(){config.cwd=Some(run_config::launch_directory(root,config.cwd.as_deref()).display().to_string());}let name=config.name.clone();let args=run_config::join_args(&["--run-config-task".into(),serde_json::to_string(&config).unwrap()]);let d=presets.clone();choices.push(ModalChoice::new(format!("Run configuration: {name}"),move ||{d.edit_task(0);d.fields[6].set("${sparrow}".into());d.fields[7].set(args.clone());d.capture();}));}}
-                        choices
-                    }}),
+                    add_new_task,
                     keyboard.icon(||SparrowIcons::REMOVE,move ||remove_task.edit_task(1),||false,move ||!editing_task.get(),||"Remove selected task",config),
                     keyboard.icon(||SparrowIcons::FILE_PICKER_UP,move ||up_task.edit_task(-1),||false,move ||selected_task.get()==0 || !editing_task.get(),||"Move task up",config),
                     keyboard.icon(||SparrowIcons::FOLD_DOWN,move ||down_task.edit_task(2),||false,move ||selected_task.get()+1>=task_count.get(),||"Move task down",config),
@@ -717,10 +716,10 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             .style(|s|s.width_full().flex_grow(1.0_f32).flex_basis(0.0).min_height(0.0)),
         stack((empty().style(|s|s.flex_grow(1.0_f32)),stack((button("▷ Run").disabled(move || !has_selected.get() || templates_mode.get()).on_click_stop(move |_|run.launch(RunDebugMode::Run, false)),launch_options)).style(|s|s.gap(0.0)),button("OK").on_click_stop(move |_|{if ok.apply(){visible.set(false);}}),button("Cancel").on_click_stop(move |_|visible.set(false)),button("Apply").on_click_stop(move |_|{apply.apply();}).disabled(move ||!dirty.dirty())))
             .style(move |s|s.height(46.0).width_full().padding_horiz(16.0).gap(12.0).items_center().flex_shrink(0.0_f32).border_top(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
-    )).style(|s|s.flex_col().size_full())).style(move |s|s.font_family(config.get().ui.font_family.clone()).font_size(13.0).width(916.0).height(732.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().color(config.get().color(SparrowColor::EDITOR_FOREGROUND)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_radius(8.0)))
-    .on_event_stop(EventListener::PointerDown,|_|{})
-    .on_event(EventListener::KeyDown,move |event|{if let Event::KeyDown(key)=event{if key.key.logical_key==Key::Named(NamedKey::Escape){visible.set(false);return floem::event::EventPropagation::Stop;}}floem::event::EventPropagation::Continue})
-    .style(move |s|s.absolute().size_full().padding_bottom(100.0).items_center().justify_center().z_index(200).background(floem::peniko::Color::from_rgba8(0,0,0,70)).apply_if(!visible.get(),|s|s.hide()));
+    )).style(|s|s.flex_col().size_full())).style(move |s|s.font_family(config.get().ui.font_family.clone()).font_size(13.0).width(916.0).height(732.0).max_width_pct(96.0).max_height_pct(92.0).flex_col().color(config.get().color(SparrowColor::EDITOR_FOREGROUND)).background(config.get().color(SparrowColor::PANEL_BACKGROUND)).border_radius(8.0)), env_overlay, add_overlay))
+        .on_event_stop(EventListener::PointerDown,|_|{})
+        .on_event(EventListener::KeyDown,move |event|{if let Event::KeyDown(key)=event{if key.key.logical_key==Key::Named(NamedKey::Escape){if popups.is_open(){popups.close_all();return floem::event::EventPropagation::Stop;}visible.set(false);return floem::event::EventPropagation::Stop;}}floem::event::EventPropagation::Continue})
+        .style(move |s|s.absolute().size_full().padding_bottom(100.0).items_center().justify_center().z_index(200).background(floem::peniko::Color::from_rgba8(0,0,0,70)).apply_if(!visible.get(),|s|s.hide()));
     let dialog = keyboard.bind_root(dialog, visible, config);
     let id = dialog.id();
     cx.create_effect(move |_| {

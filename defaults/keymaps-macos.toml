@@ -1,317 +1,181 @@
-# --------------------------------- Window ---------------------------------------------
+# =====================================================================
+# Android Studio / IntelliJ "macOS" keymap. Append to defaults/keymaps-macos.toml
+# (later entries win). Commands are the same as the Windows/Linux block.
+# Some chords (meta+n, meta+o, meta+d, meta+g) replace existing macOS defaults;
+# delete any line you want to keep the old behaviour for.
+# =====================================================================
 
+# Reformat Code
 [[keymaps]]
-command = "window_close"
-key = "Meta+Shift+W"
+key = "meta+alt+l"
+command = "format_document"
+when = "editor_focus"
 
-# --------------------------------- General --------------------------------------------
-
+# Reformat Code... (options)
 [[keymaps]]
-key = "meta+p"
-command = "palette"
+key = "meta+alt+shift+l"
+command = "reformat_code_options"
 
+# Optimize Imports
 [[keymaps]]
-key = "meta+shift+p"
-command = "palette.command"
+key = "ctrl+alt+o"
+command = "optimize_imports"
+when = "editor_focus"
 
+# Add Selection for Next Occurrence
 [[keymaps]]
-key = "meta+e"
-command = "toggle_code_glance"
-mode = "i"
-
-[[keymaps]]
-key = "meta+,"
-command = "open_settings"
-
-[[keymaps]]
-key = "meta+k meta+s"
-command = "open_keyboard_shortcuts"
-
-# [[keymaps]]
-# key = "meta+q"
-# command = "quit"
-
-[[keymaps]]
-key = "meta+="
-command = "zoom_in"
-
-[[keymaps]]
-key = "meta+-"
-command = "zoom_out"
-
-[[keymaps]]
-key = "meta+enter"
-command = "source_control_commit"
-when = "source_control_focus"
-
-# --------------------------------- Basic editing ---------------------------------------
-
-[[keymaps]]
-key = "meta+z"
-command = "undo"
-
-[[keymaps]]
-key = "meta+shift+z"
-command = "redo"
-
-[[keymaps]]
-key = "meta+y"
-command = "redo"
-
-[[keymaps]]
-key = "meta+x"
-command = "clipboard_cut"
-
-[[keymaps]]
-key = "meta+c"
-command = "clipboard_copy"
-
-[[keymaps]]
-key = "meta+v"
-command = "clipboard_paste"
-
-[[keymaps]]
-key = "meta+f"
-command = "search"
-
-[[keymaps]]
-key = "alt+right"
-command = "word_end_forward"
-mode = "i"
-
-[[keymaps]]
-key = "alt+left"
-command = "word_backward"
-mode = "i"
-
-[[keymaps]]
-key = "meta+left"
-command = "line_start_non_blank"
-mode = "i"
-
-[[keymaps]]
-key = "meta+right"
-command = "line_end"
-mode = "i"
-
-[[keymaps]]
-key = "ctrl+a"
-command = "line_start_non_blank"
-mode = "i"
-
-[[keymaps]]
-key = "ctrl+e"
-command = "line_end"
-mode = "i"
-
-[[keymaps]]
-key = "meta+shift+k"
-command = "delete_line"
-mode = "i"
-
-[[keymaps]]
-key = "alt+backspace"
-command = "delete_word_backward"
-mode = "i"
-
-[[keymaps]]
-key = "meta+backspace"
-command = "delete_to_beginning_of_line"
-mode = "i"
-
-[[keymaps]]
-key = "ctrl+k"
-command = "delete_to_end_of_line"
-mode = "i"
-
-[[keymaps]]
-key = "alt+delete"
-command = "delete_word_forward"
-mode = "i"
-
-[[keymaps]]
-key = "meta+shift+\\"
-command = "match_pairs"
-mode = "i"
-
-[[keymaps]]
-key = "meta+/"
-command = "toggle_line_comment"
-
-[[keymaps]]
-key = "meta+]"
-command = "indent_line"
-
-[[keymaps]]
-key = "meta+["
-command = "outdent_line"
-
-[[keymaps]]
-key = "meta+a"
-command = "select_all"
-
-[[keymaps]]
-key = "meta+enter"
-command = "new_line_below"
-when = "!source_control_focus"
-mode = "i"
-
-[[keymaps]]
-key = "meta+shift+enter"
-command = "new_line_above"
-mode = "i"
-
-# ------------------------------------ Multi cursor -------------------------------------
-
-[[keymaps]]
-key = "alt+meta+up"
-command = "insert_cursor_above"
-mode = "i"
-
-[[keymaps]]
-key = "alt+meta+down"
-command = "insert_cursor_below"
-mode = "i"
-
-[[keymaps]]
-key = "meta+l"
-command = "select_current_line"
-mode = "i"
-
-[[keymaps]]
-key = "meta+shift+l"
-command = "select_all_current"
-mode = "i"
-
-[[keymaps]]
-key = "meta+u"
-command = "select_undo"
-mode = "i"
-
-[[keymaps]]
-key = "meta+d"
+key = "ctrl+g"
 command = "select_next_current"
 mode = "i"
 
+# Unselect Occurrence
 [[keymaps]]
-key = "meta+k meta+d"
-command = "select_skip_current"
+key = "ctrl+shift+g"
+command = "select_undo"
 mode = "i"
 
-# ------------------------------------ File Management --------------------------------
-
+# Select All Occurrences
 [[keymaps]]
-key = "meta+s"
-command = "save"
+key = "ctrl+meta+g"
+command = "select_all_current"
+mode = "i"
 
+# Duplicate Line or Selection
+[[keymaps]]
+key = "meta+d"
+command = "duplicate_line_down"
+when = "editor_focus"
+mode = "i"
+
+# Delete Line
+[[keymaps]]
+key = "meta+backspace"
+command = "delete_line"
+when = "editor_focus"
+mode = "i"
+
+# Join Lines
+[[keymaps]]
+key = "ctrl+shift+j"
+command = "join_lines"
+mode = "i"
+
+# Move Line Up
+[[keymaps]]
+key = "alt+shift+up"
+command = "move_line_up"
+mode = "i"
+
+# Move Line Down
+[[keymaps]]
+key = "alt+shift+down"
+command = "move_line_down"
+mode = "i"
+
+# Extend Selection
+[[keymaps]]
+key = "alt+up"
+command = "select_next_syntax_item"
+when = "editor_focus"
+
+# Shrink Selection
+[[keymaps]]
+key = "alt+down"
+command = "select_previous_syntax_item"
+when = "editor_focus"
+
+# Quick Documentation
+[[keymaps]]
+key = "ctrl+j"
+command = "show_hover"
+when = "editor_focus"
+mode = "i"
+
+# Navigate Back
+[[keymaps]]
+key = "meta+["
+command = "jump_location_backward"
+mode = "i"
+
+# Navigate Forward
+[[keymaps]]
+key = "meta+]"
+command = "jump_location_forward"
+mode = "i"
+
+# Find Next
+[[keymaps]]
+key = "meta+g"
+command = "search_forward"
+
+# Find Previous
+[[keymaps]]
+key = "meta+shift+g"
+command = "search_backward"
+
+# Find Action
+[[keymaps]]
+key = "meta+shift+a"
+command = "palette.command"
+
+# Go to File
+[[keymaps]]
+key = "meta+shift+o"
+command = "palette"
+
+# Go to Class / Symbol
 [[keymaps]]
 key = "meta+o"
-command = "open_file"
+command = "palette.workspace_symbol"
+when = "editor_focus"
 
+# New File
 [[keymaps]]
 key = "meta+n"
 command = "new_file"
 
-# ----------------------------------- Editor Management -------------------------------
-
+# File Structure
 [[keymaps]]
-key = "meta+w"
-command = "split_close"
-
-[[keymaps]]
-key = "meta+k f"
-command = "close_folder"
-
-[[keymaps]]
-key = "meta+\\"
-command = "split_vertical"
-
-# --------------------------------- Rich Language Editing ----------------------------
-
-[[keymaps]]
-key = "ctrl+space"
-command = "get_completion"
-mode = "i"
-
-[[keymaps]]
-key = "meta+i"
-command = "get_completion"
-mode = "i"
-
-[[keymaps]]
-key = "ctrl+shift+space"
-command = "get_signature"
-mode = "i"
-
-[[keymaps]]
-key = "meta+."
-command = "show_code_actions"
-
-[[keymaps]]
-key = "alt+enter"
-command = "show_code_actions"
-
-[[keymaps]]
-key = "option+enter"
-command = "show_code_actions"
-
-# --------------------------------- Display -------------------------------------------
-
-[[keymaps]]
-key = "meta+shift+e"
-command = "toggle_file_explorer_focus"
-
-[[keymaps]]
-key = "meta+shift+f"
-command = "find_in_files"
-
-[[keymaps]]
-key = "meta+shift+r"
-command = "replace_in_files"
-
-[[keymaps]]
-key = "meta+shift+x"
-command = "toggle_plugin_focus"
-
-[[keymaps]]
-key = "meta+shift+m"
-command = "toggle_problem_focus"
-
-# ------------------------------------ Navigation -------------------------------------
-
-[[keymaps]]
-key = "meta+up"
-command = "document_start"
-
-[[keymaps]]
-key = "meta+down"
-command = "document_end"
-
-[[keymaps]]
-key = "ctrl+f"
-command = "right"
-mode = "i"
-
-[[keymaps]]
-key = "ctrl+p"
-command = "up"
-when = "!list_focus"
-mode = "i"
-
-[[keymaps]]
-key = "ctrl+n"
-command = "down"
-when = "!list_focus"
-mode = "i"
-
-[[keymaps]]
-key = "meta+shift+o"
+key = "meta+f12"
 command = "palette.symbol"
 
+# Go to Declaration
 [[keymaps]]
-key = "meta+t"
-command = "palette.workspace_symbol"
+key = "meta+b"
+command = "goto_definition"
+when = "editor_focus"
+mode = "i"
 
+# Go to Implementation
 [[keymaps]]
-key = "ctrl+g"
-command = "palette.line"
+key = "meta+alt+b"
+command = "go_to_implementation"
+when = "editor_focus"
+
+# Find Usages
+[[keymaps]]
+key = "alt+f7"
+command = "find_references"
+when = "editor_focus"
+
+# Call Hierarchy
+[[keymaps]]
+key = "ctrl+alt+h"
+command = "show_call_hierarchy"
+when = "editor_focus"
+
+# Toggle Line Breakpoint
+[[keymaps]]
+key = "meta+f8"
+command = "toggle_breakpoint"
+when = "editor_focus"
+
+# Run Context Configuration
+[[keymaps]]
+key = "ctrl+shift+r"
+command = "run_current_file"
+
+# Debug Context Configuration
+[[keymaps]]
+key = "ctrl+shift+d"
+command = "debug_current_file"

@@ -178,26 +178,46 @@ pub(super) fn run_actions(
                         .border_radius(4.0)
                 })
         })
-        .ide_popout_menu(move || {
-            Menu::new("")
-                .entry(MenuItem::new("Run Selected Configuration").action(
-                    move || {
+        .ide_popout_menu({
+            let menu_window = execution_window.clone();
+            move || {
+                // Names the active configuration like the IDE: Debug 'main.dart'  Shift+F9
+                let name = {
+                    let idx = menu_window.active_run_config_idx.get_untracked();
+                    menu_window
+                        .run_configs
+                        .get_untracked()
+                        .get(idx)
+                        .map(|c| c.name.clone())
+                };
+                let has = name.is_some();
+                let name = name.unwrap_or_default();
+                let (run_title, debug_title) = if has {
+                    (
+                        format!("Run '{name}'    Shift+F10"),
+                        format!("Debug '{name}'    Shift+F9"),
+                    )
+                } else {
+                    (
+                        "Run Selected Configuration".to_string(),
+                        "Debug Selected Configuration".to_string(),
+                    )
+                };
+                Menu::new("")
+                    .entry(MenuItem::new(run_title).action(move || {
                         workbench_command
                             .send(SparrowWorkbenchCommand::RunSelectedConfiguration)
-                    },
-                ))
-                .entry(MenuItem::new("Debug Selected Configuration").action(
-                    move || {
-                        workbench_command.send(
-                            SparrowWorkbenchCommand::DebugSelectedConfiguration,
-                        )
-                    },
-                ))
-                .separator()
-                .entry(MenuItem::new("Run/Debug Configurations...").action({
-                    let window = execution_window.clone();
-                    move || window.run_config_modal_visible.set(true)
-                }))
+                    }))
+                    .entry(MenuItem::new(debug_title).action(move || {
+                        workbench_command
+                            .send(SparrowWorkbenchCommand::DebugSelectedConfiguration)
+                    }))
+                    .separator()
+                    .entry(MenuItem::new("Run/Debug Configurations...").action({
+                        let window = menu_window.clone();
+                        move || window.run_config_modal_visible.set(true)
+                    }))
+            }
         });
 
     // Hot Reload button (amber flash bolt)

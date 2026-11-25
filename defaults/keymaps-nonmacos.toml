@@ -1,5 +1,3 @@
-# --------------------------------- Window ---------------------------------------------
-
 [[keymaps]]
 command = "close_window"
 key = "Alt+F4"
@@ -356,3 +354,213 @@ when = "panel_focus && !modal_focus && !search_active && !search_focus"
 [[keymaps]]
 key = "ctrl+shift+r"
 command = "replace_in_files"
+
+# =====================================================================
+# Android Studio / IntelliJ "Default" keymap (Windows/Linux)
+# Later entries win over earlier ones, so these override the VS Code style
+# defaults above. Every command used here already exists in Sparrow.
+# To drop one, delete it or add a matching "-command" entry in your own
+# keymaps.toml.
+# =====================================================================
+
+# ---- Code editing -------------------------------------------------------
+# Reformat Code
+[[keymaps]]
+key = "ctrl+alt+l"
+command = "format_document"
+when = "editor_focus"
+
+# Reformat Code... (options)
+[[keymaps]]
+key = "ctrl+alt+shift+l"
+command = "reformat_code_options"
+
+# Optimize Imports
+[[keymaps]]
+key = "ctrl+alt+o"
+command = "optimize_imports"
+when = "editor_focus"
+
+# Add Selection for Next Occurrence
+[[keymaps]]
+key = "alt+j"
+command = "select_next_current"
+mode = "i"
+
+# Unselect Occurrence
+[[keymaps]]
+key = "alt+shift+j"
+command = "select_undo"
+mode = "i"
+
+# Select All Occurrences
+[[keymaps]]
+key = "ctrl+alt+shift+j"
+command = "select_all_current"
+mode = "i"
+
+# Duplicate Line or Selection
+[[keymaps]]
+key = "ctrl+d"
+command = "duplicate_line_down"
+when = "editor_focus"
+mode = "i"
+
+# Delete Line
+[[keymaps]]
+key = "ctrl+y"
+command = "delete_line"
+when = "editor_focus"
+mode = "i"
+
+# Join Lines
+[[keymaps]]
+key = "ctrl+shift+j"
+command = "join_lines"
+mode = "i"
+
+# Move Line Up
+[[keymaps]]
+key = "alt+shift+up"
+command = "move_line_up"
+mode = "i"
+
+# Move Line Down
+[[keymaps]]
+key = "alt+shift+down"
+command = "move_line_down"
+mode = "i"
+
+# Extend Selection
+[[keymaps]]
+key = "ctrl+w"
+command = "select_next_syntax_item"
+when = "editor_focus"
+
+# Shrink Selection
+[[keymaps]]
+key = "ctrl+shift+w"
+command = "select_previous_syntax_item"
+when = "editor_focus"
+
+# Quick Documentation
+[[keymaps]]
+key = "ctrl+q"
+command = "show_hover"
+when = "editor_focus"
+mode = "i"
+
+# Navigate Back
+[[keymaps]]
+key = "ctrl+alt+left"
+command = "jump_location_backward"
+mode = "i"
+
+# Navigate Forward
+[[keymaps]]
+key = "ctrl+alt+right"
+command = "jump_location_forward"
+mode = "i"
+
+# Previous Editor Tab
+[[keymaps]]
+key = "alt+left"
+command = "previous_editor_tab"
+
+# Next Editor Tab
+[[keymaps]]
+key = "alt+right"
+command = "next_editor_tab"
+
+# Find Next
+[[keymaps]]
+key = "f3"
+command = "search_forward"
+
+# Find Previous
+[[keymaps]]
+key = "shift+f3"
+command = "search_backward"
+
+# ---- Navigation -----------------------------------------------------------
+# Find Action
+[[keymaps]]
+key = "ctrl+shift+a"
+command = "palette.command"
+
+# Go to File
+[[keymaps]]
+key = "ctrl+shift+n"
+command = "palette"
+
+# Go to Class / Symbol
+[[keymaps]]
+key = "ctrl+n"
+command = "palette.workspace_symbol"
+when = "editor_focus"
+
+# New File
+[[keymaps]]
+key = "alt+insert"
+command = "new_file"
+
+# Go to Symbol
+[[keymaps]]
+key = "ctrl+alt+shift+n"
+command = "palette.workspace_symbol"
+
+# File Structure
+[[keymaps]]
+key = "ctrl+f12"
+command = "palette.symbol"
+
+# Go to Declaration
+[[keymaps]]
+key = "ctrl+b"
+command = "goto_definition"
+when = "editor_focus"
+mode = "i"
+
+# Go to Implementation
+[[keymaps]]
+key = "ctrl+alt+b"
+command = "go_to_implementation"
+when = "editor_focus"
+
+# Find Usages
+[[keymaps]]
+key = "alt+f7"
+command = "find_references"
+when = "editor_focus"
+
+# Call Hierarchy
+[[keymaps]]
+key = "ctrl+alt+h"
+command = "show_call_hierarchy"
+when = "editor_focus"
+
+# ---- Run / Debug ----------------------------------------------------------
+# Toggle Line Breakpoint
+[[keymaps]]
+key = "ctrl+f8"
+command = "toggle_breakpoint"
+when = "editor_focus"
+
+# Run Context Configuration
+[[keymaps]]
+key = "ctrl+shift+f10"
+command = "run_current_file"
+
+# Debug Context Configuration
+[[keymaps]]
+key = "ctrl+shift+f9"
+command = "debug_current_file"
+
+# ---- Optional (disabled: these clash with existing chords) ----------------
+# Ctrl+K / Ctrl+T / Ctrl+Shift+K (Commit / Update Project / Push) would
+# conflict with the "ctrl+k ..." chords and Ctrl+T symbol search above.
+# Uncomment if you want them:
+#
+# [[keymaps]]
+# key = "ctrl+k"
+# command = "source_control_commit"
