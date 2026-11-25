@@ -861,7 +861,8 @@ impl Doc {
             let doc = self.clone();
             let scope = self.scope;
             let proxy = self.common.proxy.clone();
-            let format = config.editor.format_on_save;
+            let format =
+                config.editor.format_on_save && config.editor.format_on_autosave;
             exec_after(
                 Duration::from_millis(config.editor.autosave_interval),
                 move |_| {

@@ -2,6 +2,12 @@
 
 Open a local Flutter project with a `pubspec.yaml`. Sparrow uses the existing SDK discovery, including project FVM configuration.
 
+## Flutter Widget Previewer
+
+Choose **Widget Previewer** in the Flutter Preview panel to launch Flutter's official `flutter widget-preview start --web-server --machine` environment. It discovers public widgets/functions marked with `@Preview` from `package:flutter/widget_previews.dart`; Sparrow does not rewrite the app source or inject a wrapper. Flutter's `Preview` metadata can define each widget's name/group, size, text scale, wrapper, theme, brightness, and localizations.
+
+The selected device, orientation, dark-mode preference, and locale configure the browser viewport and touch context around the previewer. A `@Preview` annotation can still define widget-specific settings. Flutter's Widget Previewer does not expose Sparrow's app hot-reload/restart protocol, so those buttons and Sparrow's save watcher are available only in **Run app** mode; widget rebuild behavior is owned by Flutter's previewer. This remains a web-rendered approximation, not a native iOS/Android runtime.
+
 In `test/**/*_test.dart`, the gutter displays Run and Debug controls beside `test`, `testWidgets`, and `group` declarations with static string names. Nested group names are included automatically. Dynamic names, interpolated names, and imported aliases are not currently discovered.
 
 The command palette also provides:

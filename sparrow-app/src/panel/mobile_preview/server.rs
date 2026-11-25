@@ -403,7 +403,7 @@ fn write_request(
             "appId": app_id,
             "fullRestart": operation.is_full_restart(),
             "pause": false,
-            "reason": "Sparrow Mobile Preview",
+            "reason": "Sparrow Flutter Preview",
         }
     }]);
     writeln!(stdin, "{request}")

@@ -109,9 +109,17 @@
 - It deliberately excludes project paths, local preview URLs, source files, credentials, and raw Flutter/exception output; the privacy test sets a secret-bearing URL/status and confirms neither is copied. The adjacent UI explains this before copy.
 - Manual status messages identify preview startup, watcher setup, reload/restart in progress, completion, and operation failures. No log files or screenshots were generated.
 
+## Workstream B8 — Flutter Widget Previewer device context
+
+- The official `flutter widget-preview start --web-server --machine` path was already available, but Sparrow forced its browser to `800×760`, 1×, desktop mode regardless of the selected device. Widget mode now uses the selected profile's logical dimensions, scale, orientation, mobile touch context, iOS/Android platform hint, dark preference, and locale, matching the app-preview renderer.
+- Renamed the panel heading to **Flutter Preview**, promoted **Widget Previewer**, and hide the app-only save-reload toggle while widget previews are active. Inline help and `docs/flutter-testing.md` explain Flutter's `@Preview` metadata and the reload/native-runtime limitations.
+- The new viewport regression test failed before the fix with `(800, 760), 1×, desktop`; it now passes for landscape iPhone 18 Pro at `(874, 402), 3×, iOS`, with dark mode and `fr-FR` preserved.
+- Verification: all three Mobile Preview session tests passed; the headless Chromium/CDP device-surface integration test passed; full `cargo test -p sparrow-app` passed (474 passed, 17 ignored); edited-file `rustfmt --check` and `git diff --check` passed.
+- No annotated Flutter sample was available for end-to-end Widget Previewer visual review. The previous disposable scaffold had no `@Preview` declarations; desktop visual acceptance remains unverified.
+
 ## Final validation
 
-- `cargo test -p sparrow-app`: 472 passed, 0 failed, 17 ignored; doc tests 0 failed, 8 ignored.
+- `cargo test -p sparrow-app`: 474 passed, 0 failed, 17 ignored; doc tests 0 failed, 8 ignored.
 - `SPARROW_PREVIEW_TEST_PROJECT=/tmp/sparrow-preview-repro-Vkabrr SPARROW_FLUTTER_BIN=/home/infinite/develop/flutter/bin/flutter cargo test -p sparrow-app dart_save_triggers_hot_reload_and_machine_protocol_supports_restart -- --ignored --nocapture`: passed (18.13s).
 - `cargo test -p sparrow-app captures_and_interacts_with_a_windowless_device_surface -- --ignored --nocapture`: passed (0.77s).
 - `cargo check -p sparrow-app`: passed. Only warning is the pre-existing unused `Icon::Theme` in `sparrow-app/src/title/branch_switcher.rs:397`.

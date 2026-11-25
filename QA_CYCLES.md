@@ -38,8 +38,15 @@
 - Diagnostic report unit test confirms Flutter/Dart version and useful mode/profile/viewport state while excluding project URL, raw status text, source, paths and secrets; event history is capped at 50 entries.
 - No report file, screenshot file, user Flutter workspace, account, or remote service was used.
 
+## Cycle B8 — Flutter Widget Previewer device context
+
+- Regression test reproduced the issue before the fix: landscape iPhone 18 Pro still selected the fixed `(800, 760)`, 1× desktop viewport. Afterward it passed with `(874, 402)`, 3×, mobile/iOS context, dark mode and `fr-FR`.
+- All three Mobile Preview session tests passed; the headless Chromium/CDP device-surface integration test passed.
+- Full `cargo test -p sparrow-app`: 474 passed, 0 failed, 17 ignored; doc tests had 0 failures and 8 ignored. Edited-file `rustfmt --check` and `git diff --check` passed.
+- No annotated Flutter sample was available for end-to-end Widget Previewer visual review; visual acceptance remains unverified.
+
 ## Final
 
-- `cargo test -p sparrow-app`: 472 passed, 0 failed, 17 ignored; doctests: 0 failures, 8 ignored.
+- `cargo test -p sparrow-app`: 474 passed, 0 failed, 17 ignored; doctests: 0 failures, 8 ignored.
 - `cargo check -p sparrow-app`: passed; one pre-existing unused `Icon::Theme` warning remains.
 - Tier 2 headless integration ran successfully; Tier 3 Xvfb/xdotool and Tier 4 visual automation remain unavailable/unverified.

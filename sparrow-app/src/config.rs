@@ -1264,6 +1264,21 @@ mod mobile_preview_config_tests {
 }
 
 #[cfg(test)]
+mod autosave_config_tests {
+    use super::DEFAULT_CONFIG;
+
+    #[test]
+    fn autosave_is_enabled_by_default_after_a_short_idle_delay() {
+        assert_eq!(
+            DEFAULT_CONFIG
+                .get::<u64>("editor.autosave-interval")
+                .unwrap(),
+            1_000
+        );
+    }
+}
+
+#[cfg(test)]
 mod settings_transaction_tests {
     use super::*;
     #[test]

@@ -1,4 +1,4 @@
-//! Mobile Preview panel and device settings.
+//! Flutter app and widget preview panel.
 use std::rc::Rc;
 
 use floem::{
@@ -52,6 +52,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             .set(!config.get().mobile_preview.approximation_notice_dismissed);
     });
     let session = Session::new(auto_reload_on_save.get_untracked());
+    let active_preview = session.active;
     let panel = window.panel.clone();
     let visible = session.panel_visible;
     create_effect(move |_| {
@@ -157,6 +158,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
     let settings = stack((
         {
             let session = session.clone();
+            let active_preview = active_preview;
             toggle_row(
                 "Auto reload on save",
                 Some("Hot reload after Dart source files change"),
@@ -171,6 +173,14 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 },
                 config,
             )
+            .style(move |s| {
+                s.apply_if(
+                    active_preview
+                        .get()
+                        .is_some_and(|preview| preview.widgets),
+                    |s| s.hide(),
+                )
+            })
         },
         toggle_row(
             "Swipe navigation",
@@ -338,7 +348,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         crate::panel::chrome::header(
             window,
             PanelKind::MobilePreview,
-            "Mobile Preview",
+            "Flutter Preview",
             empty(),
         ),
         notice,
@@ -405,10 +415,10 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 ))
                 .style(|s| s.items_center().gap(5.0).width_full()),
                 stack((
-                    button(|| "Run app", ButtonKind::Primary, config)
+                    button(|| "Run app", ButtonKind::Outlined, config)
                         .on_click_stop(move |_| run(Mode::App))
                         .style(|s| s.padding(6.0)),
-                    button(|| "Widget Previews", ButtonKind::Outlined, config)
+                    button(|| "Widget Previewer", ButtonKind::Primary, config)
                         .on_click_stop(move |_| widgets(Mode::Widgets))
                         .style(|s| s.padding(6.0)),
                     button(|| "Hot reload", ButtonKind::Outlined, config)
@@ -425,6 +435,24 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     s.items_center()
                         .gap(6.0)
                         .flex_wrap(floem::style::FlexWrap::Wrap)
+                }),
+                label(|| {
+                    "Flutter's Widget Previewer renders @Preview-annotated widgets. Device \
+                     controls emulate the browser viewport; annotations can set their own \
+                     size, theme, brightness and localizations. Sparrow's reload buttons and \
+                     save watcher apply to Run app mode only."
+                })
+                .style(move |s| {
+                    s.width_full()
+                        .min_width(0)
+                        .font_size(11.0)
+                        .color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+                        .apply_if(
+                            !active_preview
+                                .get()
+                                .is_some_and(|preview| preview.widgets),
+                            |s| s.hide(),
+                        )
                 }),
                 settings,
                 label(move || status.get()).style(move |s| {

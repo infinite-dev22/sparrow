@@ -11,3 +11,4 @@
 - Keep the project-type picker as an always-visible radio group and the file-picker/Git action popups as action menus; neither represents a persistent selected value.
 - Migrate value-selection menus to `dropdown_with_label` with stable source values; use display-label closures only for presentation.
 - Mark Workstream A partially verified until the documented multi-screen UI script can be run; passing component tests do not establish visual or keyboard acceptance.
+- Keep Flutter's official Widget Previewer as the widget catalog and do not rewrite/inject user source; apply Sparrow's device profile to the browser context while Flutter `@Preview` metadata owns per-widget settings.

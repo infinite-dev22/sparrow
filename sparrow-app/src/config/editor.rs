@@ -215,7 +215,7 @@ pub struct EditorConfig {
     #[field_names(desc = "Whether the editor show indent guide.")]
     pub show_indent_guide: bool,
     #[field_names(
-        desc = "Set the auto save delay (in milliseconds), Set to 0 to completely disable"
+        desc = "Delay after the last edit before saving (in milliseconds). Set to 0 to disable autosave."
     )]
     pub autosave_interval: u64,
     #[field_names(

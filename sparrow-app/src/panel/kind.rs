@@ -61,7 +61,7 @@ impl PanelKind {
             Self::Notifications => "Notifications",
             Self::PullRequests => "Pull Requests",
             Self::RunningDevices => "Running Devices",
-            Self::MobilePreview => "Mobile Preview",
+            Self::MobilePreview => "Flutter Preview",
             Self::CallHierarchy => "Call Hierarchy",
             Self::References => "Find Usages",
             Self::Implementation => "Implementations",
@@ -135,12 +135,14 @@ impl PanelKind {
             PanelKind::Problems | PanelKind::Logcat | PanelKind::GitHistory => {
                 PanelPosition::BottomLeft
             }
-            PanelKind::Notifications | PanelKind::RunningDevices | PanelKind::MobilePreview => {
-                PanelPosition::RightTop
-            }
+            PanelKind::Notifications
+            | PanelKind::RunningDevices
+            | PanelKind::MobilePreview => PanelPosition::RightTop,
             PanelKind::PullRequests => PanelPosition::LeftTop,
             PanelKind::Terminal => PanelPosition::BottomLeft,
-            PanelKind::FileExplorer | PanelKind::ResourceManager => PanelPosition::LeftTop,
+            PanelKind::FileExplorer | PanelKind::ResourceManager => {
+                PanelPosition::LeftTop
+            }
             PanelKind::SourceControl => PanelPosition::LeftTop,
             PanelKind::Plugin => PanelPosition::LeftTop,
             PanelKind::Search => PanelPosition::BottomLeft,

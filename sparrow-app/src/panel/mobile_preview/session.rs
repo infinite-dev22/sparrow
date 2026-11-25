@@ -155,7 +155,7 @@ impl Session {
             });
         let logs = self.logs.get_untracked().join("\n");
         format!(
-            "Sparrow {} Mobile Preview\nOS: {}\nRuntime: {}\nMode: {mode}\nDevice: {device_name}\nViewport: {viewport}\nLocale: {}\nDark mode: {}\nAuto reload on save: {}\nRecent events:\n{logs}",
+            "Sparrow {} Flutter Preview\nOS: {}\nRuntime: {}\nMode: {mode}\nDevice: {device_name}\nViewport: {viewport}\nLocale: {}\nDark mode: {}\nAuto reload on save: {}\nRecent events:\n{logs}",
             env!("CARGO_PKG_VERSION"),
             std::env::consts::OS,
             self.flutter_runtime_version.get_untracked(),
@@ -183,17 +183,6 @@ impl Session {
 
     pub fn viewport(&self) -> Option<Viewport> {
         let dark = self.dark.get();
-        if self.active.get().is_some_and(|entry| entry.widgets) {
-            return Some(Viewport {
-                size: (800, 760),
-                scale: 1.0,
-                landscape: false,
-                dark,
-                ios: false,
-                mobile: false,
-                locale: self.locale.get(),
-            });
-        }
         Some(Viewport::new(
             self.display()?,
             self.landscape.get(),
@@ -335,7 +324,13 @@ impl Session {
                         Mode::App => "Flutter app preview is ready.",
                         Mode::Widgets => "Flutter Widget Previewer is ready.",
                     });
-                    session.status.set("Flutter preview is ready.".into());
+                    session.status.set(match mode {
+                        Mode::App => "Flutter app preview is ready.".into(),
+                        Mode::Widgets => {
+                            "Widget Previewer is ready. Select an @Preview to inspect it."
+                                .into()
+                        }
+                    });
                     session.open(App {
                         url,
                         widgets: mode == Mode::Widgets,
@@ -488,7 +483,6 @@ impl Session {
 
     pub fn shutdown(&self) {
         self.engine.borrow_mut().take();
-        self.can_reload.set(false);
         for server in &self.servers {
             if let Some(server) = server.borrow_mut().take() {
                 let _ = server.send(server::ServerCommand::Stop);
@@ -549,5 +543,52 @@ mod tests {
         assert!(!report.contains("secret"));
         assert!(!report.contains("Sensitive source"));
         assert_eq!(session.logs.get_untracked().len(), 50);
+    }
+
+    #[test]
+    fn widget_preview_viewport_follows_device_and_environment_settings() {
+        let session = Session::new(true);
+        session.active.set(Some(App {
+            url: "http://localhost".into(),
+            widgets: true,
+        }));
+        session
+            .device
+            .set(DeviceChoice::Preset("iphone-18-pro".into()));
+        session.landscape.set(true);
+        session.dark.set(true);
+        session.locale.set(PreviewLocale::FrenchFrance);
+
+        let viewport = session.viewport().unwrap();
+        let device = session.device.get_untracked().device().unwrap();
+        assert_eq!(
+            viewport,
+            Viewport::new(
+                device.display,
+                true,
+                true,
+                device.ios,
+                PreviewLocale::FrenchFrance,
+            )
+        );
+        assert!(viewport.mobile);
+    }
+
+    #[test]
+    fn shutdown_does_not_update_reactive_view_state() {
+        let session = Session::new(true);
+        session.can_reload.set(true);
+        let can_reload = session.can_reload;
+        let updates = create_rw_signal(0);
+        let observed_updates = updates;
+        create_effect(move |_| {
+            can_reload.get();
+            observed_updates.update(|updates| *updates += 1);
+        });
+        assert_eq!(updates.get_untracked(), 1);
+
+        session.shutdown();
+
+        assert_eq!(updates.get_untracked(), 1);
     }
 }
