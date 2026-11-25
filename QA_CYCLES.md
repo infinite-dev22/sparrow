@@ -59,3 +59,11 @@
 - PR panel unit tests verify GitHub/GHES remote parsing, detail/diff/comment rendering, and local validation of required creation fields. Detail and list pagination enforce 500-item and 2,000-PR safety caps.
 - `cargo test -p sparrow-app`: 492 passed, 0 failed, 17 ignored; doc tests: 0 failures, 8 ignored. Existing unused `Icon::Theme` warning remains.
 - No real token, OS keyring service, private repository, Git operation over HTTPS, or desktop UI was exercised. Human verification remains required before relying on OS keyring or private remote behavior.
+
+## Cycle F — Local AI commit messages
+
+- Local loopback validation rejects remote endpoints and credentials; the mock Ollama server verifies `/api/tags`, `/v1/chat/completions`, model selection, bounded output tokens, and the redacted prompt body.
+- Context tests cover checked added/tracked files, excluded `.env`, private-key/token/authorization redaction, path traversal rejection, diff limits, and subject cleanup. The implementation disables external diff/textconv and caps tracked Git output.
+- `cargo test -p sparrow-app ai_commit -- --nocapture`: 6 passed, 0 failed. No live Ollama model or desktop interaction was used.
+- `cargo test -p sparrow-app --locked -- --quiet`: 498 passed, 0 failed, 17 ignored; doc tests: 0 failures, 8 ignored. `cargo check -p sparrow-app --locked`, targeted Rust formatting, and `git diff --check` passed.
+- Cloud providers, OAuth, real consent, cancellation, style matching, and per-repository disable remain partial/unimplemented; see `BUGS.md` and `QUESTIONS.md`.

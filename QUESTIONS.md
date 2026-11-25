@@ -9,3 +9,4 @@
 - VCS credential follow-up: live-check Keychain, Credential Manager, and Linux Secret Service behavior; no kernel-keyutils backend or encrypted-file fallback is selected.
 - VCS human check: validate a real GitHub/GHES token, private PR list/detail/create, and private HTTPS clone/fetch/push. Confirm logs, process arguments, and `.git/config` do not contain the secret; no real credentials or remote mutations were used unattended.
 - VCS scope: GitHub-compatible PR list, details/files/comments, and create are implemented; merge/close and GitLab/Bitbucket APIs remain out of scope. Generic HTTPS auth is for Git only.
+- F provider status: local Ollama is implemented as the no-account/no-cloud path. BYO endpoints, cloud consent, OpenRouter OAuth, and GitHub Models are not implemented; no AI key is stored or sent.

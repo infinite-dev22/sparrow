@@ -2,13 +2,7 @@ mod projects;
 
 use std::{rc::Rc, sync::Arc};
 
-use floem::{
-    View,
-    reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal, use_context},
-    views::editor::{core::register::Clipboard, text::SystemClipboard},
-    views::{Decorators, dyn_stack, empty, label, stack, svg},
-};
-
+use crate::widgets::{IconButtonStyle, icon_button};
 use crate::{
     command::{SparrowWorkbenchCommand as Command, WindowCommand},
     config::{color::SparrowColor, icon::SparrowIcons},
@@ -19,6 +13,13 @@ use crate::{
         sparrow_scroll, text_input,
     },
     window_tab::WindowTabData,
+};
+use floem::views::v_stack;
+use floem::{
+    View,
+    reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal, use_context},
+    views::editor::{core::register::Clipboard, text::SystemClipboard},
+    views::{Decorators, dyn_stack, empty, label, stack, svg},
 };
 
 #[derive(Clone, Copy)]
@@ -80,8 +81,8 @@ pub(super) fn view(tab: Rc<WindowTabData>) -> impl View {
     let query = create_rw_signal(String::new());
     let actions = [
         ("New Flutter Project", WelcomeAction::Flutter),
-        ("New Project…", WelcomeAction::NewProject),
-        ("Open…", WelcomeAction::Open),
+        ("New Project", WelcomeAction::NewProject),
+        ("Open", WelcomeAction::Open),
     ];
     let toolbar = stack((
         text_input(query, config)
@@ -233,21 +234,42 @@ pub(super) fn view(tab: Rc<WindowTabData>) -> impl View {
     });
     stack((
         stack((
-            svg(|| {
-                include_str!("../../../icons/sparrow/sparrow_logo.svg").to_owned()
-            })
-            .style(|s| s.size(34, 34)),
-            label(|| "Sparrow").style(|s| s.font_size(20.0).font_bold()),
-            label(|| sparrow_core::meta::VERSION).style(move |s| {
-                s.color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))
+            stack((
+                svg(|| {
+                    include_str!("../../../icons/sparrow/sparrow_logo.svg")
+                        .to_owned()
+                })
+                .style(|s| s.size(34, 34)),
+                stack((
+                    label(|| "Sparrow").style(|s| s.font_size(18.0).font_bold()),
+                    label(|| sparrow_core::meta::VERSION).style(move |s| {
+                        s.color(
+                            config.get().color(SparrowColor::PANEL_FOREGROUND_DIM),
+                        )
+                    }),
+                ))
+                .style(move |s| {
+                    s.flex_shrink(0.0_f32)
+                        .height_full()
+                        .flex_col()
+                        .items_start()
+                }),
+            ))
+            .style(move |s| {
+                s.flex_shrink(0.0_f32).width_full().flex_row().items_start()
             }),
             empty().style(|s| s.flex_grow(1.0_f32)),
-            button(|| "Settings", ButtonKind::Plain, config)
-                .on_click_stop(move |_| workbench.send(Command::OpenSettings))
-                .style(|s| s.height(30).padding_horiz(12)),
+            icon_button(
+                || SparrowIcons::SETTINGS,
+                move || "Settings",
+                config,
+                IconButtonStyle::default,
+            )
+            .on_click_stop(move |_| workbench.send(Command::OpenSettings))
+            .style(|s| s.height(30).padding_horiz(12)),
         ))
         .style(move |s| {
-            s.width(174)
+            s.width(200)
                 .flex_shrink(0.0_f32)
                 .height_full()
                 .flex_col()
@@ -286,7 +308,7 @@ pub(super) fn view(tab: Rc<WindowTabData>) -> impl View {
                     },
                 ),
                 initial_actions,
-                button(|| "Clone Repository…", ButtonKind::Plain, config)
+                button(|| "Clone Repository", ButtonKind::Plain, config)
                     .on_click_stop(move |_| workbench.send(Command::CloneRepository))
                     .style(|s| s.height(28).padding_horiz(12)),
             ))

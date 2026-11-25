@@ -1,4 +1,5 @@
 pub mod about;
+pub mod ai_commit;
 pub mod app;
 pub mod code_action;
 pub mod code_lens;

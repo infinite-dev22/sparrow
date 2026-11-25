@@ -77,6 +77,10 @@ use crate::{
 use workbench::workbench;
 use workspace_tabs::workspace_tab_header;
 
+/// Fixed size of the welcome / project-chooser window. Always used when a
+/// window opens without a project, regardless of any remembered size.
+pub(crate) const WELCOME_WINDOW_SIZE: Size = Size::new(800.0, 650.0);
+
 pub(crate) fn sparrow_window_config() -> WindowConfig {
     WindowConfig::default().app_id("dev.sparrow.sparrow")
 }
@@ -188,14 +192,19 @@ impl AppData {
             }
             return;
         }
+        let welcome = folder.is_none();
         let config = self
             .active_window()
+            .filter(|_| !welcome)
             .map(|window| {
                 self.default_window_config()
                     .size(window.common.size.get_untracked())
                     .position(window.position.get_untracked() + (50.0, 50.0))
             })
             .or_else(|| {
+                if welcome {
+                    return None;
+                }
                 let db: Arc<SparrowDb> = use_context().unwrap();
                 db.get_window().ok().map(|info| {
                     self.default_window_config()
@@ -204,7 +213,11 @@ impl AppData {
                 })
             })
             .unwrap_or_else(|| {
-                self.default_window_config().size(Size::new(800.0, 600.0))
+                self.default_window_config().size(if welcome {
+                    WELCOME_WINDOW_SIZE
+                } else {
+                    Size::new(800.0, 600.0)
+                })
             });
         let config = if cfg!(target_os = "macos")
             || self.config.get_untracked().core.custom_titlebar
@@ -316,7 +329,20 @@ impl AppData {
         {
             workspace.path = None;
         }
-        let files = paths.into_iter().filter(|path| !path.is_dir).collect();
+        let files: Vec<PathObject> = paths.into_iter().filter(|path| !path.is_dir).collect();
+        // No project to open → always show the welcome window at its fixed size.
+        let showing_welcome = info
+            .tabs
+            .workspaces
+            .get(info.tabs.active_tab)
+            .is_some_and(|workspace| {
+                workspace.path.is_none() && !workspace.kind.is_remote()
+            })
+            && files.is_empty();
+        if showing_welcome {
+            info.size = WELCOME_WINDOW_SIZE;
+            info.maximised = false;
+        }
         let config = self.default_window_config().size(info.size).position(info.pos);
         let config = if cfg!(target_os = "macos") || self.config.get_untracked().core.custom_titlebar {
             config.show_titlebar(false)
@@ -491,19 +517,19 @@ impl AppData {
                     },
                 ),
             ))
-            .debug_name("Drag Resize Areas")
-            .style(move |s| {
-                s.absolute()
-                    .size_full()
-                    .apply_if(
-                        cfg!(target_os = "macos")
-                            || !config.get_untracked().core.custom_titlebar,
-                        |s| s.hide(),
-                    )
-                    .pointer_events_none()
-            }),
+                .debug_name("Drag Resize Areas")
+                .style(move |s| {
+                    s.absolute()
+                        .size_full()
+                        .apply_if(
+                            cfg!(target_os = "macos")
+                                || !config.get_untracked().core.custom_titlebar,
+                            |s| s.hide(),
+                        )
+                        .pointer_events_none()
+                }),
         ))
-        .style(|s| s.flex_col().size_full());
+            .style(|s| s.flex_col().size_full());
         let view_id = view.id();
         app_view_id.set(view_id);
 
@@ -518,8 +544,8 @@ impl AppData {
                 if let Event::KeyUp(key) = event {
                     if key.key.logical_key
                         == floem::keyboard::Key::Named(
-                            floem::keyboard::NamedKey::Escape,
-                        )
+                        floem::keyboard::NamedKey::Escape,
+                    )
                     {
                         if crate::widgets::modal_focus::consume_popup_escape()
                             || crate::widgets::modal_focus::external_dialog_active()
@@ -585,9 +611,9 @@ impl AppData {
                     // retaining Floem focus for Tab navigation to its actions.
                     if tab.file_explorer.naming.with_untracked(|naming| naming.state().is_none())
                         && tab.common.focus.get_untracked()
-                            != crate::window_tab::Focus::Panel(
-                                crate::panel::kind::PanelKind::SourceControl,
-                            )
+                        != crate::window_tab::Focus::Panel(
+                        crate::panel::kind::PanelKind::SourceControl,
+                    )
                     {
                         view_id.request_focus();
                     }
@@ -733,19 +759,19 @@ fn window_tab(
                 config,
             ).style(move |s| s.apply_if(is_welcome(), |s| s.hide())),
         ))
-        .on_resize(move |rect| {
-            layout_rect.set(rect);
-        })
-        .on_move(move |point| {
-            window_origin.set(point);
-        })
-        .style(move |s| {
-            s.size_full().flex_col().background(
-                config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
-            )
-        })
-        .disabled(modal_open)
-        .debug_name("Base Layer"),
+            .on_resize(move |rect| {
+                layout_rect.set(rect);
+            })
+            .on_move(move |point| {
+                window_origin.set(point);
+            })
+            .style(move |s| {
+                s.size_full().flex_col().background(
+                    config.get().color(SparrowColor::SPARROW_WINDOW_BACKGROUND),
+                )
+            })
+            .disabled(modal_open)
+            .debug_name("Base Layer"),
         completion(window_tab_data.clone()).disabled(modal_open),
         signature_help(window_tab_data.clone()).disabled(modal_open),
         hover(window_tab_data.clone()).disabled(modal_open),
@@ -770,42 +796,42 @@ fn window_tab(
         branch_switcher(window_tab_data.clone(), branch_chip_origin),
         device_selector_overlay(window_tab_data.clone(), device_chip_origin),
     ))
-    .on_cleanup(move || {
-        inspections.cancel();
-        window_tab_scope.dispose();
-    })
-    .on_event_cont(EventListener::PointerMove, move |event| {
-        if let Event::PointerMove(pointer) = event {
-            crate::widgets::popup_menu::pointer(pointer.pos);
-        }
-        if hover_active.get_untracked() {
-            hover_active.set(false);
-        }
-    })
-    .style(move |s| {
-        let config = config.get();
-        s.size_full()
-            .color(config.color(SparrowColor::EDITOR_FOREGROUND))
-            .background(config.color(SparrowColor::EDITOR_BACKGROUND))
-            .font_size(config.ui.font_size() as f32)
-            .line_height(1.4)
-            .apply_if(!config.ui.font_family.is_empty(), |s| {
-                s.font_family(config.ui.font_family.clone())
-            })
-            .class(floem::views::scroll::Handle, |s| {
-                s.background(config.color(SparrowColor::SPARROW_SCROLL_BAR))
-            })
-    })
-    .on_event_cont(EventListener::WindowLostFocus, {
-        let view_id = window_tab_data.common.view_id;
-        move |_| {
-            crate::widgets::tooltip::dismiss_window(view_id.get_untracked());
-            for menu in title_menus {
-                menu.set(false);
+        .on_cleanup(move || {
+            inspections.cancel();
+            window_tab_scope.dispose();
+        })
+        .on_event_cont(EventListener::PointerMove, move |event| {
+            if let Event::PointerMove(pointer) = event {
+                crate::widgets::popup_menu::pointer(pointer.pos);
             }
-        }
-    })
-    .debug_name("Window Tab");
+            if hover_active.get_untracked() {
+                hover_active.set(false);
+            }
+        })
+        .style(move |s| {
+            let config = config.get();
+            s.size_full()
+                .color(config.color(SparrowColor::EDITOR_FOREGROUND))
+                .background(config.color(SparrowColor::EDITOR_BACKGROUND))
+                .font_size(config.ui.font_size() as f32)
+                .line_height(1.4)
+                .apply_if(!config.ui.font_family.is_empty(), |s| {
+                    s.font_family(config.ui.font_family.clone())
+                })
+                .class(floem::views::scroll::Handle, |s| {
+                    s.background(config.color(SparrowColor::SPARROW_SCROLL_BAR))
+                })
+        })
+        .on_event_cont(EventListener::WindowLostFocus, {
+            let view_id = window_tab_data.common.view_id;
+            move |_| {
+                crate::widgets::tooltip::dismiss_window(view_id.get_untracked());
+                for menu in title_menus {
+                    menu.set(false);
+                }
+            }
+        })
+        .debug_name("Window Tab");
 
     let view_id = view.id();
     window_tab_data.common.view_id.set(view_id);
@@ -827,53 +853,53 @@ fn window(window_data: WindowData) -> impl View {
     tab(active, items, key, move |(_, window_tab_data)| {
         window_tab(window_tab_data, window_tabs)
     })
-    .window_title(move || {
-        let active = active();
-        let window_tabs = window_tabs.get();
-        let workspace = window_tabs
-            .get(active)
-            .or_else(|| window_tabs.last())
-            .and_then(|(_, window_tab)| window_tab.workspace.display());
-        match workspace {
-            Some(workspace) => format!("{workspace} - Sparrow"),
-            None => "Sparrow".to_string(),
-        }
-    })
-    .on_event_stop(EventListener::ImeEnabled, move |_| {
-        ime_enabled.set(true);
-    })
-    .on_event_stop(EventListener::ImeDisabled, move |_| {
-        ime_enabled.set(false);
-    })
-    .on_event_cont(EventListener::WindowGotFocus, move |_| {
-        window_focus.set(true);
-    })
-    .on_event_cont(EventListener::WindowMaximizeChanged, move |event| {
-        if let Event::WindowMaximizeChanged(maximized) = event {
-            window_maximized.set(*maximized);
-        }
-    })
-    .window_menu(move || {
-        window_focus.track();
-        let active = active();
-        let window_tabs = window_tabs.get();
-        let window_tab = window_tabs.get(active).or_else(|| window_tabs.last());
-        if let Some((_, window_tab)) = window_tab {
-            window_tab.common.keypress.track();
-            let workbench_command = window_tab.common.workbench_command;
-            let sparrow_command = window_tab.common.sparrow_command;
-            window_menu(
-                sparrow_command,
-                workbench_command,
-                crate::menus::MenuContext::from_window(window_tab),
-            )
-            .into_native()
-        } else {
-            Menu::new("Sparrow").into_native()
-        }
-    })
-    .style(|s| s.size_full())
-    .debug_name("Window")
+        .window_title(move || {
+            let active = active();
+            let window_tabs = window_tabs.get();
+            let workspace = window_tabs
+                .get(active)
+                .or_else(|| window_tabs.last())
+                .and_then(|(_, window_tab)| window_tab.workspace.display());
+            match workspace {
+                Some(workspace) => format!("{workspace} - Sparrow"),
+                None => "Sparrow".to_string(),
+            }
+        })
+        .on_event_stop(EventListener::ImeEnabled, move |_| {
+            ime_enabled.set(true);
+        })
+        .on_event_stop(EventListener::ImeDisabled, move |_| {
+            ime_enabled.set(false);
+        })
+        .on_event_cont(EventListener::WindowGotFocus, move |_| {
+            window_focus.set(true);
+        })
+        .on_event_cont(EventListener::WindowMaximizeChanged, move |event| {
+            if let Event::WindowMaximizeChanged(maximized) = event {
+                window_maximized.set(*maximized);
+            }
+        })
+        .window_menu(move || {
+            window_focus.track();
+            let active = active();
+            let window_tabs = window_tabs.get();
+            let window_tab = window_tabs.get(active).or_else(|| window_tabs.last());
+            if let Some((_, window_tab)) = window_tab {
+                window_tab.common.keypress.track();
+                let workbench_command = window_tab.common.workbench_command;
+                let sparrow_command = window_tab.common.sparrow_command;
+                window_menu(
+                    sparrow_command,
+                    workbench_command,
+                    crate::menus::MenuContext::from_window(window_tab),
+                )
+                    .into_native()
+            } else {
+                Menu::new("Sparrow").into_native()
+            }
+        })
+        .style(|s| s.size_full())
+        .debug_name("Window")
 }
 
 pub fn launch() {
@@ -896,17 +922,17 @@ pub fn launch() {
             include_bytes!(
                 "../../extra/fonts/MaterialIcons/MaterialIcons-Regular.otf"
             )
-            .as_slice(),
+                .as_slice(),
             include_bytes!("../../extra/fonts/Inter/Inter-Regular.otf").as_slice(),
             include_bytes!("../../extra/fonts/Inter/Inter-SemiBold.otf").as_slice(),
             include_bytes!(
                 "../../extra/fonts/JetBrainsMono/JetBrainsMono-Regular.ttf"
             )
-            .as_slice(),
+                .as_slice(),
             include_bytes!(
                 "../../extra/fonts/JetBrainsMono/JetBrainsMono-Italic.ttf"
             )
-            .as_slice(),
+                .as_slice(),
             include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-Medium.ttf")
                 .as_slice(),
             include_bytes!("../../extra/fonts/JetBrainsMono/JetBrainsMono-MediumItalic.ttf")
@@ -923,12 +949,12 @@ pub fn launch() {
         }
 
         const FONT_DEJAVU_SANS_REGULAR: &[u8] = include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../extra/fonts/DejaVu/DejaVuSans.ttf"
+        env!("CARGO_MANIFEST_DIR"),
+        "/../extra/fonts/DejaVu/DejaVuSans.ttf"
         ));
         const FONT_DEJAVU_SANS_MONO_REGULAR: &[u8] = include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../extra/fonts/DejaVu/DejaVuSansMono.ttf"
+        env!("CARGO_MANIFEST_DIR"),
+        "/../extra/fonts/DejaVu/DejaVuSansMono.ttf"
         ));
 
         FONT_SYSTEM
@@ -1256,7 +1282,7 @@ pub fn launch() {
             }
         }
     })
-    .run();
+        .run();
 }
 
 /// Uses a login shell to load the correct shell environment for the current user.
@@ -1795,7 +1821,7 @@ pub fn window_menu(
                         serde_json::to_value(
                             crate::panel::kind::PanelKind::DeviceManager,
                         )
-                        .expect("panel kind serializes"),
+                            .expect("panel kind serializes"),
                     ),
                 });
             }))
@@ -1814,7 +1840,7 @@ pub fn window_menu(
                                 serde_json::to_value(
                                     crate::panel::kind::PanelKind::WidgetTree,
                                 )
-                                .expect("panel kind serializes"),
+                                    .expect("panel kind serializes"),
                             ),
                         });
                     }))
@@ -1825,7 +1851,7 @@ pub fn window_menu(
                                 serde_json::to_value(
                                     crate::panel::kind::PanelKind::DartOutline,
                                 )
-                                .expect("panel kind serializes"),
+                                    .expect("panel kind serializes"),
                             ),
                         });
                     })),
@@ -1841,7 +1867,7 @@ pub fn window_menu(
                     data: serde_json::to_value(
                         crate::panel::kind::PanelKind::SourceControl,
                     )
-                    .ok(),
+                        .ok(),
                 });
             }))
             .entry(MenuItem::new("Push...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["push"]))})))
@@ -1862,7 +1888,7 @@ pub fn window_menu(
                     data: serde_json::to_value(
                         crate::panel::kind::PanelKind::GitHistory,
                     )
-                    .ok(),
+                        .ok(),
                 });
             }))
             .entry(MenuItem::new("Manage Remotes...").action(move ||sparrow_command.send(SparrowCommand{kind:CommandKind::Workbench(GitCommand),data:Some(serde_json::json!(["remote", "-v"]))})))

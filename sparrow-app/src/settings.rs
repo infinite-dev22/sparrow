@@ -16,8 +16,8 @@ use sparrow_rpc::plugin::VoltID;
 use crate::{
     command::CommandExecuted,
     config::{
-        DropdownInfo, core::CoreConfig, editor::EditorConfig,
-        terminal::TerminalConfig, ui::UIConfig,
+        DropdownInfo, ai_commit::AiCommitConfig, core::CoreConfig,
+        editor::EditorConfig, terminal::TerminalConfig, ui::UIConfig,
     },
     keypress::KeyPressFocus,
     plugin::InstalledVoltData,
@@ -146,6 +146,12 @@ impl SettingsData {
                     &CoreConfig::FIELDS[..],
                     &CoreConfig::DESCS[..],
                     into_settings_map(&config.core),
+                ),
+                (
+                    "AI-Commit",
+                    &AiCommitConfig::FIELDS[..],
+                    &AiCommitConfig::DESCS[..],
+                    into_settings_map(&config.ai_commit),
                 ),
                 (
                     "Editor",

@@ -152,3 +152,28 @@
 - The PR panel now paginates through up to 2,000 requests, displays detail/file patches and conversation/review comments (up to 500 items for each endpoint), and creates a request only after an explicit user action. Private-repository auth failures expose an action that opens Version Control account settings.
 - Focused PR tests passed (4 passed, 1 ignored); credential tests passed (11) and Git action tests passed (3). Full `cargo test -p sparrow-app` passed (492 passed, 0 failed, 17 ignored; doc tests 0 failed, 8 ignored). Local HTTP mocks verified bearer headers, scope metadata, POST JSON, and that tokens are not put in request URLs. Git unit tests cover HTTP credential rejection/output redaction and remote selection.
 - No live token/account, private repository, clone, fetch, push, real remote mutation, or functioning OS credential-store interaction was used. Keyring integration, GitHub Enterprise API compatibility, and the account/PR UI still need human verification. PR merge/close controls and GitLab/Bitbucket PR APIs are not implemented; no such action existed in the prior panel.
+
+## Workstream F — AI commit messages audit and plan
+
+### Audit (before implementation)
+
+- `SourceControlData` contains the commit-message `EditorData`, checked `file_diffs`, amend state, and commit status. The panel already has a commit text editor plus Commit/Commit and Push buttons.
+- `commit_with_options` snapshots only checked `FileDiff` values and the current message, then runs `commit_selected` on a worker; the proxy commits only those paths. `FileDiff` contains paths/kinds, not reusable diff text.
+- There is no AI provider/client, model picker, consent flow, token storage for AI, or AI settings page. `reqwest` is already available.
+- Existing credential storage can safely inspire but must not reuse the VCS service/account identity for unrelated AI keys. No shared provider key will be added.
+- Verified Ollama's current API docs: `GET /api/tags` lists local models; the local OpenAI-compatible endpoint is `POST /v1/chat/completions`, and local server requests do not require a key. No model will be downloaded or installed by Sparrow.
+
+### Plan and scope
+
+1. Build prompt context from the exact selected `FileDiff` set, exclude sensitive/generated/binary files, cap the diff, and redact secret patterns before a request.
+2. Provide local Ollama, runtime model listing, click-only generation, and exact prompt preview; do not add a cloud endpoint or embed a key.
+3. Keep all endpoint/settings data non-secret; add mock-server tests for local model listing/completion, invalid endpoints, output bounds, and redaction.
+4. Add the commit-panel control and AI settings; leave cloud providers visibly unsupported rather than claiming the full F acceptance.
+
+### F implementation and known gaps
+
+- `SparrowConfig.ai_commit` provides the local endpoint, installed model, style, language, diff-size cap, exclusions, and enable flag. Settings can refresh/save model selection; the Source Control AI control lists local Ollama models, builds the preview from only checked paths, displays the exact redacted system/user prompt, and supports generated-subject edit/replace/append without committing.
+- The service accepts only `localhost`, `127.0.0.1`, or `::1` over HTTP with proxies disabled. It limits the generated token count and response bytes, bounds Git diff output, disables external diff/textconv, excludes configured sensitive/generated patterns, redacts common credential/private-key forms, and re-redacts generated output. No cloud endpoint or key field is present.
+- Six focused tests pass: selected paths/exclusions/redaction/capping, bounded path-scoped tracked diff and traversal rejection, private-key/authorization/key redaction, loopback-only validation, subject cleanup, and a local Ollama mock for model discovery/completion. UI visual acceptance and real Ollama execution were not available.
+- Final verification: `cargo test -p sparrow-app --locked -- --quiet` passed (498 passed, 0 failed, 17 ignored; doc tests 0 failed, 8 ignored); `cargo check -p sparrow-app --locked`, targeted `rustfmt --check`, and `git diff --check` passed. Three existing unused-import/dead-code warnings remain in the pre-existing welcome/input/branch-switcher code.
+- Still partial: OpenRouter PKCE, GitHub Models, BYO/OpenAI-compatible cloud endpoints with consent/keyring, streaming and cancellation, per-repository disable, recent-commit style matching, provider-specific terms, and the manual live-provider script. The panel's Close hides its preview but cannot interrupt a blocking inference request; the local request has a 90-second timeout.

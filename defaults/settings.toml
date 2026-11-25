@@ -11,6 +11,15 @@ file-explorer-double-click = true
 auto-reload-on-save = true
 approximation-notice-dismissed = false
 
+[ai-commit]
+enabled = true
+base-url = "http://127.0.0.1:11434"
+model = ""
+style = "imperative"
+language = "English"
+max-diff-chars = 20000
+exclude-globs = "**/.env*,**/*.pem,**/*.key,**/*.p12,**/*.pfx,**/*.keystore,**/id_rsa*,**/id_ed25519*,**/secrets/**,**/.sparrow/**,**/target/**,**/build/**,**/.dart_tool/**,**/*.min.js,**/*.map,**/Cargo.lock,**/pubspec.lock"
+
 [editor]
 font-family = "JetBrains Mono, Noto Sans Mono, monospace"
 font-size = 14

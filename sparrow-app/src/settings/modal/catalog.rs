@@ -19,6 +19,7 @@ pub(super) enum Page {
     Plugins,
     VersionControl,
     Git,
+    AiCommit,
     Run,
     RunConfigurations,
     Debugger,
@@ -57,6 +58,12 @@ pub(super) const PAGES: &[(Page, &str, &str, Option<Page>)] = &[
     (Plugins, "themes", "Plugins and Themes", None),
     (VersionControl, "version-control", "Version Control", None),
     (Git, "git", "Git", Some(VersionControl)),
+    (
+        AiCommit,
+        "ai-commit",
+        "AI Commit Messages",
+        Some(VersionControl),
+    ),
     (Run, "run", "Build, Execution, Deployment", None),
     (
         RunConfigurations,
@@ -110,6 +117,7 @@ impl Page {
             Menus => "menus and toolbars quick actions",
             Keymap => "keymap keyboard shortcuts key bindings",
             VersionControl => "version control git accounts credentials tokens",
+            AiCommit => "ai commit messages ollama local model commit subject",
             Git => "git commit history repository",
             RunConfigurations => "run debug launch configurations",
             Devices => "android devices device manager running devices",
@@ -129,8 +137,11 @@ impl Page {
             Editor => {
                 Some("Configure editing, typography, completion, and diagnostics.")
             }
-            VersionControl => {
-                Some("Manage remote accounts, configure the diff editor, and open repository tools.")
+            VersionControl => Some(
+                "Manage remote accounts, configure the diff editor, and open repository tools.",
+            ),
+            AiCommit => {
+                Some("Configure local Ollama-based commit-message generation.")
             }
             Run => Some("Set up launch configurations and debugger behavior."),
             Languages => {
@@ -147,6 +158,7 @@ impl Page {
 /// Each setting has one owner, independent of which scope is being edited.
 pub(super) fn owner(kind: &str, field: &str) -> Page {
     match (kind, field) {
+        ("ai-commit", _) => AiCommit,
         ("core", "dart-sdk-path") => Dart,
         ("core", "flutter-sdk-path") => Flutter,
         ("core", "color-theme" | "icon-theme" | "custom-titlebar") => Appearance,

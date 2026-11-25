@@ -31,6 +31,7 @@ use self::{
 };
 use crate::workspace::{SparrowWorkspace, SparrowWorkspaceType};
 
+pub mod ai_commit;
 pub mod color;
 pub mod color_theme;
 pub mod core;
@@ -120,6 +121,8 @@ pub struct SparrowConfig {
     pub ui: UIConfig,
     pub editor: EditorConfig,
     pub terminal: TerminalConfig,
+    #[serde(default)]
+    pub ai_commit: ai_commit::AiCommitConfig,
     #[serde(default)]
     pub color_theme: ColorThemeConfig,
     #[serde(default)]

@@ -9,3 +9,10 @@
 ## Unreproduced report
 
 - B1: The reported Mobile Preview startup failure was not reproduced in a clean Flutter 3.50.0 sample. The report remains open pending a sanitized copy/path of the affected Flutter project and its observable status/error; no defect is claimed from the isolated sample alone.
+## F-1 — AI provider coverage incomplete
+
+- **Symptom:** AI commit messages do not yet support the full provider/workflow matrix in the master prompt.
+- **Root cause:** No provider infrastructure existed; this iteration implements the local Ollama path only.
+- **Fix:** Partial; selected-path prompt preview, local model discovery/generation, redaction, limits, and editable suggestions are implemented. Cloud providers remain unavailable.
+- **Regression test:** Six AI tests cover local mocks, path scope, exclusions, truncation, redaction, endpoint validation, and subject cleanup.
+- **Status:** Open / partial; OpenRouter PKCE, GitHub Models, BYO endpoints/consent, streaming/cancel, per-repository disable, and recent-commit style matching remain unimplemented.
