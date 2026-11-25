@@ -40,6 +40,7 @@ crossbeam-channel = { version = "0.5.12" }
 directories       = { version = "4.0.1" }
 flate2            = { version = "1.0" }
 git2              = { version = "0.21.0", features = ["vendored-openssl", "vendored-libgit2"] }
+keyring           = { version = "4.2.0", default-features = false, features = ["v1"] }
 globset           = { version = "0.4.14" }
 hashbrown         = { version = "0.14.5", features = ["serde"] }
 im                = { version = "15.0.0", features = ["serde"] }
@@ -66,6 +67,7 @@ thiserror         = { version = "1.0" }
 toml              = { version = "*" }
 toml_edit         = { version = "0.20.2", features = ["serde"] }
 url               = { version = "2.5.0" }
+zeroize           = "1"
 zstd              = { version = "0.11.2" }
 tungstenite       = { version = "0.30.0" }
 

@@ -20,6 +20,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+mod accounts;
 mod catalog;
 mod form;
 mod layout;
@@ -662,6 +663,10 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     )
     .style(|s| s.flex_col().width_full());
     let tools_window = window.clone();
+    let account_settings =
+        accounts::view(config, window.notifications).style(move |s| {
+            s.apply_if(displayed_page.get() != Page::VersionControl, |s| s.hide())
+        });
     let tools_keyboard = keyboard.clone();
     let external_buttons = dyn_stack(
         move || {
@@ -905,6 +910,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             stack((
                 overview,
                 external_buttons,
+                account_settings,
                 menu_editor,
                 label(|| "No settings match your search.").style(move |s| {
                     s.margin_top(12.0)

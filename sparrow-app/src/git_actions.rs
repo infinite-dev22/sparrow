@@ -9,12 +9,234 @@ use crate::{
 };
 use floem::reactive::{RwSignal, Scope, SignalGet, SignalUpdate};
 use std::{
+    collections::BTreeSet,
+    path::Path,
     rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
 };
+use zeroize::Zeroizing;
+
+fn contains_embedded_http_credentials(args: &[String]) -> bool {
+    args.iter().any(|argument| {
+        let Some((prefix, remainder)) = argument.split_once("://") else {
+            return false;
+        };
+        let scheme = prefix
+            .rsplit(['=', ':'])
+            .next()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !matches!(scheme.as_str(), "http" | "https") {
+            return false;
+        }
+        let url = format!(
+            "{scheme}://{}",
+            remainder
+                .split(['\'', '"', ',', ' '])
+                .next()
+                .unwrap_or_default()
+        );
+        url::Url::parse(&url).is_ok_and(|url| {
+            !url.username().is_empty()
+                || url.password().is_some()
+                || url.query_pairs().any(|(key, _)| {
+                    matches!(
+                        key.to_ascii_lowercase().as_str(),
+                        "access_token"
+                            | "token"
+                            | "password"
+                            | "secret"
+                            | "api_key"
+                            | "apikey"
+                    )
+                })
+        })
+    })
+}
+
+fn sanitize_git_output(output: &str, secrets: &[Zeroizing<String>]) -> String {
+    let mut output = output.to_string();
+    for secret in secrets {
+        output = crate::vcs_credentials::redact(&output, secret.as_str());
+    }
+    let output = regex::Regex::new(r"(?i)(https?://)[^/@\s]+@")
+        .unwrap()
+        .replace_all(&output, "$1[REDACTED]@")
+        .into_owned();
+    regex::Regex::new(
+        r"(?i)([?&](?:access_token|token|password|secret|api_key|apikey)=)[^&\s]+",
+    )
+    .unwrap()
+    .replace_all(&output, "$1[REDACTED]")
+    .into_owned()
+}
+
+fn remote_url(root: &Path, remote: &str) -> Option<String> {
+    if remote.contains("://") || remote.contains('@') {
+        return Some(remote.to_string());
+    }
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", remote])
+        .current_dir(root)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn configured_remotes(root: &Path) -> Result<Vec<String>, String> {
+    let output = std::process::Command::new("git")
+        .args(["remote"])
+        .current_dir(root)
+        .output()
+        .map_err(|_| "Unable to read configured Git remotes.".to_string())?;
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect())
+}
+
+fn default_remote(root: &Path) -> String {
+    let branch = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|branch| !branch.is_empty());
+    if let Some(branch) = branch
+        && let Ok(output) = std::process::Command::new("git")
+            .args(["config", "--get", &format!("branch.{branch}.remote")])
+            .current_dir(root)
+            .output()
+        && output.status.success()
+    {
+        let remote = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !remote.is_empty() {
+            return remote;
+        }
+    }
+    "origin".into()
+}
+
+fn remote_urls(root: &Path, args: &[String]) -> Result<Vec<String>, String> {
+    let Some(operation) = args.first().map(String::as_str) else {
+        return Ok(Vec::new());
+    };
+    if operation == "clone" {
+        return Ok(args
+            .iter()
+            .skip(1)
+            .find(|arg| {
+                arg.starts_with("https://")
+                    || arg.starts_with("http://")
+                    || arg.starts_with("ssh://")
+                    || (arg.contains('@') && !arg.starts_with('-'))
+            })
+            .cloned()
+            .into_iter()
+            .collect());
+    }
+    if !matches!(operation, "fetch" | "pull" | "push") {
+        return Ok(Vec::new());
+    }
+    if operation == "fetch" && args.iter().any(|arg| arg == "--all") {
+        return Ok(configured_remotes(root)?
+            .iter()
+            .filter_map(|remote| remote_url(root, remote))
+            .collect());
+    }
+    let remotes = configured_remotes(root)?;
+    if let Some(remote) = args.iter().skip(1).find(|arg| remotes.contains(arg)) {
+        return Ok(remote_url(root, remote).into_iter().collect());
+    }
+    if let Some(remote) = args.iter().skip(1).find(|arg| {
+        arg.starts_with("https://")
+            || arg.starts_with("http://")
+            || arg.starts_with("ssh://")
+            || (arg.contains('@') && !arg.starts_with('-'))
+    }) {
+        return Ok(Some(remote.clone()).into_iter().collect());
+    }
+    Ok(remote_url(root, &default_remote(root))
+        .into_iter()
+        .collect())
+}
+
+fn configure_git_auth(
+    command: &mut std::process::Command,
+    root: &Path,
+    args: &[String],
+) -> Result<(Vec<Zeroizing<String>>, bool), String> {
+    let mut hosts = BTreeSet::new();
+    let mut ssh_remote = false;
+    for remote in remote_urls(root, args)? {
+        if remote.starts_with("http://") {
+            continue;
+        }
+        match crate::vcs_credentials::remote_host(&remote) {
+            Ok(crate::vcs_credentials::RemoteHost::Https(host)) => {
+                hosts.insert(host);
+            }
+            Ok(crate::vcs_credentials::RemoteHost::Ssh(_)) => ssh_remote = true,
+            Err(error) if remote.starts_with("https://") => return Err(error),
+            Err(_) => {}
+        }
+    }
+
+    let mut secrets = Vec::new();
+    let mut session_accounts = Vec::new();
+    for host in hosts {
+        let Some(account) = crate::vcs_credentials::active_account(&host)? else {
+            continue;
+        };
+        let secret = crate::vcs_credentials::token(&account)?;
+        if account.storage == crate::vcs_credentials::StorageKind::SessionOnly {
+            session_accounts.push((
+                host,
+                account.username.clone(),
+                Zeroizing::new(secret.to_string()),
+            ));
+        }
+        secrets.push(secret);
+    }
+    if secrets.is_empty() {
+        return Ok((secrets, ssh_remote));
+    }
+
+    let askpass = std::env::current_exe().map_err(|_| {
+        "Unable to locate Sparrow's Git credential helper.".to_string()
+    })?;
+    command
+        .arg("-c")
+        .arg("credential.helper=")
+        .env("GIT_ASKPASS", askpass)
+        .env("GIT_ASKPASS_REQUIRE", "force")
+        .env("SPARROW_GIT_ASKPASS_MODE", "1")
+        .env(
+            "SPARROW_GIT_SESSION_COUNT",
+            session_accounts.len().to_string(),
+        );
+    for (index, (host, username, token)) in session_accounts.into_iter().enumerate()
+    {
+        let suffix = index.to_string();
+        command
+            .env(format!("SPARROW_GIT_SESSION_HOST_{suffix}"), host)
+            .env(format!("SPARROW_GIT_SESSION_USERNAME_{suffix}"), username)
+            .env(
+                format!("SPARROW_GIT_SESSION_TOKEN_{suffix}"),
+                token.as_str(),
+            );
+    }
+    Ok((secrets, ssh_remote))
+}
+
 #[derive(Clone)]
 pub struct State {
     pub active: RwSignal<bool>,
@@ -26,9 +248,13 @@ pub struct State {
     cancel: Arc<AtomicBool>,
 }
 impl State {
-    pub fn cancel_command(&self){self.cancel.store(true,Ordering::Relaxed);}
+    pub fn cancel_command(&self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
 
-    pub fn is_busy(&self)->bool{self.busy.get_untracked()}
+    pub fn is_busy(&self) -> bool {
+        self.busy.get_untracked()
+    }
 
     pub fn new(cx: Scope) -> Self {
         Self {
@@ -73,7 +299,10 @@ impl State {
                 }
             };
         let root = if self.cloning.get_untracked() {
-            window.workspace.path.as_deref()
+            window
+                .workspace
+                .path
+                .as_deref()
                 .filter(|_| window.workspace.kind.is_local())
                 .and_then(std::path::Path::parent)
                 .map(std::path::Path::to_path_buf)
@@ -104,13 +333,24 @@ impl State {
                 );
             },
         );
-        let task = window.common.background_tasks.begin(format!("Git · {}", self.title.get_untracked()), Some(cancel.clone()));
+        let task = window.common.background_tasks.begin(
+            format!("Git · {}", self.title.get_untracked()),
+            Some(cancel.clone()),
+        );
         std::thread::spawn(move || {
             let _task = task;
             let result = (|| -> Result<String, String> {
                 use std::io::{Read, Seek};
+                if contains_embedded_http_credentials(&args) {
+                    return Err(
+                        "Do not put credentials in Git URLs or arguments. Add the account in Settings > Version Control > Accounts.".into(),
+                    );
+                }
                 let mut log = tempfile::tempfile().map_err(|e| e.to_string())?;
-                let mut child = std::process::Command::new("git")
+                let mut command = std::process::Command::new("git");
+                let (secrets, ssh_remote) =
+                    configure_git_auth(&mut command, &root, &args)?;
+                let mut child = command
                     .args(&args)
                     .current_dir(root)
                     .env("GIT_TERMINAL_PROMPT", "0")
@@ -137,8 +377,10 @@ impl State {
                 log.take(8_000_000)
                     .read_to_end(&mut bytes)
                     .map_err(|e| e.to_string())?;
+                let output =
+                    sanitize_git_output(&String::from_utf8_lossy(&bytes), &secrets);
                 Ok(format!(
-                    "{}\n{}{}",
+                    "{}\n{}{}{}",
                     if cancel.load(Ordering::Relaxed) {
                         "Cancelled".into()
                     } else if status.success() {
@@ -146,9 +388,14 @@ impl State {
                     } else {
                         format!("Git exited with {status}")
                     },
-                    String::from_utf8_lossy(&bytes),
+                    output,
                     if bytes.len() == 8_000_000 {
                         "\nOutput truncated at 8 MB."
+                    } else {
+                        ""
+                    },
+                    if ssh_remote {
+                        "\nSSH remote detected: Sparrow tokens are not used; use your configured SSH agent or switch the remote to HTTPS."
                     } else {
                         ""
                     }
@@ -231,4 +478,82 @@ pub fn menu(
         }));
     }
     menu
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn credential_bearing_http_urls_are_rejected_but_ssh_is_allowed() {
+        assert!(contains_embedded_http_credentials(&[
+            "clone".into(),
+            "https://user:token@github.com/owner/repo.git".into(),
+        ]));
+        assert!(contains_embedded_http_credentials(&[
+            "remote.origin.url=https://github.com/repo?access_token=secret".into(),
+        ]));
+        assert!(!contains_embedded_http_credentials(&[
+            "clone".into(),
+            "git@github.com:owner/repo.git".into(),
+        ]));
+    }
+
+    #[test]
+    fn git_output_redacts_url_credentials_and_saved_tokens() {
+        let secrets = vec![Zeroizing::new("saved-secret".to_string())];
+        let sanitized = sanitize_git_output(
+            "https://user:password@github.com/repo and saved-secret and https://github.com/repo?token=other-secret",
+            &secrets,
+        );
+        assert_eq!(
+            sanitized,
+            "https://[REDACTED]@github.com/repo and [REDACTED] and https://github.com/repo?token=[REDACTED]"
+        );
+        assert!(!sanitized.contains("password"));
+        assert!(!sanitized.contains("other-secret"));
+    }
+
+    #[test]
+    fn git_remote_selection_handles_fetch_all_and_option_values() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(root.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+        for (name, url) in [
+            ("origin", "https://github.com/owner/main.git"),
+            ("upstream", "https://github.com/other/project.git"),
+        ] {
+            assert!(
+                std::process::Command::new("git")
+                    .args(["remote", "add", name, url])
+                    .current_dir(root.path())
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        }
+
+        let fetch_all = vec!["fetch".into(), "--all".into(), "--prune".into()];
+        let all_urls = remote_urls(root.path(), &fetch_all).unwrap();
+        assert_eq!(all_urls.len(), 2);
+        assert!(all_urls.contains(&"https://github.com/owner/main.git".into()));
+        assert!(all_urls.contains(&"https://github.com/other/project.git".into()));
+
+        let explicit = vec![
+            "fetch".into(),
+            "--depth".into(),
+            "1".into(),
+            "upstream".into(),
+        ];
+        assert_eq!(
+            remote_urls(root.path(), &explicit).unwrap(),
+            vec!["https://github.com/other/project.git"]
+        );
+    }
 }

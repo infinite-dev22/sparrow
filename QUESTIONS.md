@@ -6,3 +6,6 @@
 - Environment follow-up: decide whether to provide a Tier 3 virtual display or Tier 4 visual automation hook; default is Tier 1 plus the verified Tier 2 headless renderer, with no GUI tool installation during this run.
 - B1 follow-up: provide a sanitized path or copy of the specific Flutter project that reports Mobile Preview failure if another reproduction is desired; default is to keep testing on the isolated sample and not inspect or modify an unknown user workspace.
 - Widget Previewer follow-up: run a visual review with a Flutter project containing public `@Preview` declarations; default is to keep Flutter's catalog and use Sparrow's device settings only for browser emulation.
+- VCS credential follow-up: live-check Keychain, Credential Manager, and Linux Secret Service behavior; no kernel-keyutils backend or encrypted-file fallback is selected.
+- VCS human check: validate a real GitHub/GHES token, private PR list/detail/create, and private HTTPS clone/fetch/push. Confirm logs, process arguments, and `.git/config` do not contain the secret; no real credentials or remote mutations were used unattended.
+- VCS scope: GitHub-compatible PR list, details/files/comments, and create are implemented; merge/close and GitLab/Bitbucket APIs remain out of scope. Generic HTTPS auth is for Git only.

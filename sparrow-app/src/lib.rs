@@ -71,6 +71,7 @@ pub mod project_search;
 pub mod search_everywhere;
 
 pub mod git_actions;
+pub mod vcs_credentials;
 
 pub mod background_tasks;
 

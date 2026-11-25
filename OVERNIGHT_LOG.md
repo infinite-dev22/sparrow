@@ -124,3 +124,31 @@
 - `cargo test -p sparrow-app captures_and_interacts_with_a_windowless_device_surface -- --ignored --nocapture`: passed (0.77s).
 - `cargo check -p sparrow-app`: passed. Only warning is the pre-existing unused `Icon::Theme` in `sparrow-app/src/title/branch_switcher.rs:397`.
 - Tier 2 headless integration is verified; Tier 3 is unavailable without Xvfb/xdotool; Tier 4 and desktop visual review remain unverified. No screenshot was saved.
+
+## Workstream C — VCS credentials audit and plan
+
+### Audit (before implementation)
+
+- `sparrow-app/src/panel/workflow_tools/pull_requests.rs` derives the GitHub repository from `origin`, fetches only the first 100 PRs, and opens a selected URL in the browser. It accepts `GITHUB_TOKEN`/`GH_TOKEN` from the process environment and gives private repositories a generic error; it does not show PR details or create requests.
+- `sparrow-app/src/git_actions.rs` runs reviewed Git CLI commands, including clone/fetch/pull/push, with terminal prompting disabled and no account-aware credential callback. `sparrow-proxy/src/dispatch.rs` uses libgit2 for repository inspection, not network fetch/push.
+- Settings have Version Control and Git pages, but no account list, token field, secure-store status, or account actions.
+- `reqwest` is already available. `git2` 0.21 is already in the workspace; no HTTP Git provider or secure credential integration is present.
+- Verified `keyring` 4.2.0 via its docs.rs metadata, `cargo info`, and its downloaded `src/v1.rs`: `Entry::new`, `set_password`, `get_password`, and `delete_credential` are available. The `v1` feature selects macOS Keychain, Windows Credential Manager, and Linux Secret Service; Linux kernel-keyutils is separate and is not the selected v1 backend.
+
+### Plan
+
+1. Add account metadata persistence without any token field, secure-store operations on worker threads, explicit session-only in-memory fallback with a visible status, and unit tests that inspect persisted metadata and redaction. — Done.
+2. Add GitHub `/user` token validation and authenticated PR listing with actionable 401/403/SSO/permission messages; keep HTTP failures sanitized and never include the bearer token in an error. — Done.
+3. Feed selected HTTPS-host credentials to Git commands through a Sparrow askpass mode and child environment, never command-line arguments or `.git/config`; explain SSH remotes do not use HTTP tokens. — Done.
+4. Add Version Control account controls and an inline PR-panel action to open Settings when authorization is missing. — Done.
+5. Add PR pagination, details/files/comments, and user-triggered creation; run targeted/full tests and document live-only verification. — Done, with stated caps and live checks outstanding.
+
+### Implementation and verification
+
+- Added `keyring` 4.2.0 with the explicit `v1` backend and `zeroize`; serialized keyring operations; persisted only host, username, provider, status, storage kind, and active selection via atomic metadata writes. Replacing/removing secrets rolls metadata/secret state back on write failures where possible.
+- The account form validates GitHub-compatible tokens with `GET /user`, records classic OAuth scopes only when the response exposes them, links to the host token page, supports multiple accounts per host, and provides add/replace/test/remove/select controls. Generic HTTPS accounts are deliberately not API-validated.
+- If the OS store is unavailable, the default opt-in fallback is process-memory-only and clearly labeled; it can be disabled. No plaintext or passphrase-encrypted file fallback is implemented. Keychain, Credential Manager, and Secret Service are selected; Linux kernel-keyutils is not.
+- Git HTTPS operations use a Sparrow `GIT_ASKPASS` entry point; keyring secrets are read in the askpass child, while explicitly accepted session-only secrets are passed only in child environment variables. Stored tokens are not placed in Git arguments, URLs, or `.git/config`; SSH remotes use the SSH agent, and Git output is sanitized before display.
+- The PR panel now paginates through up to 2,000 requests, displays detail/file patches and conversation/review comments (up to 500 items for each endpoint), and creates a request only after an explicit user action. Private-repository auth failures expose an action that opens Version Control account settings.
+- Focused PR tests passed (4 passed, 1 ignored); credential tests passed (11) and Git action tests passed (3). Full `cargo test -p sparrow-app` passed (492 passed, 0 failed, 17 ignored; doc tests 0 failed, 8 ignored). Local HTTP mocks verified bearer headers, scope metadata, POST JSON, and that tokens are not put in request URLs. Git unit tests cover HTTP credential rejection/output redaction and remote selection.
+- No live token/account, private repository, clone, fetch, push, real remote mutation, or functioning OS credential-store interaction was used. Keyring integration, GitHub Enterprise API compatibility, and the account/PR UI still need human verification. PR merge/close controls and GitLab/Bitbucket PR APIs are not implemented; no such action existed in the prior panel.

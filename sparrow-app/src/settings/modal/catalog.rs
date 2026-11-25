@@ -109,6 +109,7 @@ impl Page {
         match self {
             Menus => "menus and toolbars quick actions",
             Keymap => "keymap keyboard shortcuts key bindings",
+            VersionControl => "version control git accounts credentials tokens",
             Git => "git commit history repository",
             RunConfigurations => "run debug launch configurations",
             Devices => "android devices device manager running devices",
@@ -129,7 +130,7 @@ impl Page {
                 Some("Configure editing, typography, completion, and diagnostics.")
             }
             VersionControl => {
-                Some("Configure the diff editor and open repository tools.")
+                Some("Manage remote accounts, configure the diff editor, and open repository tools.")
             }
             Run => Some("Set up launch configurations and debugger behavior."),
             Languages => {

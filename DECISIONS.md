@@ -12,3 +12,9 @@
 - Migrate value-selection menus to `dropdown_with_label` with stable source values; use display-label closures only for presentation.
 - Mark Workstream A partially verified until the documented multi-screen UI script can be run; passing component tests do not establish visual or keyboard acceptance.
 - Keep Flutter's official Widget Previewer as the widget catalog and do not rewrite/inject user source; apply Sparrow's device profile to the browser context while Flutter `@Preview` metadata owns per-widget settings.
+- For VCS credentials, use keyring 4.2.0's explicit `v1` API (Keychain, Windows Credential Manager, Linux Secret Service); do not silently use plaintext files or select Linux keyutils as an undocumented fallback. If the secure store is unavailable, keep a token in process memory only and show that limitation.
+- For the Git CLI, route credential prompts through Sparrow's own askpass entry point with credentials in the child environment; never put tokens in Git arguments, URLs, or repository config. SSH remotes remain SSH-agent-only.
+- Keep account host/username/status metadata in normal Sparrow config storage, separate from the keyring secret, and sanitize all HTTP/Git errors before presenting them.
+- Use a host-provider boundary with GitHub.com and GitHub Enterprise API support; keep generic HTTPS Git credentials separate and do not claim their tokens were API-validated.
+- Keep merge/close controls and GitLab/Bitbucket PR APIs out of this iteration; the prior panel had no merge/close actions. PR list, details, diff/files/comments, and explicit creation are implemented, but require live-account verification.
+- Use the `GET /user` scope header only when GitHub reports it; a missing `X-OAuth-Scopes` header does not reliably identify a fine-grained token. Use GitHub's accepted-permissions and SSO headers for actionable API errors without including request bodies or tokens.

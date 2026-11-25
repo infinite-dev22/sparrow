@@ -50,3 +50,12 @@
 - `cargo test -p sparrow-app`: 474 passed, 0 failed, 17 ignored; doctests: 0 failures, 8 ignored.
 - `cargo check -p sparrow-app`: passed; one pre-existing unused `Icon::Theme` warning remains.
 - Tier 2 headless integration ran successfully; Tier 3 Xvfb/xdotool and Tier 4 visual automation remain unavailable/unverified.
+
+## Cycle C — VCS credentials and pull requests
+
+- Account metadata round-trip confirms the serialized account record contains identity/provider/status/storage metadata but no token. Host parsing rejects embedded credentials and secret query parameters; remote parsing distinguishes HTTPS credentials from SSH-agent remotes.
+- Local HTTP mock tests confirm authenticated requests use `Authorization: Bearer`, capture `X-OAuth-Scopes`, keep the token out of the request URL, and send POST JSON for PR creation. API errors use sanitized status/header-based messages.
+- Git action tests reject credential-bearing HTTP URLs/arguments, redact userinfo/query secrets and known tokens from Git output, and resolve `fetch --all` plus remotes after option values. No real Git push/fetch was attempted.
+- PR panel unit tests verify GitHub/GHES remote parsing, detail/diff/comment rendering, and local validation of required creation fields. Detail and list pagination enforce 500-item and 2,000-PR safety caps.
+- `cargo test -p sparrow-app`: 492 passed, 0 failed, 17 ignored; doc tests: 0 failures, 8 ignored. Existing unused `Icon::Theme` warning remains.
+- No real token, OS keyring service, private repository, Git operation over HTTPS, or desktop UI was exercised. Human verification remains required before relying on OS keyring or private remote behavior.
