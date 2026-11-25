@@ -15,11 +15,15 @@ use floem::{
     keyboard::{Key, NamedKey},
     kurbo::Point,
     peniko::Color,
-    reactive::{RwSignal, SignalGet, SignalUpdate, SignalWith, create_rw_signal},
+    reactive::{
+        RwSignal, SignalGet, SignalUpdate, SignalWith, create_effect,
+        create_rw_signal,
+    },
     style::CursorStyle,
     views::{Decorators, container, dyn_stack, empty, label, stack, svg},
 };
 use std::{path::Path, rc::Rc};
+use sparrow_rpc::dap_types::{DapId, RunDebugConfig};
 
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
@@ -39,21 +43,43 @@ const ROW_H: f32 = 22.0;
 #[derive(Clone)]
 enum Item {
     Config {
-        idx: usize,
-        pos: usize,
+        id: DapId,
         name: String,
         icon: &'static str,
     },
     Sep,
-    Edit {
-        pos: usize,
-    },
+    Edit,
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Sel {
-    Config(usize),
+    Config(DapId),
     Edit,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ItemKey {
+    Config(DapId),
+    Separator(usize),
+    Edit,
+}
+
+fn identity_index<T, Id: PartialEq>(
+    items: &[T],
+    selected: Id,
+    identity: impl Fn(&T) -> Id,
+) -> Option<usize> {
+    items.iter().position(|item| identity(item) == selected)
+}
+
+fn set_active_config(wt: &WindowTabData, id: DapId) -> Option<usize> {
+    let index = wt
+        .run_configs
+        .with_untracked(|configs| identity_index(configs, id, |config| config.dap_id));
+    if let Some(index) = index {
+        wt.active_run_config_idx.set(index);
+    }
+    index
 }
 
 fn config_icon(program: &str) -> &'static str {
@@ -74,13 +100,64 @@ fn is_test(args: &Option<Vec<String>>) -> bool {
         .is_some_and(|a| a == "test")
 }
 
+fn configuration_items(configs: &[RunDebugConfig]) -> (Vec<Item>, Vec<Sel>) {
+    let (tests, runs): (Vec<_>, Vec<_>) = configs
+        .iter()
+        .enumerate()
+        .partition(|(_, configuration)| is_test(&configuration.args));
+
+    let mut items = Vec::new();
+    let mut order = Vec::new();
+    let mut add = |group: Vec<(DapId, String, &'static str)>| {
+        if group.is_empty() {
+            return;
+        }
+        if !items.is_empty() {
+            items.push(Item::Sep);
+        }
+        for (id, name, icon) in group {
+            items.push(Item::Config { id, name, icon });
+            order.push(Sel::Config(id));
+        }
+    };
+    add(
+        runs.iter()
+            .map(|(_, config)| {
+                (
+                    config.dap_id,
+                    config.name.clone(),
+                    config_icon(&config.program),
+                )
+            })
+            .collect(),
+    );
+    add(
+        tests
+            .iter()
+            .map(|(_, config)| {
+                (
+                    config.dap_id,
+                    config.name.clone(),
+                    config_icon(&config.program),
+                )
+            })
+            .collect(),
+    );
+    if !items.is_empty() {
+        items.push(Item::Sep);
+    }
+    items.push(Item::Edit);
+    order.push(Sel::Edit);
+    (items, order)
+}
+
 struct Dd {
     wt: Rc<WindowTabData>,
     open: RwSignal<bool>,
     overlay: ViewId,
     restore: Option<ViewId>,
-    sel: RwSignal<usize>,
-    order: Vec<Sel>,
+    sel: RwSignal<Sel>,
+    order: RwSignal<Vec<Sel>>,
 }
 
 fn dismiss(dd: &Dd) {
@@ -93,11 +170,16 @@ fn dismiss(dd: &Dd) {
 
 fn activate(dd: &Dd, target: Sel, mode: Option<RunDebugMode>) {
     match target {
-        Sel::Config(idx) => {
-            dd.wt.active_run_config_idx.set(idx);
+        Sel::Config(id) => {
+            let idx = dd.wt.run_configs.with_untracked(|configs| {
+                identity_index(configs, id, |config| config.dap_id)
+            });
             dismiss(dd);
-            if let Some(mode) = mode {
-                dd.wt.launch_selected_configuration(mode);
+            if let Some(idx) = idx {
+                dd.wt.active_run_config_idx.set(idx);
+                if let Some(mode) = mode {
+                    dd.wt.launch_selected_configuration(mode);
+                }
             }
         }
         Sel::Edit => {
@@ -113,6 +195,25 @@ fn activate(dd: &Dd, target: Sel, mode: Option<RunDebugMode>) {
 pub(super) fn run_config_chip(window_tab_data: Rc<WindowTabData>) -> impl View {
     let config = window_tab_data.common.config;
     let open = create_rw_signal(false);
+    let cursor = create_rw_signal(Sel::Edit);
+    let items = create_rw_signal(Vec::<Item>::new());
+    let order = create_rw_signal(Vec::<Sel>::new());
+    let active_config = window_tab_data.active_run_config_idx;
+    let configurations = window_tab_data.run_configs;
+    let current_cursor = cursor;
+    let current_items = items;
+    let current_order = order;
+    create_effect(move |_| {
+        let configurations = configurations.get();
+        let (items, order) = configuration_items(&configurations);
+        current_items.set(items);
+        current_order.set(order);
+        let active = active_config.get();
+        let selected = configurations
+            .get(active)
+            .map(|configuration| Sel::Config(configuration.dap_id));
+        current_cursor.set(selected.unwrap_or(Sel::Edit));
+    });
 
     let chip = container(
         stack((
@@ -159,7 +260,15 @@ pub(super) fn run_config_chip(window_tab_data: Rc<WindowTabData>) -> impl View {
         let wt = window_tab_data.clone();
         move |_| {
             let r = id.layout_rect();
-            show_dropdown(wt.clone(), Point::new(r.x0, r.y1 + 2.0), open, id);
+            show_dropdown(
+                wt.clone(),
+                Point::new(r.x0, r.y1 + 2.0),
+                open,
+                id,
+                cursor,
+                items,
+                order,
+            );
         }
     })
         .style(move |s| {
@@ -190,63 +299,27 @@ fn show_dropdown(
     anchor: Point,
     open: RwSignal<bool>,
     anchor_id: ViewId,
+    cursor: RwSignal<Sel>,
+    items: RwSignal<Vec<Item>>,
+    order: RwSignal<Vec<Sel>>,
 ) {
     let config = wt.common.config;
     let window_size = wt.common.window_common.size;
     let restore = wt.common.keyboard_focus.get_untracked().or(Some(anchor_id));
 
-    // Snapshot the configurations in display order.
-    let configs = wt.run_configs.get_untracked();
-    let active = wt.active_run_config_idx.get_untracked();
-    let (tests, runs): (Vec<_>, Vec<_>) = configs
-        .iter()
-        .enumerate()
-        .partition(|(_, c)| is_test(&c.args));
+    let active = wt.run_configs.with_untracked(|configs| {
+        configs
+            .get(wt.active_run_config_idx.get_untracked())
+            .map(|configuration| configuration.dap_id)
+    });
+    let snapshot_items = items.get_untracked();
+    let initial = active
+        .map(Sel::Config)
+        .filter(|selected| order.with_untracked(|order| order.contains(selected)))
+        .unwrap_or(Sel::Edit);
+    cursor.set(initial);
 
-    let mut items: Vec<Item> = Vec::new();
-    let mut order: Vec<Sel> = Vec::new();
-    let mut add = |items: &mut Vec<Item>, group: Vec<(usize, String, &'static str)>| {
-        if group.is_empty() {
-            return;
-        }
-        if !items.is_empty() {
-            items.push(Item::Sep);
-        }
-        for (idx, name, icon) in group {
-            items.push(Item::Config {
-                idx,
-                pos: order.len(),
-                name,
-                icon,
-            });
-            order.push(Sel::Config(idx));
-        }
-    };
-    add(
-        &mut items,
-        runs.iter()
-            .map(|(i, c)| (*i, c.name.clone(), config_icon(&c.program)))
-            .collect(),
-    );
-    add(
-        &mut items,
-        tests
-            .iter()
-            .map(|(i, c)| (*i, c.name.clone(), config_icon(&c.program)))
-            .collect(),
-    );
-    if !items.is_empty() {
-        items.push(Item::Sep);
-    }
-    items.push(Item::Edit { pos: order.len() });
-    order.push(Sel::Edit);
-
-    let initial = order
-        .iter()
-        .position(|s| *s == Sel::Config(active))
-        .unwrap_or(0);
-
-    let widest = items
+    let widest = snapshot_items
         .iter()
         .map(|i| match i {
             Item::Config { name, .. } => name.chars().count(),
@@ -263,16 +336,33 @@ fn show_dropdown(
             open,
             overlay,
             restore,
-            sel: create_rw_signal(initial),
-            order: order.clone(),
+            sel: cursor,
+            order,
         });
 
         let rows = dyn_stack(
             {
-                let items = items.clone();
-                move || items.clone().into_iter().enumerate().collect::<Vec<_>>()
+                move || {
+                    let mut separator_index = 0;
+                    items
+                        .get()
+                        .into_iter()
+                        .map(|item| {
+                            let key = match &item {
+                                Item::Config { id, .. } => ItemKey::Config(*id),
+                                Item::Sep => {
+                                    let key = ItemKey::Separator(separator_index);
+                                    separator_index += 1;
+                                    key
+                                }
+                                Item::Edit => ItemKey::Edit,
+                            };
+                            (key, item)
+                        })
+                        .collect::<Vec<_>>()
+                }
             },
-            |(i, _)| *i,
+            |(key, _)| *key,
             {
                 let dd = dd.clone();
                 move |(_, item)| item_view(dd.clone(), item)
@@ -317,20 +407,32 @@ fn show_dropdown(
                     let Event::KeyDown(key) = event else {
                         return EventPropagation::Continue;
                     };
-                    let n = dd.order.len();
-                    let cur = dd.sel.get_untracked();
+                    let order = dd.order.get_untracked();
+                    let n = order.len();
+                    if n == 0 {
+                        return EventPropagation::Continue;
+                    }
+                    let current = dd.sel.get_untracked();
+                    let cur = order
+                        .iter()
+                        .position(|selection| *selection == current)
+                        .unwrap_or(0);
                     match &key.key.logical_key {
                         Key::Named(NamedKey::Escape) => {
                             crate::widgets::modal_focus::note_popup_escape();
                             dismiss(&dd);
                         }
                         Key::Named(NamedKey::Tab) => dismiss(&dd),
-                        Key::Named(NamedKey::ArrowDown) => dd.sel.set((cur + 1) % n),
-                        Key::Named(NamedKey::ArrowUp) => dd.sel.set((cur + n - 1) % n),
-                        Key::Named(NamedKey::Home) => dd.sel.set(0),
-                        Key::Named(NamedKey::End) => dd.sel.set(n - 1),
+                        Key::Named(NamedKey::ArrowDown) => {
+                            dd.sel.set(order[(cur + 1) % n]);
+                        }
+                        Key::Named(NamedKey::ArrowUp) => {
+                            dd.sel.set(order[(cur + n - 1) % n]);
+                        }
+                        Key::Named(NamedKey::Home) => dd.sel.set(order[0]),
+                        Key::Named(NamedKey::End) => dd.sel.set(order[n - 1]),
                         Key::Named(NamedKey::Enter | NamedKey::Space) => {
-                            activate(&dd, dd.order[cur], None)
+                            activate(&dd, current, None)
                         }
                         _ => {}
                     }
@@ -363,7 +465,7 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
             .indent(0.0)
             .into_view()
             .into_any(),
-        Item::Edit { pos } => {
+        Item::Edit => {
             let sel = dd.sel;
             let on_click = dd.clone();
             stack((
@@ -373,19 +475,14 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
                         .selectable(false)
                 }),
             ))
-                .on_event_stop(EventListener::PointerEnter, move |_| sel.set(pos))
+                .on_event_stop(EventListener::PointerEnter, move |_| sel.set(Sel::Edit))
                 .on_click_stop(move |_| activate(&on_click, Sel::Edit, None))
-                .style(move |s| row_style(config, s, move || sel.get() == pos))
+                .style(move |s| row_style(config, s, move || sel.get() == Sel::Edit))
                 .into_any()
         }
-        Item::Config {
-            idx,
-            pos,
-            name,
-            icon,
-        } => {
+        Item::Config { id, name, icon } => {
             let sel = dd.sel;
-            let selected = move || sel.get() == pos;
+            let selected = move || sel.get() == Sel::Config(id);
 
             let run_dd = dd.clone();
             let debug_dd = dd.clone();
@@ -416,9 +513,7 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
                             .color(config.get().color(SparrowColor::SPARROW_RUN_ICON))
                     })
                     .into_any(),
-                Box::new(move || {
-                    activate(&run_dd, Sel::Config(idx), Some(RunDebugMode::Run))
-                }),
+                    Box::new(move || activate(&run_dd, Sel::Config(id), Some(RunDebugMode::Run))),
             );
             let debug_btn = button(
                 svg(move || config.get().ui_svg(SparrowIcons::DEBUG))
@@ -428,7 +523,7 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
                     })
                     .into_any(),
                 Box::new(move || {
-                    activate(&debug_dd, Sel::Config(idx), Some(RunDebugMode::Debug))
+                    activate(&debug_dd, Sel::Config(id), Some(RunDebugMode::Debug))
                 }),
             );
             let more_id: Rc<std::cell::Cell<Option<ViewId>>> = Rc::default();
@@ -450,7 +545,7 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
                         .unwrap_or(Point::ZERO);
                     let wt = more_dd.wt.clone();
                     dismiss(&more_dd);
-                    show_context_menu(config_menu(wt, idx), Some(at));
+                    show_context_menu(config_menu(wt, id), Some(at));
                 }),
             );
 
@@ -480,33 +575,36 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
                 ))
                     .style(move |s| s.items_center().apply_if(!selected(), |s| s.hide())),
             ))
-                .on_event_stop(EventListener::PointerEnter, move |_| sel.set(pos))
-                .on_click_stop(move |_| {
-                    activate(&on_click, Sel::Config(idx), None)
+                .on_event_stop(EventListener::PointerEnter, move |_| {
+                    sel.set(Sel::Config(id))
                 })
+                .on_click_stop(move |_| activate(&on_click, Sel::Config(id), None))
                 .style(move |s| row_style(config, s, selected))
                 .into_any()
         }
     }
 }
 
-fn config_menu(wt: Rc<WindowTabData>, idx: usize) -> Menu {
+fn config_menu(wt: Rc<WindowTabData>, id: DapId) -> Menu {
     let run = wt.clone();
     let debug = wt.clone();
     let edit = wt.clone();
     Menu::new("")
         .entry(MenuItem::new("Run").action(move || {
-            run.active_run_config_idx.set(idx);
-            run.launch_selected_configuration(RunDebugMode::Run);
+            if set_active_config(&run, id).is_some() {
+                run.launch_selected_configuration(RunDebugMode::Run);
+            }
         }))
         .entry(MenuItem::new("Debug").action(move || {
-            debug.active_run_config_idx.set(idx);
-            debug.launch_selected_configuration(RunDebugMode::Debug);
+            if set_active_config(&debug, id).is_some() {
+                debug.launch_selected_configuration(RunDebugMode::Debug);
+            }
         }))
         .separator()
         .entry(MenuItem::new("Edit Configurations...").action(move || {
-            edit.active_run_config_idx.set(idx);
-            edit.run_config_modal_visible.set(true);
+            if set_active_config(&edit, id).is_some() {
+                edit.run_config_modal_visible.set(true);
+            }
         }))
 }
 
@@ -527,4 +625,20 @@ fn row_style(
         .border_radius(5.0)
         .apply_if(selected(), |s| s.background(bg))
         .hover(|s| s.cursor(CursorStyle::Pointer))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn popup_selection_uses_configuration_identity_after_reordering() {
+        let first = DapId::next();
+        let second = DapId::next();
+        let configurations = [(first, "Duplicate"), (second, "Duplicate")];
+        let reordered = [configurations[1], configurations[0]];
+
+        assert_eq!(identity_index(&reordered, second, |(id, _)| *id), Some(0));
+        assert_eq!(identity_index(&reordered, first, |(id, _)| *id), Some(1));
+    }
 }

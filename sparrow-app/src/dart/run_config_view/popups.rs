@@ -14,9 +14,18 @@ use super::Dialog;
 use crate::{
     config::color::SparrowColor,
     dart::run_config::{self},
-    widgets::{button, labeled_checkbox, sparrow_scroll, text_input, ButtonKind},
+    widgets::{
+        ButtonKind, button, dropdown_with_label, labeled_checkbox, sparrow_scroll,
+        text_input,
+    },
 };
-use floem::{peniko::Color, reactive::{create_effect, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith}, views::{dyn_stack, empty, label, stack, Decorators}, View, IntoView};
+use floem::{
+    IntoView, View,
+    reactive::{
+        RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_effect,
+    },
+    views::{Decorators, dyn_stack, empty, label, stack},
+};
 use std::rc::Rc;
 
 // ───────────────────────── pure logic ─────────────────────────
@@ -97,12 +106,18 @@ fn with_scheme(url: &str) -> String {
 }
 
 /// Program + argument string for a before-launch task opening `url`.
-pub(super) fn browser_command(browser: Browser, url: &str, os: &str) -> (String, String) {
+pub(super) fn browser_command(
+    browser: Browser,
+    url: &str,
+    os: &str,
+) -> (String, String) {
     let url = with_scheme(url);
     match os {
         "macos" => match browser {
             Browser::Default => ("open".into(), url),
-            Browser::Chrome => ("open".into(), format!("-a \"Google Chrome\" {url}")),
+            Browser::Chrome => {
+                ("open".into(), format!("-a \"Google Chrome\" {url}"))
+            }
             Browser::Firefox => ("open".into(), format!("-a Firefox {url}")),
             Browser::Edge => ("open".into(), format!("-a \"Microsoft Edge\" {url}")),
             Browser::Safari => ("open".into(), format!("-a Safari {url}")),
@@ -184,7 +199,9 @@ fn add_preset(d: &Rc<Dialog>, program: &str, args: &str) {
 
 /// Inner layout only: `floating_search` supplies the frame, shadow and radius.
 fn panel_style(
-    _config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
+    _config: floem::reactive::ReadSignal<
+        std::sync::Arc<crate::config::SparrowConfig>,
+    >,
     s: floem::style::Style,
 ) -> floem::style::Style {
     s.flex_col().padding(14.0).gap(10.0)
@@ -244,7 +261,9 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
         })
     };
 
-    let tool = move |text: &'static str, enabled: Box<dyn Fn() -> bool>, run: Box<dyn Fn()>| {
+    let tool = move |text: &'static str,
+                     enabled: Box<dyn Fn() -> bool>,
+                     run: Box<dyn Fn()>| {
         label(move || text)
             .on_click_stop(move |_| {
                 if enabled() {
@@ -257,7 +276,9 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
                     .items_center()
                     .justify_center()
                     .border_radius(4.0)
-                    .hover(|s| s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND)))
+                    .hover(|s| {
+                        s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                    })
             })
     };
 
@@ -302,13 +323,14 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
             }),
         ),
     ))
-        .style(|s| s.gap(2.0));
+    .style(|s| s.gap(2.0));
 
-    let user_table = stack((
+    let user_table =
         stack((
-            label(|| "Name").style(|s| s.width_pct(40.0)),
-            label(|| "Value").style(|s| s.flex_grow(1.0_f32)),
-        ))
+            stack((
+                label(|| "Name").style(|s| s.width_pct(40.0)),
+                label(|| "Value").style(|s| s.flex_grow(1.0_f32)),
+            ))
             .style(move |s| {
                 s.height(24.0)
                     .width_full()
@@ -318,19 +340,19 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
                     .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
                     .color(config.get().color(SparrowColor::EDITOR_DIM))
             }),
-        sparrow_scroll(
-            dyn_stack(
-                move || rows.get(),
-                |row| row.id,
-                move |row| {
-                    stack((
-                        text_input(row.name, config)
-                            .placeholder("NAME")
-                            .style(|s| s.width_pct(40.0)),
-                        text_input(row.value, config)
-                            .placeholder("value")
-                            .style(|s| s.flex_grow(1.0_f32).min_width(0.0)),
-                    ))
+            sparrow_scroll(
+                dyn_stack(
+                    move || rows.get(),
+                    |row| row.id,
+                    move |row| {
+                        stack((
+                            text_input(row.name, config)
+                                .placeholder("NAME")
+                                .style(|s| s.width_pct(40.0)),
+                            text_input(row.value, config)
+                                .placeholder("value")
+                                .style(|s| s.flex_grow(1.0_f32).min_width(0.0)),
+                        ))
                         .on_click_cont(move |_| selected.set(Some(row.id)))
                         .style(move |s| {
                             s.width_full()
@@ -339,17 +361,17 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
                                 .padding_horiz(4.0)
                                 .padding_vert(1.0)
                                 .apply_if(selected.get() == Some(row.id), |s| {
-                                    s.background(
-                                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                                    )
+                                    s.background(config.get().color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ))
                                 })
                         })
-                },
-            )
+                    },
+                )
                 .style(|s| s.flex_col().width_full()),
-        )
+            )
             .style(|s| s.width_full().flex_grow(1.0_f32).min_height(0.0)),
-    ))
+        ))
         .style(move |s| {
             s.flex_col()
                 .width_full()
@@ -363,45 +385,47 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
             label(|| "Name").style(|s| s.width_pct(40.0)),
             label(|| "Value").style(|s| s.flex_grow(1.0_f32)),
         ))
-            .style(move |s| {
-                s.height(24.0)
-                    .width_full()
-                    .items_center()
-                    .padding_horiz(8.0)
-                    .border_bottom(1.0)
-                    .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-                    .color(config.get().color(SparrowColor::EDITOR_DIM))
-            }),
+        .style(move |s| {
+            s.height(24.0)
+                .width_full()
+                .items_center()
+                .padding_horiz(8.0)
+                .border_bottom(1.0)
+                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+                .color(config.get().color(SparrowColor::EDITOR_DIM))
+        }),
         sparrow_scroll(
             dyn_stack(
                 move || system.get().into_iter().enumerate().collect::<Vec<_>>(),
                 |(i, (name, _))| (*i, name.clone()),
                 move |(_, (name, value))| {
                     stack((
-                        label(move || name.clone()).style(|s| s.width_pct(40.0).text_ellipsis()),
-                        label(move || value.clone())
-                            .style(|s| s.flex_grow(1.0_f32).min_width(0.0).text_ellipsis()),
+                        label(move || name.clone())
+                            .style(|s| s.width_pct(40.0).text_ellipsis()),
+                        label(move || value.clone()).style(|s| {
+                            s.flex_grow(1.0_f32).min_width(0.0).text_ellipsis()
+                        }),
                     ))
-                        .style(move |s| {
-                            s.width_full()
-                                .height(22.0)
-                                .items_center()
-                                .padding_horiz(8.0)
-                                .color(config.get().color(SparrowColor::EDITOR_DIM))
-                        })
+                    .style(move |s| {
+                        s.width_full()
+                            .height(22.0)
+                            .items_center()
+                            .padding_horiz(8.0)
+                            .color(config.get().color(SparrowColor::EDITOR_DIM))
+                    })
                 },
             )
-                .style(|s| s.flex_col().width_full()),
+            .style(|s| s.flex_col().width_full()),
         )
-            .style(|s| s.width_full().flex_grow(1.0_f32).min_height(0.0)),
+        .style(|s| s.width_full().flex_grow(1.0_f32).min_height(0.0)),
     ))
-        .style(move |s| {
-            s.flex_col()
-                .width_full()
-                .height(170.0)
-                .border(1.0)
-                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
-        });
+    .style(move |s| {
+        s.flex_col()
+            .width_full()
+            .height(170.0)
+            .border(1.0)
+            .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+    });
 
     let ok = button(|| "OK", ButtonKind::Primary, config)
         .style(|s| s.min_width(72.0).height(24.0).padding_horiz(14.0))
@@ -414,13 +438,14 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
         .on_click_stop(move |_| open.set(false));
 
     let panel = stack((
-        label(|| "Environment Variables").style(|s| s.width_full().justify_center().font_bold()),
+        label(|| "Environment Variables")
+            .style(|s| s.width_full().justify_center().font_bold()),
         stack((
             label(|| "User environment variables:"),
             empty().style(|s| s.flex_grow(1.0_f32)),
             toolbar,
         ))
-            .style(|s| s.items_center().width_full()),
+        .style(|s| s.items_center().width_full()),
         user_table,
         labeled_checkbox(
             move || include_system.get(),
@@ -434,8 +459,8 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
         stack((empty().style(|s| s.flex_grow(1.0_f32)), ok, cancel))
             .style(|s| s.gap(10.0).width_full().items_center()),
     ))
-        .on_click_stop(|_| {})
-        .style(move |s| panel_style(config, s).width_full());
+    .on_click_stop(|_| {})
+    .style(move |s| panel_style(config, s).width_full());
 
     crate::widgets::floating_search::floating_search(
         panel,
@@ -445,7 +470,7 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
         || true,
         |s| s.width(640.0),
     )
-        .style(move |s| s.z_index(260).apply_if(!open.get(), |s| s.hide()))
+    .style(move |s| s.z_index(260).apply_if(!open.get(), |s| s.hide()))
 }
 
 // ───────────────────────── Add New Task ─────────────────────────
@@ -453,7 +478,7 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
 pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View {
     let config = d.window.common.config;
     let page = popups.add;
-    let browser = cx.create_rw_signal(0usize);
+    let browser = cx.create_rw_signal(Browser::Default);
     let url = cx.create_rw_signal(String::from("http://localhost:8080"));
     let error = cx.create_rw_signal(String::new());
     let add_open = popups.add_open;
@@ -465,7 +490,10 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
         }
     });
 
-    let item = move |glyph: &'static str, title: String, enabled: bool, run: Rc<dyn Fn()>| {
+    let item = move |glyph: &'static str,
+                     title: String,
+                     enabled: bool,
+                     run: Rc<dyn Fn()>| {
         stack((
             label(move || glyph).style(move |s| {
                 s.width(22.0)
@@ -473,22 +501,24 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
             }),
             label(move || title.clone()),
         ))
-            .on_click_stop(move |_| {
-                if enabled {
-                    run()
-                }
-            })
-            .style(move |s| {
-                let c = config.get();
-                s.height(26.0)
-                    .width_full()
-                    .items_center()
-                    .padding_horiz(10.0)
-                    .border_radius(4.0)
-                    .apply_if(!enabled, |s| s.color(c.color(SparrowColor::EDITOR_DIM)))
-                    .hover(|s| s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND)))
-            })
-            .into_any()
+        .on_click_stop(move |_| {
+            if enabled {
+                run()
+            }
+        })
+        .style(move |s| {
+            let c = config.get();
+            s.height(26.0)
+                .width_full()
+                .items_center()
+                .padding_horiz(10.0)
+                .border_radius(4.0)
+                .apply_if(!enabled, |s| s.color(c.color(SparrowColor::EDITOR_DIM)))
+                .hover(|s| {
+                    s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                })
+        })
+        .into_any()
     };
 
     let menu = {
@@ -542,14 +572,13 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
                 })
             }),
         ))
-            .style(move |s| {
-                panel_style(config, s)
-
-                    .gap(1.0)
-                    .padding(8.0)
-                    .width_full()
-                    .apply_if(page.get() != ADD_MENU, |s| s.hide())
-            })
+        .style(move |s| {
+            panel_style(config, s)
+                .gap(1.0)
+                .padding(8.0)
+                .width_full()
+                .apply_if(page.get() != ADD_MENU, |s| s.hide())
+        })
     };
 
     // Run Another Configuration → pick which one.
@@ -576,11 +605,16 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
                             .enumerate()
                             .filter_map(|(i, draft)| {
                                 let mut config = draft.build().ok()?;
-                                if let Some(root) = d.window.workspace.path.as_deref() {
+                                if let Some(root) =
+                                    d.window.workspace.path.as_deref()
+                                {
                                     config.cwd = Some(
-                                        run_config::launch_directory(root, config.cwd.as_deref())
-                                            .display()
-                                            .to_string(),
+                                        run_config::launch_directory(
+                                            root,
+                                            config.cwd.as_deref(),
+                                        )
+                                        .display()
+                                        .to_string(),
                                     );
                                 }
                                 let args = run_config::join_args(&[
@@ -609,21 +643,22 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
                     }
                 },
             )
-                .style(|s| s.flex_col().width_full()),
+            .style(|s| s.flex_col().width_full()),
             label(|| "No valid configurations to run.").style(move |s| {
                 s.padding(10.0)
                     .color(config.get().color(SparrowColor::EDITOR_DIM))
-                    .apply_if(d.drafts.with(|drafts| !drafts.is_empty()), |s| s.hide())
+                    .apply_if(d.drafts.with(|drafts| !drafts.is_empty()), |s| {
+                        s.hide()
+                    })
             }),
         ))
-            .style(move |s| {
-                panel_style(config, s)
-
-                    .gap(1.0)
-                    .padding(8.0)
-                    .width_full()
-                    .apply_if(page.get() != ADD_CONFIGS, |s| s.hide())
-            })
+        .style(move |s| {
+            panel_style(config, s)
+                .gap(1.0)
+                .padding(8.0)
+                .width_full()
+                .apply_if(page.get() != ADD_CONFIGS, |s| s.hide())
+        })
     };
 
     // Launch Web Browser dialog.
@@ -637,11 +672,7 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
                     error.set("Enter a URL to open.".into());
                     return;
                 }
-                let all = Browser::all();
-                let chosen = all
-                    .get(browser.get_untracked())
-                    .copied()
-                    .unwrap_or(Browser::Default);
+                let chosen = browser.get_untracked();
                 let (program, args) = browser_command(chosen, &text, current_os());
                 add_preset(&d, &program, &args);
                 close();
@@ -650,39 +681,27 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
             .style(|s| s.min_width(72.0).height(24.0).padding_horiz(14.0))
             .on_click_stop(move |_| close());
         stack((
-            label(|| "Launch Web Browser").style(|s| s.width_full().justify_center().font_bold()),
+            label(|| "Launch Web Browser")
+                .style(|s| s.width_full().justify_center().font_bold()),
             stack((
                 label(|| "Browser:").style(|s| s.width(70.0)),
-                crate::widgets::menu_button(
-                    move || {
-                        Browser::all()
-                            .get(browser.get())
-                            .map(|b| b.title())
-                            .unwrap_or("Default")
-                            .to_string()
-                    },
-                    move || {
-                        let mut menu = crate::widgets::popup_menu::Menu::new("");
-                        for (i, b) in Browser::all().into_iter().enumerate() {
-                            menu = menu.entry(
-                                crate::widgets::popup_menu::MenuItem::new(b.title())
-                                    .action(move || browser.set(i)),
-                            );
-                        }
-                        menu
-                    },
+                dropdown_with_label(
+                    browser,
+                    Browser::all(),
                     config,
+                    |browser| browser.title().to_string(),
+                    |_| {},
                 )
-                    .style(|s| s.min_width(140.0)),
+                .style(|s| s.min_width(140.0)),
             ))
-                .style(|s| s.items_center().width_full()),
+            .style(|s| s.items_center().width_full()),
             stack((
                 label(|| "URL:").style(|s| s.width(70.0)),
                 text_input(url, config)
                     .placeholder("http://localhost:8080")
                     .style(|s| s.flex_grow(1.0_f32).min_width(0.0)),
             ))
-                .style(|s| s.items_center().width_full()),
+            .style(|s| s.items_center().width_full()),
             label(move || error.get()).style(move |s| {
                 s.color(config.get().color(SparrowColor::SPARROW_ERROR))
                     .apply_if(error.with(|e| e.is_empty()), |s| s.hide())
@@ -690,11 +709,9 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
             stack((empty().style(|s| s.flex_grow(1.0_f32)), ok, cancel))
                 .style(|s| s.gap(10.0).width_full().items_center()),
         ))
-            .style(move |s| {
-                panel_style(config, s)
-
-                    .apply_if(page.get() != ADD_BROWSER, |s| s.hide())
-            })
+        .style(move |s| {
+            panel_style(config, s).apply_if(page.get() != ADD_BROWSER, |s| s.hide())
+        })
     };
 
     let content = stack((menu, configs, browser_dialog)).on_click_stop(|_| {});
@@ -712,7 +729,10 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
             })
         },
     )
-        .style(move |s| s.z_index(260).apply_if(!popups.add_open.get(), |s| s.hide()))
+    .style(move |s| {
+        s.z_index(260)
+            .apply_if(!popups.add_open.get(), |s| s.hide())
+    })
 }
 
 #[cfg(test)]

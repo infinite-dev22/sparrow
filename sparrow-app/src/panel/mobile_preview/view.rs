@@ -13,15 +13,14 @@ use crate::{
     config::color::SparrowColor,
     panel::kind::PanelKind,
     widgets::{
-        ButtonKind, button, menu_button,
-        popup_menu::{Menu, MenuItem},
-        sparrow_scroll, text_input, toggle_row,
+        ButtonKind, button, dropdown_with_label, sparrow_scroll, text_input,
+        toggle_row,
     },
     window_tab::WindowTabData,
 };
 
 use super::{
-    device::DEVICES,
+    device::{DEVICES, DeviceChoice},
     screen,
     server::Mode,
     session::{App, Session},
@@ -78,25 +77,22 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
     let stop = session.clone();
     let cleanup = session.clone();
     let details = session.clone();
-    let presets = menu_button(
-        move || {
-            DEVICES
-                .get(device.get())
-                .map_or("Flexible device", |preset| preset.name)
-        },
-        move || {
-            let mut menu = Menu::new("Simulated device");
-            for (index, preset) in DEVICES.iter().enumerate() {
-                menu = menu.entry(
-                    MenuItem::new(preset.name).action(move || device.set(index)),
-                );
-            }
-            menu.separator().entry(
-                MenuItem::new("Flexible device")
-                    .action(move || device.set(DEVICES.len())),
+    let device_choices = DEVICES
+        .iter()
+        .map(|preset| DeviceChoice::Preset(preset.id))
+        .chain(std::iter::once(DeviceChoice::Flexible))
+        .collect::<Vec<_>>();
+    let presets = dropdown_with_label(
+        device,
+        device_choices,
+        config,
+        |choice| {
+            choice.device().map_or_else(
+                || "Flexible device".into(),
+                |preset| preset.name.into(),
             )
         },
-        config,
+        |_| {},
     );
     let settings = stack((
         toggle_row(
@@ -152,7 +148,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
     .style(move |s| {
         s.width_full()
             .gap(5.0)
-            .apply_if(device.get() != DEVICES.len(), |s| s.hide())
+            .apply_if(!device.get().is_flexible(), |s| s.hide())
     });
     let landscape = session.landscape;
     let folded = session.folded;
@@ -188,7 +184,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                         } else {
                             d.logical
                         };
-                        if device.get() == DEVICES.len() {
+                        if device.get().is_flexible() {
                             format!("{w} × {h} logical · {:.2}×", d.scale)
                         } else {
                             format!(
@@ -217,8 +213,9 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     .on_click_stop(move |_| folded.update(|value| *value = !*value))
                     .style(move |s| {
                         s.padding_horiz(8.0).apply_if(
-                            !DEVICES
-                                .get(device.get())
+                            !device
+                                .get()
+                                .device()
                                 .is_some_and(|preset| preset.cover.is_some()),
                             |s| s.hide(),
                         )

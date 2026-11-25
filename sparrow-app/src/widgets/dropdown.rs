@@ -13,8 +13,8 @@ use std::{any::Any, rc::Rc, sync::Arc};
 use floem::keyboard::{Key, NamedKey};
 use floem::peniko::kurbo::{Point, Rect, Size};
 use floem::reactive::{
-    ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, as_child_of_current_scope, create_effect,
-    create_updater,
+    ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, as_child_of_current_scope,
+    create_effect, create_updater,
 };
 
 use floem::{
@@ -44,7 +44,52 @@ fn overlay_frame_size(window: Size) -> Size {
 }
 
 type ChildFn<T> = dyn Fn(T) -> (AnyView, Scope);
-type ListViewFn<T> = Rc<dyn Fn(&dyn Fn(T) -> AnyView) -> AnyView>;
+type PopupSelectionFn = Rc<dyn Fn() -> Option<usize>>;
+type ListViewFn<T> = Rc<dyn Fn(&dyn Fn(T) -> AnyView, PopupSelectionFn) -> AnyView>;
+type SelectedIndexFn<T> = Rc<dyn Fn(&T, &[T]) -> Option<usize>>;
+
+fn selected_option_index<T>(
+    options: &[T],
+    active: &T,
+    matches: impl Fn(&T, &T) -> bool,
+) -> Option<usize> {
+    options.iter().position(|option| matches(option, active))
+}
+
+fn initialize_popup_selection(
+    selection: RwSignal<Option<usize>>,
+    index: Option<usize>,
+) {
+    selection.set(index);
+}
+
+fn track_popup_selection(selection: RwSignal<Option<usize>>, selected_index: PopupSelectionFn) {
+    create_effect(move |_| initialize_popup_selection(selection, selected_index()));
+}
+
+fn commit_then_close<T>(
+    selected: T,
+    on_accept: Option<Rc<dyn Fn(T)>>,
+    close: impl FnOnce(),
+) {
+    if let Some(on_accept) = on_accept {
+        on_accept(selected);
+    }
+    close();
+}
+
+fn append_accept_callback<T: Clone + 'static>(
+    existing: Option<Rc<dyn Fn(T)>>,
+    next: Rc<dyn Fn(T)>,
+) -> Rc<dyn Fn(T)> {
+    match existing {
+        Some(existing) => Rc::new(move |value| {
+            existing(value.clone());
+            next(value);
+        }),
+        None => next,
+    }
+}
 
 style_class!(
     /// A Style class that is applied to all dropdowns.
@@ -191,6 +236,9 @@ prop_extractor!(DropdownStyle {
 pub struct Dropdown<T: 'static> {
     id: ViewId,
     current_value: T,
+    active_item: Rc<dyn Fn() -> T>,
+    options: Vec<T>,
+    selected_index: Option<SelectedIndexFn<T>>,
     pointer_pressed: bool,
     main_view: ViewId,
     main_view_scope: Scope,
@@ -200,7 +248,7 @@ pub struct Dropdown<T: 'static> {
     list_style: Style,
     overlay_id: Option<ViewId>,
     window_origin: Option<Point>,
-    on_accept: Option<Box<dyn Fn(T)>>,
+    on_accept: Option<Rc<dyn Fn(T)>>,
     on_open: Option<Box<dyn Fn(bool)>>,
     style: DropdownStyle,
 }
@@ -268,13 +316,13 @@ impl<T: 'static + Clone> View for Dropdown<T> {
                 }
                 Message::ListSelect(val) => {
                     if let Ok(val) = val.downcast::<T>() {
-                        if self.style.close_on_accept() {
-                            self.close_dropdown();
-                            self.id.request_focus();
-                        }
-                        if let Some(on_select) = &self.on_accept {
-                            on_select(*val);
-                        }
+                        let close_on_accept = self.style.close_on_accept();
+                        commit_then_close(*val, self.on_accept.clone(), || {
+                            if close_on_accept {
+                                self.close_dropdown();
+                                self.id.request_focus();
+                            }
+                        });
                     }
                 }
                 Message::ActiveElement(val) => {
@@ -418,17 +466,27 @@ impl<T: Clone> Dropdown<T> {
         let dropdown_id = ViewId::new();
 
         let list_item_fn = Rc::new(list_item_fn);
+        let options: Vec<T> = iterator.clone().into_iter().collect();
 
-        let list_view = Rc::new(move |list_item_fn: &dyn Fn(T) -> AnyView| {
-            let iterator = iterator.clone();
-            let iter_clone = iterator.clone();
-            let inner_list = list(iterator.into_iter().map(|value| {
-                let selected = value.clone();
-                list_item_fn(value).on_click_stop(move |_| {
-                    dropdown_id.update_state(Message::ActiveElement(Box::new(selected.clone())));
-                    dropdown_id.update_state(Message::ListSelect(Box::new(selected.clone())));
-                })
-            }))
+        let list_view = Rc::new(
+            move |list_item_fn: &dyn Fn(T) -> AnyView, selected_index: PopupSelectionFn| {
+                let iterator = iterator.clone();
+                let iter_clone = iterator.clone();
+                let inner_list = list(iterator.into_iter().map(|value| {
+                    let selected = value.clone();
+                    list_item_fn(value).on_click_stop(move |_| {
+                        dropdown_id.update_state(Message::ActiveElement(Box::new(
+                            selected.clone(),
+                        )));
+                        dropdown_id.update_state(Message::ListSelect(Box::new(
+                            selected.clone(),
+                        )));
+                    })
+                }));
+                let selection = inner_list.selection();
+                track_popup_selection(selection, selected_index);
+                let inner_list_id = inner_list.id();
+                let inner_list = inner_list
                 .on_accept(move |opt_idx| {
                     if let Some(idx) = opt_idx {
                         if let Some(val) = iter_clone.clone().into_iter().nth(idx) {
@@ -455,17 +513,23 @@ impl<T: Clone> Dropdown<T> {
                     dropdown_id.update_state(Message::ListFocusLost);
                 })
                 .on_event_stop(EventListener::PointerMove, |_| {});
-            let inner_list_id = inner_list.id();
-            sparrow_scroll(inner_list)
-                .on_event_stop(EventListener::FocusGained, move |_| {
-                    inner_list_id.request_focus();
-                })
-                .into_any()
-        });
+                sparrow_scroll(inner_list)
+                    .on_event_stop(EventListener::FocusGained, move |_| {
+                        inner_list_id.request_focus();
+                    })
+                    .into_any()
+            },
+        );
 
-        let initial = create_updater(active_item, move |new_state| {
-            dropdown_id.update_state(Message::ActiveElement(Box::new(new_state)));
-        });
+        let active_item = Rc::new(active_item);
+        let updater_active_item = active_item.clone();
+        let initial = create_updater(
+            move || updater_active_item(),
+            move |new_state| {
+                dropdown_id
+                    .update_state(Message::ActiveElement(Box::new(new_state)));
+            },
+        );
 
         let main_fn = Box::new(as_child_of_current_scope(main_view));
 
@@ -477,6 +541,9 @@ impl<T: Clone> Dropdown<T> {
         Self {
             id: dropdown_id,
             current_value: initial,
+            active_item,
+            options,
+            selected_index: None,
             pointer_pressed: false,
             main_view,
             main_view_scope,
@@ -526,11 +593,12 @@ impl<T: Clone> Dropdown<T> {
     where
         AIF: Fn() -> T + 'static,
         I: IntoIterator<Item = T> + Clone + 'static,
-        T: Clone + std::fmt::Display + 'static,
+        T: Clone + PartialEq + std::fmt::Display + 'static,
     {
         Self::custom(active_item, Self::default_main_view, iterator, |v| {
             floem::views::text(v).into_any()
         })
+        .selection_by(|option, active| option == active)
     }
 
     /// Creates a new dropdown with a read-write signal for the active item.
@@ -557,7 +625,7 @@ impl<T: Clone> Dropdown<T> {
     where
         AI: SignalGet<T> + SignalUpdate<T> + Copy + 'static,
         I: IntoIterator<Item = T> + Clone + 'static,
-        T: Clone + std::fmt::Display + 'static,
+        T: Clone + PartialEq + std::fmt::Display + 'static,
     {
         Self::custom(
             move || active_item.get(),
@@ -565,6 +633,7 @@ impl<T: Clone> Dropdown<T> {
             iterator,
             |t| text(t).into_any(),
         )
+        .selection_by(|option, active| option == active)
         .on_accept(move |nv| active_item.set(nv))
     }
 
@@ -591,6 +660,21 @@ impl<T: Clone> Dropdown<T> {
         self
     }
 
+    /// Sets how the active value is matched to an option when the popup opens.
+    ///
+    /// The callback should compare stable option identities, not display labels.
+    pub fn selection_by(
+        mut self,
+        matches: impl Fn(&T, &T) -> bool + 'static,
+    ) -> Self {
+        self.selected_index = Some(Rc::new(move |active, options| {
+            selected_option_index(options, active, |option, current| {
+                matches(option, current)
+            })
+        }));
+        self
+    }
+
     /// Sets a reactive condition for showing or hiding the dropdown list.
     ///
     /// # Reactivity
@@ -604,11 +688,14 @@ impl<T: Clone> Dropdown<T> {
         self
     }
 
-    /// Sets a callback function to be called when an item is selected from the dropdown.
+    /// Adds a callback to run when an item is selected from the dropdown.
     ///
-    /// Only one `on_accept` callback can be set at a time.
+    /// Multiple callbacks run in registration order.
     pub fn on_accept(mut self, on_accept: impl Fn(T) + 'static) -> Self {
-        self.on_accept = Some(Box::new(on_accept));
+        self.on_accept = Some(append_accept_callback(
+            self.on_accept.take(),
+            Rc::new(on_accept),
+        ));
         self
     }
 
@@ -666,6 +753,15 @@ impl<T: Clone> Dropdown<T> {
         let list = self.list_view.clone();
         let list_style = self.list_style.clone();
         let list_item_fn = self.list_item_fn.clone();
+        let active_item = self.active_item.clone();
+        let options = self.options.clone();
+        let selected_index = self.selected_index.clone();
+        let active_index: PopupSelectionFn = Rc::new(move || {
+            let active_value = active_item();
+            selected_index
+                .as_ref()
+                .and_then(|selected_index| selected_index(&active_value, &options))
+        });
         let dropdown_id = self.id;
         let mut root = self.id;
         while let Some(parent) = root.parent() {
@@ -674,7 +770,7 @@ impl<T: Clone> Dropdown<T> {
         let size = root.get_size().unwrap_or_default();
         let frame_size = overlay_frame_size(size);
         self.overlay_id = Some(add_overlay(Point::ZERO, move |_| {
-            let menu = list(&*list_item_fn.clone())
+            let menu = list(&*list_item_fn.clone(), active_index.clone())
                 .style(move |s| {
                     s.apply(list_style.clone())
                         .absolute()
@@ -759,25 +855,45 @@ pub fn dropdown<T>(
     config: ReadSignal<Arc<SparrowConfig>>,
 ) -> Dropdown<T>
 where
-    T: Clone + std::fmt::Display + 'static,
+    T: Clone + PartialEq + std::fmt::Display + 'static,
+{
+    dropdown_with_label(value, items, config, |item| item.to_string(), |_| {})
+}
+
+/// Shared controlled dropdown with a caller-provided label and post-commit callback.
+pub fn dropdown_with_label<T>(
+    value: RwSignal<T>,
+    items: impl IntoIterator<Item = T> + Clone + 'static,
+    config: ReadSignal<Arc<SparrowConfig>>,
+    display: impl Fn(&T) -> String + Clone + 'static,
+    on_accept: impl Fn(T) + 'static,
+) -> Dropdown<T>
+where
+    T: Clone + PartialEq + 'static,
 {
     let items: Vec<T> = items.into_iter().collect();
     let list_height = (items.len() as f64 * 28.0 + 2.0).clamp(2.0, 240.0);
+    let main_display = display.clone();
+    let list_display = display;
     Dropdown::custom(
         move || value.get(),
         move |item| {
-            Dropdown::main_display(item, move || {
+            Dropdown::<String>::main_display(main_display(&item), move || {
                 config.get().ui_svg(SparrowIcons::PALETTE_MENU)
             })
         },
         items,
-        |item| {
-            text(item)
+        move |item| {
+            text(list_display(&item))
                 .style(|s| s.height(28.0).padding_horiz(6.0).items_center())
                 .into_any()
         },
     )
-    .on_accept(move |selected| value.set(selected))
+    .selection_by(|option, active| option == active)
+    .on_accept(move |selected| {
+        value.set(selected.clone());
+        on_accept(selected);
+    })
     .style(move |s| {
         let config = config.get();
         let border = config.color(SparrowColor::SPARROW_BORDER);
@@ -814,6 +930,120 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn popup_selection_matches_controlled_value() {
+        let options = ["A", "B", "C"];
+        let active_value = "B";
+        let popup = list(options.iter().map(|option| text(*option)));
+        let active_index =
+            selected_option_index(&options, &active_value, |option, active| {
+                option == active
+            });
+        initialize_popup_selection(popup.selection(), active_index);
+
+        assert_eq!(popup.selection().get_untracked(), Some(1));
+        assert_eq!(
+            options[popup.selection().get_untracked().unwrap()],
+            active_value
+        );
+    }
+
+    #[test]
+    fn popup_reopen_uses_latest_controlled_value() {
+        let options = ["A", "B", "C"];
+        let active_value = floem::reactive::create_rw_signal("B");
+
+        for (new_value, expected_index) in [("B", 1), ("C", 2)] {
+            active_value.set(new_value);
+            let current_value = active_value.get_untracked();
+            let popup = list(options.iter().map(|option| text(*option)));
+            let active_index =
+                selected_option_index(&options, &current_value, |option, active| {
+                    option == active
+                });
+            initialize_popup_selection(popup.selection(), active_index);
+
+            assert_eq!(popup.selection().get_untracked(), Some(expected_index));
+        }
+    }
+
+    #[test]
+    fn open_popup_tracks_programmatic_value_changes() {
+        let options = ["A", "B", "C"];
+        let active_value = floem::reactive::create_rw_signal("B");
+        let popup = list(options.iter().map(|option| text(*option)));
+        let selection = popup.selection();
+        let current_value = active_value;
+        let selected_index: PopupSelectionFn = Rc::new(move || {
+            let active = current_value.get();
+            selected_option_index(&options, &active, |option, current| option == current)
+        });
+        track_popup_selection(selection, selected_index);
+
+        assert_eq!(selection.get_untracked(), Some(1));
+        active_value.set("C");
+        assert_eq!(selection.get_untracked(), Some(2));
+    }
+
+    #[test]
+    fn popup_selection_uses_identity_when_labels_match() {
+        #[derive(Clone)]
+        struct OptionWithLabel {
+            id: u8,
+            label: &'static str,
+        }
+
+        impl PartialEq for OptionWithLabel {
+            fn eq(&self, other: &Self) -> bool {
+                self.id == other.id
+            }
+        }
+
+        let options = [
+            OptionWithLabel {
+                id: 1,
+                label: "Duplicate",
+            },
+            OptionWithLabel {
+                id: 2,
+                label: "Duplicate",
+            },
+        ];
+        let active = OptionWithLabel {
+            id: 2,
+            label: "Duplicate",
+        };
+
+        let index = selected_option_index(&options, &active, |option, current| {
+            option == current
+        });
+
+        assert_eq!(index, Some(1));
+        assert_eq!(options[index.unwrap()].label, active.label);
+    }
+
+    #[test]
+    fn selection_is_committed_before_popup_closes() {
+        use std::cell::RefCell;
+
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let committed = events.clone();
+        let side_effect = events.clone();
+        let closed = events.clone();
+        let on_accept: Rc<dyn Fn(String)> = append_accept_callback(
+            Some(Rc::new(move |_: String| {
+                committed.borrow_mut().push("commit")
+            })),
+            Rc::new(move |_: String| side_effect.borrow_mut().push("side effect")),
+        );
+
+        commit_then_close("B".to_owned(), Some(on_accept), move || {
+            closed.borrow_mut().push("close");
+        });
+
+        assert_eq!(*events.borrow(), ["commit", "side effect", "close"]);
+    }
 
     #[test]
     fn overlay_frame_does_not_trigger_floem_paint_translation() {

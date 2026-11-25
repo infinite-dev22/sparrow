@@ -2,7 +2,7 @@
 
 use super::{Inventory, Kind, Resource, scan};
 use crate::panel::kind::PanelKind;
-use crate::widgets::{sparrow_scroll, text_input};
+use crate::widgets::{dropdown_with_label, sparrow_scroll, text_input};
 use crate::{
     command::InternalCommand,
     config::{color::SparrowColor, icon::SparrowIcons},
@@ -17,7 +17,7 @@ use floem::{
         Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
         create_rw_signal,
     },
-    views::{Decorators, dyn_stack, empty, label, stack},
+    views::{Decorators, dyn_container, dyn_stack, empty, label, stack},
 };
 use std::{rc::Rc, time::Duration};
 
@@ -150,12 +150,30 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 || false,
                 || "Add resource",
                 config,
-            ).ide_popout_menu(move ||Menu::new("")
-                .entry(MenuItem::new("Import Flutter asset…").action(move ||{import.show(None, "", "assets/");}))
-                .entry(MenuItem::new("Import Android resource…").action(move ||{import.show(None, "", "android/app/src/main/res/drawable/");}))
-                .entry(MenuItem::new("New color value…").action(move ||{import.show(Some(Kind::Color), "#FFFFFFFF", "accent");}))
-                .entry(MenuItem::new("New string value…").action(move ||{import.show(Some(Kind::String), "", "label");}))
-            ),
+            )
+            .ide_popout_menu(move || {
+                Menu::new("")
+                    .entry(MenuItem::new("Import Flutter asset…").action(
+                        move || {
+                            import.show(None, "", "assets/");
+                        },
+                    ))
+                    .entry(MenuItem::new("Import Android resource…").action(
+                        move || {
+                            import.show(
+                                None,
+                                "",
+                                "android/app/src/main/res/drawable/",
+                            );
+                        },
+                    ))
+                    .entry(MenuItem::new("New color value…").action(move || {
+                        import.show(Some(Kind::Color), "#FFFFFFFF", "accent");
+                    }))
+                    .entry(MenuItem::new("New string value…").action(move || {
+                        import.show(Some(Kind::String), "", "label");
+                    }))
+            }),
             clickable_icon(
                 || SparrowIcons::IMAGE_LOADING,
                 move || refresh.update(|n| *n += 1),
@@ -164,32 +182,29 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 || "Refresh resources",
                 config,
             ),
-            crate::widgets::menu_button(
+            dyn_container(
                 move || {
-                    module.with(|name| {
-                        if name.is_empty() {
-                            "All modules".into()
-                        } else {
-                            name.clone()
-                        }
-                    })
+                    let mut choices = vec![String::new()];
+                    choices.extend(modules.get());
+                    choices
                 },
-                move || {
-                    let mut menu = Menu::new("").entry(
-                        MenuItem::new("All modules")
-                            .action(move || module.set(String::new())),
-                    );
-                    for name in modules.get_untracked() {
-                        menu = menu.entry(
-                            MenuItem::new(&name)
-                                .action(move || module.set(name.clone())),
-                        );
-                    }
-                    menu
+                move |choices| {
+                    dropdown_with_label(
+                        module,
+                        choices,
+                        config,
+                        |name| {
+                            if name.is_empty() {
+                                "All modules".into()
+                            } else {
+                                name.clone()
+                            }
+                        },
+                        |_| {},
+                    )
+                    .style(|s| s.max_width(160.0))
                 },
-                config,
-            )
-            .style(|s| s.max_width(160.0)),
+            ),
             text_input(query, config)
                 .placeholder("Search resources")
                 .style(|s| s.flex_grow(1.0_f32).min_width(30.0)),
@@ -202,8 +217,25 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 .padding_horiz(6.0)
         }),
         resource_categories(kind, config),
-        label(move || format!("{} ({})", module.with(|m|if m.is_empty(){"Project resources".to_string()}else{m.clone()}),filtered.with(|r|r.len())))
-            .style(move |s|s.width_full().height(38.0).padding_horiz(10.0).items_center().border_bottom(1.0).border_color(config.get().color(SparrowColor::SPARROW_BORDER))),
+        label(move || {
+            format!(
+                "{} ({})",
+                module.with(|m| if m.is_empty() {
+                    "Project resources".to_string()
+                } else {
+                    m.clone()
+                }),
+                filtered.with(|r| r.len())
+            )
+        })
+        .style(move |s| {
+            s.width_full()
+                .height(38.0)
+                .padding_horiz(10.0)
+                .items_center()
+                .border_bottom(1.0)
+                .border_color(config.get().color(SparrowColor::SPARROW_BORDER))
+        }),
         label(move || inventory.with(|data| data.error.clone())).style(move |s| {
             s.padding(10.0)
                 .width_full()
@@ -231,9 +263,17 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     let explorer = file_explorer.clone();
                     let reference = reference.clone();
                     let info = resource.clone();
-                    let check = (resource.module.clone(), resource.kind, resource.name.clone());
+                    let check = (
+                        resource.module.clone(),
+                        resource.kind,
+                        resource.name.clone(),
+                    );
                     stack((
-                        resource_thumbnail(resource.variants.first().cloned(), size, config),
+                        resource_thumbnail(
+                            resource.variants.first().cloned(),
+                            size,
+                            config,
+                        ),
                         stack((
                             label(move || info.name.clone())
                                 .style(|s| s.text_ellipsis().min_width(0.0)),
@@ -287,7 +327,11 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                         let rename = variant.clone();
                         let explorer = explorer.clone();
                         let renamed = explorer.clone();
-                        let reference = reference.clone();let rename_window=reference.clone();let rename_target=menu_resource.clone();let usages=reference.clone();let find_name=menu_resource.name.clone();
+                        let reference = reference.clone();
+                        let rename_window = reference.clone();
+                        let rename_target = menu_resource.clone();
+                        let usages = reference.clone();
+                        let find_name = menu_resource.name.clone();
                         let value = if menu_resource.kind == Kind::Asset {
                             menu_resource.name.clone()
                         } else {
@@ -297,7 +341,8 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                                     .kind
                                     .title()
                                     .to_lowercase()
-                                    .replace(' ', "").trim_end_matches('s'),
+                                    .replace(' ', "")
+                                    .trim_end_matches('s'),
                                 menu_resource.name
                             )
                         };
@@ -305,13 +350,31 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             .entry(MenuItem::new("Open definition").action(
                                 move || {
                                     if let Some(variant) = &open {
-                                        internal.send(InternalCommand::JumpToLocation {location: EditorLocation {path: variant.path.clone(),position: Some(EditorPosition::Position(lsp_types::Position::new(variant.line,0))),scroll_offset: None,ignore_unconfirmed:false,same_editor_tab:false}});
+                                        internal.send(
+                                            InternalCommand::JumpToLocation {
+                                                location: EditorLocation {
+                                                    path: variant.path.clone(),
+                                                    position: Some(
+                                                        EditorPosition::Position(
+                                                            lsp_types::Position::new(
+                                                                variant.line,
+                                                                0,
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    scroll_offset: None,
+                                                    ignore_unconfirmed: false,
+                                                    same_editor_tab: false,
+                                                },
+                                            },
+                                        );
                                     }
                                 },
                             ))
-                            .entry(
-                                MenuItem::new("Find usages").action(move ||{usages.global_search.set_pattern(find_name.clone());usages.show_panel(PanelKind::Search);}),
-                            )
+                            .entry(MenuItem::new("Find usages").action(move || {
+                                usages.global_search.set_pattern(find_name.clone());
+                                usages.show_panel(PanelKind::Search);
+                            }))
                             .entry(
                                 MenuItem::new("Copy resource reference")
                                     .action(move || crate::menus::copy_text(&value)),
@@ -328,16 +391,24 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                                 },
                             ))
                             .entry(
-                                MenuItem::new(if menu_resource.module.starts_with("android/"){"Rename resource…"}else{"Rename file…"})
-
-                                    .action(move || {
-                                        if rename_target.module.starts_with("android/") {rename_form.show(rename_target.clone());return;}
-                                        if let Some(variant) = &rename {
-                                            rename_window.show_panel(PanelKind::FileExplorer);
-                                            renamed
-                                                .rename_path(variant.path.clone());
-                                        }
-                                    }),
+                                MenuItem::new(
+                                    if menu_resource.module.starts_with("android/") {
+                                        "Rename resource…"
+                                    } else {
+                                        "Rename file…"
+                                    },
+                                )
+                                .action(move || {
+                                    if rename_target.module.starts_with("android/") {
+                                        rename_form.show(rename_target.clone());
+                                        return;
+                                    }
+                                    if let Some(variant) = &rename {
+                                        rename_window
+                                            .show_panel(PanelKind::FileExplorer);
+                                        renamed.rename_path(variant.path.clone());
+                                    }
+                                }),
                             )
                     })
                     .style(move |s| {
@@ -352,7 +423,10 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             .apply_if(!grid.get(), |s| s.width_full())
                             .apply_if(
                                 selected.with(|r| {
-                                    r.as_ref().is_some_and(|r| (r.module.clone(),r.kind,r.name.clone()) == check)
+                                    r.as_ref().is_some_and(|r| {
+                                        (r.module.clone(), r.kind, r.name.clone())
+                                            == check
+                                    })
                                 }),
                                 |s| {
                                     s.background(config.get().color(
@@ -416,20 +490,34 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         .style(|s| s.flex_col().width_full().max_height(120.0)),
         stack((
             crate::widgets::tab_button(
-                label(|| "List"), move || !grid.get(), move || grid.set(false), config,
+                label(|| "List"),
+                move || !grid.get(),
+                move || grid.set(false),
+                config,
             ),
             crate::widgets::tab_button(
-                label(|| "Grid"), move || grid.get(), move || grid.set(true), config,
+                label(|| "Grid"),
+                move || grid.get(),
+                move || grid.set(true),
+                config,
             ),
             empty().style(|s| s.flex_grow(1.0_f32)),
-            crate::widgets::button(|| "−", crate::widgets::ButtonKind::Outlined, config)
-                .on_click_stop(move |_| size.update(|v| *v = (*v - 8.0).max(24.0)))
-                .disabled(move || size.get() <= 24.0)
-                .style(|s| s.size(24.0, 24.0)),
-            crate::widgets::button(|| "+", crate::widgets::ButtonKind::Outlined, config)
-                .on_click_stop(move |_| size.update(|v| *v = (*v + 8.0).min(128.0)))
-                .disabled(move || size.get() >= 128.0)
-                .style(|s| s.size(24.0, 24.0)),
+            crate::widgets::button(
+                || "−",
+                crate::widgets::ButtonKind::Outlined,
+                config,
+            )
+            .on_click_stop(move |_| size.update(|v| *v = (*v - 8.0).max(24.0)))
+            .disabled(move || size.get() <= 24.0)
+            .style(|s| s.size(24.0, 24.0)),
+            crate::widgets::button(
+                || "+",
+                crate::widgets::ButtonKind::Outlined,
+                config,
+            )
+            .on_click_stop(move |_| size.update(|v| *v = (*v + 8.0).min(128.0)))
+            .disabled(move || size.get() >= 128.0)
+            .style(|s| s.size(24.0, 24.0)),
         ))
         .style(move |s| {
             s.width_full()

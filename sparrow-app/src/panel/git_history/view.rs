@@ -2,21 +2,28 @@
 //! tree, committed file tree and revision inspection.
 
 use super::{
-    build_tree, files, load, ref_chips, BranchKind, ChangedFile, ChipKind, Details, Filters, Log,
-    TreeRow,
+    BranchKind, ChangedFile, ChipKind, Details, Filters, Log, TreeRow, build_tree,
+    files, load, ref_chips,
 };
 use crate::panel::{kind::PanelKind, reference_tools::output};
 use crate::widgets::text_input;
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
-    widgets::clickable_icon,
     widgets::popup_menu::{Menu, MenuItem, PopupMenuExt},
+    widgets::{clickable_icon, dropdown_with_label},
     window_tab::WindowTabData,
 };
-use floem::{event::{Event, EventListener, EventPropagation}, keyboard::{Key, NamedKey}, peniko::Color, reactive::{
-    create_effect, create_memo, create_rw_signal, RwSignal, Scope, SignalGet, SignalUpdate,
-    SignalWith,
-}, views::{dyn_stack, label, stack, svg, Decorators}, View, IntoView};
+use floem::{
+    IntoView, View,
+    event::{Event, EventListener, EventPropagation},
+    keyboard::{Key, NamedKey},
+    peniko::Color,
+    reactive::{
+        RwSignal, Scope, SignalGet, SignalUpdate, SignalWith, create_effect,
+        create_memo, create_rw_signal,
+    },
+    views::{Decorators, dyn_stack, label, stack, svg},
+};
 use std::{
     collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
@@ -152,11 +159,12 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         let root = root.clone();
         epoch.update(|value| *value += 1);
         let request = epoch.get_untracked();
-        let send = floem::ext_event::create_ext_action(Scope::current(), move |log| {
-            if epoch.get_untracked() == request {
-                state.set(log);
-            }
-        });
+        let send =
+            floem::ext_event::create_ext_action(Scope::current(), move |log| {
+                if epoch.get_untracked() == request {
+                    state.set(log);
+                }
+            });
         std::thread::spawn(move || {
             send(match root {
                 Some(root) => load(&root, &filters),
@@ -186,11 +194,14 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                 .find(|commit| commit.hash == hash)
                 .and_then(|commit| commit.parents.first().cloned())
         });
-        let send = floem::ext_event::create_ext_action(Scope::current(), move |(hash, result)| {
-            if selected.get_untracked() == hash {
-                detail.set(result);
-            }
-        });
+        let send = floem::ext_event::create_ext_action(
+            Scope::current(),
+            move |(hash, result)| {
+                if selected.get_untracked() == hash {
+                    detail.set(result);
+                }
+            },
+        );
         std::thread::spawn(move || {
             let message = output(
                 Path::new("git"),
@@ -297,36 +308,38 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         move |row| {
             let checkout = checkout.clone();
             match row {
-                TreeRow::Head => label(|| "HEAD (Current Branch)")
-                    .on_click_stop(move |_| {
-                        branch.update(|b| {
-                            if b == "HEAD" {
-                                b.clear()
-                            } else {
-                                *b = "HEAD".into()
-                            }
-                        })
-                    })
-                    .style(move |s| {
-                        s.height(24.0)
-                            .width_full()
-                            .items_center()
-                            .padding_left(8.0)
-                            .font_bold()
-                            .apply_if(branch.with(|b| b == "HEAD"), |s| {
-                                s.background(
-                                    config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                                )
+                TreeRow::Head => {
+                    label(|| "HEAD (Current Branch)")
+                        .on_click_stop(move |_| {
+                            branch.update(|b| {
+                                if b == "HEAD" {
+                                    b.clear()
+                                } else {
+                                    *b = "HEAD".into()
+                                }
                             })
-                    })
-                    .into_any(),
+                        })
+                        .style(move |s| {
+                            s.height(24.0)
+                                .width_full()
+                                .items_center()
+                                .padding_left(8.0)
+                                .font_bold()
+                                .apply_if(branch.with(|b| b == "HEAD"), |s| {
+                                    s.background(config.get().color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ))
+                                })
+                        })
+                        .into_any()
+                }
                 TreeRow::Section { id, title, open } => stack((
                     crate::widgets::tree_chevron(config, move || open, || true),
                     label(move || title),
                 ))
-                    .on_click_stop(move |_| toggle_tree(id.to_string()))
-                    .style(|s| s.height(24.0).items_center().gap(5.0).padding_left(8.0))
-                    .into_any(),
+                .on_click_stop(move |_| toggle_tree(id.to_string()))
+                .style(|s| s.height(24.0).items_center().gap(5.0).padding_left(8.0))
+                .into_any(),
                 TreeRow::Folder {
                     id,
                     name,
@@ -336,14 +349,14 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     crate::widgets::tree_chevron(config, move || open, || true),
                     label(move || name.clone()),
                 ))
-                    .on_click_stop(move |_| toggle_tree(id.clone()))
-                    .style(move |s| {
-                        s.height(24.0)
-                            .items_center()
-                            .gap(5.0)
-                            .padding_left(16.0 + depth as f32 * 14.0)
-                    })
-                    .into_any(),
+                .on_click_stop(move |_| toggle_tree(id.clone()))
+                .style(move |s| {
+                    s.height(24.0)
+                        .items_center()
+                        .gap(5.0)
+                        .padding_left(16.0 + depth as f32 * 14.0)
+                })
+                .into_any(),
                 TreeRow::Ref {
                     branch: item,
                     name,
@@ -363,13 +376,13 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             (BranchKind::Tag, _) => "◇",
                             _ => "⑂",
                         })
-                            .style(move |s| {
-                                s.width(14.0).color(config.get().color(if current {
-                                    SparrowColor::EDITOR_LINK
-                                } else {
-                                    SparrowColor::EDITOR_DIM
-                                }))
-                            }),
+                        .style(move |s| {
+                            s.width(14.0).color(config.get().color(if current {
+                                SparrowColor::EDITOR_LINK
+                            } else {
+                                SparrowColor::EDITOR_DIM
+                            }))
+                        }),
                         label(move || name.clone()).style(move |s| {
                             s.min_width(0.0)
                                 .text_ellipsis()
@@ -385,52 +398,58 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             }
                             text
                         })
-                            .style(move |s| {
-                                s.color(config.get().color(SparrowColor::EDITOR_DIM))
-                                    .apply_if(ahead == 0 && behind == 0, |s| s.hide())
-                            }),
-                    ))
-                        .on_click_stop(move |_| {
-                            let target = select.clone();
-                            branch.update(|b| if *b == target { b.clear() } else { *b = target })
-                        })
-                        .ide_context_menu(move || {
-                            let reference = menu_ref.clone();
-                            let name = menu_name.clone();
-                            let checkout = checkout.clone();
-                            Menu::new("")
-                                .entry(MenuItem::new("Filter log by branch").action({
-                                    let reference = reference.clone();
-                                    move || branch.set(reference.clone())
-                                }))
-                                .entry(
-                                    MenuItem::new("Checkout")
-                                        .enabled(kind == BranchKind::Local && !current)
-                                        .action(move || checkout.git_checkout(name.clone())),
-                                )
-                                .entry(MenuItem::new("Copy Name").action({
-                                    let name = menu_name.clone();
-                                    move || crate::menus::copy_text(&name)
-                                }))
-                        })
                         .style(move |s| {
-                            s.height(24.0)
-                                .width_full()
-                                .items_center()
-                                .gap(5.0)
-                                .padding_left(30.0 + depth as f32 * 14.0)
-                                .apply_if(branch.with(|b| *b == check), |s| {
-                                    s.background(
-                                        config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND),
-                                    )
-                                })
+                            s.color(config.get().color(SparrowColor::EDITOR_DIM))
+                                .apply_if(ahead == 0 && behind == 0, |s| s.hide())
+                        }),
+                    ))
+                    .on_click_stop(move |_| {
+                        let target = select.clone();
+                        branch.update(|b| {
+                            if *b == target { b.clear() } else { *b = target }
                         })
-                        .into_any()
+                    })
+                    .ide_context_menu(move || {
+                        let reference = menu_ref.clone();
+                        let name = menu_name.clone();
+                        let checkout = checkout.clone();
+                        Menu::new("")
+                            .entry(MenuItem::new("Filter log by branch").action({
+                                let reference = reference.clone();
+                                move || branch.set(reference.clone())
+                            }))
+                            .entry(
+                                MenuItem::new("Checkout")
+                                    .enabled(kind == BranchKind::Local && !current)
+                                    .action(move || {
+                                        checkout.git_checkout(name.clone())
+                                    }),
+                            )
+                            .entry(MenuItem::new("Copy Name").action({
+                                let name = menu_name.clone();
+                                move || crate::menus::copy_text(&name)
+                            }))
+                    })
+                    .style(move |s| {
+                        s.height(24.0)
+                            .width_full()
+                            .items_center()
+                            .gap(5.0)
+                            .padding_left(30.0 + depth as f32 * 14.0)
+                            .apply_if(branch.with(|b| *b == check), |s| {
+                                s.background(
+                                    config.get().color(
+                                        SparrowColor::PANEL_HOVERED_BACKGROUND,
+                                    ),
+                                )
+                            })
+                    })
+                    .into_any()
                 }
             }
         },
     )
-        .style(|s| s.flex_col().width_full());
+    .style(|s| s.flex_col().width_full());
 
     let log_rows = crate::widgets::sparrow_scroll(
         dyn_stack(
@@ -464,7 +483,9 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                         s.width(graph_width.get()).height(24.0).flex_shrink(0.0_f32)
                     }),
                     dyn_stack(
-                        move || chips.clone().into_iter().enumerate().collect::<Vec<_>>(),
+                        move || {
+                            chips.clone().into_iter().enumerate().collect::<Vec<_>>()
+                        },
                         |(i, chip)| (*i, chip.text.clone()),
                         move |(_, chip)| {
                             let (bg, fg) = chip_colors(chip.kind);
@@ -481,7 +502,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             })
                         },
                     )
-                        .style(|s| s.gap(4.0).flex_shrink(0.0_f32).items_center()),
+                    .style(|s| s.gap(4.0).flex_shrink(0.0_f32).items_center()),
                     label(move || subject.clone()).style(|s| {
                         s.flex_basis(0.0)
                             .flex_grow(1.0_f32)
@@ -496,40 +517,43 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                             .color(config.get().color(SparrowColor::EDITOR_DIM))
                     }),
                 ))
-                    .on_click_stop(move |_| selected.set(select.clone()))
-                    .ide_context_menu(move || {
-                        let hash = copy.clone();
-                        let message = message.clone();
-                        Menu::new("")
-                            .entry(crate::git_actions::menu(git_commands, Some(copy.clone())))
-                            .entry(
-                                MenuItem::new("Copy Revision Number")
-                                    .action(move || crate::menus::copy_text(&hash)),
+                .on_click_stop(move |_| selected.set(select.clone()))
+                .ide_context_menu(move || {
+                    let hash = copy.clone();
+                    let message = message.clone();
+                    Menu::new("")
+                        .entry(crate::git_actions::menu(
+                            git_commands,
+                            Some(copy.clone()),
+                        ))
+                        .entry(
+                            MenuItem::new("Copy Revision Number")
+                                .action(move || crate::menus::copy_text(&hash)),
+                        )
+                        .entry(
+                            MenuItem::new("Copy Commit Message")
+                                .action(move || crate::menus::copy_text(&message)),
+                        )
+                })
+                .style(move |s| {
+                    s.height(24.0)
+                        .width_full()
+                        .items_center()
+                        .gap(6.0)
+                        .padding_right(8.0)
+                        .apply_if(selected.get() == check, |s| {
+                            s.background(
+                                config.get().color(
+                                    SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND,
+                                ),
                             )
-                            .entry(
-                                MenuItem::new("Copy Commit Message")
-                                    .action(move || crate::menus::copy_text(&message)),
-                            )
-                    })
-                    .style(move |s| {
-                        s.height(24.0)
-                            .width_full()
-                            .items_center()
-                            .gap(6.0)
-                            .padding_right(8.0)
-                            .apply_if(selected.get() == check, |s| {
-                                s.background(
-                                    config
-                                        .get()
-                                        .color(SparrowColor::SPARROW_TAB_ACTIVE_BACKGROUND),
-                                )
-                            })
-                    })
+                        })
+                })
             },
         )
-            .style(|s| s.flex_col().width_full()),
+        .style(|s| s.flex_col().width_full()),
     )
-        .style(|s| s.flex_grow(1.0_f32).min_height(0.0).width_full());
+    .style(|s| s.flex_grow(1.0_f32).min_height(0.0).width_full());
     let log_id = log_rows.id();
     let log_rows = log_rows
         .keyboard_navigable()
@@ -545,11 +569,12 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                         .iter()
                         .position(|row| row.hash == selected.get_untracked())
                         .unwrap_or(0);
-                    let next = if key.key.logical_key == Key::Named(NamedKey::ArrowUp) {
-                        at.saturating_sub(1)
-                    } else {
-                        (at + 1).min(rows.len().saturating_sub(1))
-                    };
+                    let next =
+                        if key.key.logical_key == Key::Named(NamedKey::ArrowUp) {
+                            at.saturating_sub(1)
+                        } else {
+                            (at + 1).min(rows.len().saturating_sub(1))
+                        };
                     if let Some(row) = rows.get(next) {
                         selected.set(row.hash.clone());
                     }
@@ -560,22 +585,27 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         });
 
     // Small "Aa" / ".*" style toggles that sit beside the search box.
-    let toggle = move |text: &'static str, tip: &'static str, flag: RwSignal<bool>| {
-        let _ = tip;
-        label(move || text)
-            .on_click_stop(move |_| flag.update(|v| *v = !*v))
-            .style(move |s| {
-                s.height(20.0)
-                    .padding_horiz(5.0)
-                    .items_center()
-                    .border_radius(3.0)
-                    .font_size(11.0)
-                    .apply_if(flag.get(), |s| {
-                        s.background(config.get().color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+    let toggle =
+        move |text: &'static str, tip: &'static str, flag: RwSignal<bool>| {
+            let _ = tip;
+            label(move || text)
+                .on_click_stop(move |_| flag.update(|v| *v = !*v))
+                .style(move |s| {
+                    s.height(20.0)
+                        .padding_horiz(5.0)
+                        .items_center()
+                        .border_radius(3.0)
+                        .font_size(11.0)
+                        .apply_if(flag.get(), |s| {
+                            s.background(
+                                config
+                                    .get()
+                                    .color(SparrowColor::PANEL_HOVERED_BACKGROUND),
+                            )
                             .color(config.get().color(SparrowColor::EDITOR_LINK))
-                    })
-            })
-    };
+                        })
+                })
+        };
 
     stack((
         crate::panel::chrome::header(
@@ -616,29 +646,23 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     text_input(user, config)
                         .placeholder("User")
                         .style(move |s| s.width(90.0)),
-                    crate::widgets::menu_button(
-                        move || {
-                            if since.with(|s| s.is_empty()) {
-                                "Date".to_string()
-                            } else {
-                                since.get()
-                            }
-                        },
-                        move || {
-                            let mut menu = Menu::new("");
-                            for (label, value) in [
-                                ("All time", ""),
-                                ("Last 24 hours", "24 hours ago"),
-                                ("Last 7 days", "7 days ago"),
-                                ("Last 30 days", "30 days ago"),
-                            ] {
-                                menu = menu.entry(
-                                    MenuItem::new(label).action(move || since.set(value.into())),
-                                );
-                            }
-                            menu
-                        },
+                    dropdown_with_label(
+                        since,
+                        [
+                            "".to_string(),
+                            "24 hours ago".to_string(),
+                            "7 days ago".to_string(),
+                            "30 days ago".to_string(),
+                        ],
                         config,
+                        |value| match value.as_str() {
+                            "" => "Date".into(),
+                            "24 hours ago" => "Last 24 hours".into(),
+                            "7 days ago" => "Last 7 days".into(),
+                            "30 days ago" => "Last 30 days".into(),
+                            other => other.to_string(),
+                        },
+                        |_| {},
                     )
                         .style(|s| s.max_width(130.0)),
                     text_input(path, config)

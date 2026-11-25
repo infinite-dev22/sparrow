@@ -1,10 +1,7 @@
 //! Dart formatting dialog and scope chooser.
 
 use crate::{
-    widgets::{
-        ButtonKind, action_group, compact_button, menu_button,
-        popup_menu::{Menu, MenuItem},
-    },
+    widgets::{ButtonKind, action_group, compact_button, dropdown_with_label},
     window_tab::WindowTabData,
 };
 use floem::{
@@ -12,7 +9,7 @@ use floem::{
     event::{Event, EventListener, EventPropagation},
     keyboard::{Key, NamedKey},
     reactive::{SignalGet, SignalUpdate, SignalWith},
-    views::{Decorators, container, label, stack},
+    views::{Decorators, container, dyn_container, label, stack},
 };
 use std::rc::Rc;
 
@@ -28,7 +25,7 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let message = state.message;
     let config = window.common.config;
     let root = window.workspace.path.clone();
-    let menu_window = window.clone();
+    let active_editor = window.main_split.active_editor;
     let focus = crate::widgets::modal_focus::ModalFocus::default();
     let initial_focus = focus.clone();
     floem::reactive::create_effect(move |_| {
@@ -45,39 +42,49 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     focus.set_submit(move || run.run(w.clone()));
     let run = state.clone();
     let w = window.clone();
-    let scope = menu_button(
-        move || target.get().display().to_string(),
+    let scope = dyn_container(
         move || {
-            let mut menu = Menu::new("Scope");
-            if let Some(path) = menu_window
-                .main_split
-                .active_editor
-                .get_untracked()
-                .and_then(|editor| {
-                    editor.doc().content.with_untracked(|c| c.path().cloned())
-                })
-            {
-                let parent = path.parent().map(std::path::Path::to_path_buf);
-                menu = menu.entry(
-                    MenuItem::new("Whole file")
-                        .action(move || target.set(path.clone())),
-                );
-                if let Some(parent) = parent {
-                    menu = menu.entry(
-                        MenuItem::new("Directory")
-                            .action(move || target.set(parent.clone())),
-                    );
-                }
-            }
-            if let Some(path) = root.clone() {
-                menu = menu.entry(
-                    MenuItem::new("Project Files")
-                        .action(move || target.set(path.clone())),
-                );
-            }
-            menu
+            active_editor.get().and_then(|editor| {
+                editor.doc().content.with(|content| content.path().cloned())
+            })
         },
-        config,
+        move |active_file| {
+            let parent = active_file
+                .as_ref()
+                .and_then(|path| path.parent().map(std::path::Path::to_path_buf));
+            let mut choices = Vec::new();
+            if let Some(path) = active_file.clone() {
+                choices.push(path);
+            }
+            if let Some(path) = parent.clone()
+                && !choices.contains(&path)
+            {
+                choices.push(path);
+            }
+            if let Some(path) = root.clone()
+                && !choices.contains(&path)
+            {
+                choices.push(path);
+            }
+            let display_root = root.clone();
+            dropdown_with_label(
+                target,
+                choices,
+                config,
+                move |path| {
+                    if active_file.as_ref() == Some(path) {
+                        "Whole file".into()
+                    } else if display_root.as_ref() == Some(path) {
+                        "Project Files".into()
+                    } else if parent.as_ref() == Some(path) {
+                        "Directory".into()
+                    } else {
+                        path.display().to_string()
+                    }
+                },
+                |_| {},
+            )
+        },
     );
     let body = stack((
         label(|| "Reformat Code").style(|s| s.font_bold()),

@@ -2,8 +2,7 @@
 
 use super::record;
 use crate::panel::{kind::PanelKind, reference_tools::output};
-use crate::widgets::popup_menu::{Menu, MenuItem};
-use crate::widgets::{sparrow_scroll, text_input};
+use crate::widgets::{dropdown_with_label, sparrow_scroll, text_input};
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
     widgets::clickable_icon,
@@ -15,7 +14,7 @@ use floem::{
         Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
         create_rw_signal,
     },
-    views::{Decorators, dyn_stack, empty, label, stack},
+    views::{Decorators, dyn_container, dyn_stack, empty, label, stack},
 };
 use std::{path::Path, rc::Rc, time::Duration};
 
@@ -225,85 +224,80 @@ pub fn pull_requests(window: Rc<WindowTabData>) -> impl View {
         )
         .style(|s| s.margin_horiz(12.0).min_width(0.0)),
         stack((
-            crate::widgets::menu_button(
-                move || state.get(),
-                move || {
-                    let mut m = Menu::new("");
-                    for value in ["open", "closed", "all"] {
-                        m = m.entry(
-                            MenuItem::new(value)
-                                .action(move || state.set(value.into())),
-                        );
-                    }
-                    m
-                },
+            dropdown_with_label(
+                state,
+                ["open".into(), "closed".into(), "all".into()],
                 config,
+                |value| value.clone(),
+                |_| {},
             ),
-            crate::widgets::menu_button(
+            dyn_container(
                 move || {
-                    author.with(|a| {
-                        if a.is_empty() {
-                            "Author".into()
-                        } else {
-                            a.clone()
-                        }
-                    })
-                },
-                move || {
-                    let mut m = Menu::new("").entry(
-                        MenuItem::new("All authors")
-                            .action(move || author.set(String::new())),
-                    );
-                    let mut authors = data.with_untracked(|d| {
-                        d.rows
-                            .iter()
-                            .map(|p| p.user.login.clone())
-                            .collect::<Vec<_>>()
-                    });
+                    let mut authors = data
+                        .get()
+                        .rows
+                        .iter()
+                        .map(|pull| pull.user.login.clone())
+                        .collect::<Vec<_>>();
+                    let selected = author.get();
+                    if !selected.is_empty() {
+                        authors.push(selected);
+                    }
                     authors.sort();
                     authors.dedup();
-                    for a in authors {
-                        m = m.entry(
-                            MenuItem::new(a.clone())
-                                .action(move || author.set(a.clone())),
-                        );
-                    }
-                    m
+                    authors.insert(0, String::new());
+                    authors
                 },
-                config,
+                move |authors| {
+                    dropdown_with_label(
+                        author,
+                        authors,
+                        config,
+                        |value| {
+                            if value.is_empty() {
+                                "Author".into()
+                            } else {
+                                value.clone()
+                            }
+                        },
+                        |_| {},
+                    )
+                },
             ),
-            crate::widgets::menu_button(
+            dyn_container(
                 move || {
-                    tag.with(|t| {
-                        if t.is_empty() {
-                            "Label".into()
-                        } else {
-                            t.clone()
-                        }
-                    })
-                },
-                move || {
-                    let mut m = Menu::new("").entry(
-                        MenuItem::new("All labels")
-                            .action(move || tag.set(String::new())),
-                    );
-                    let mut tags = data.with_untracked(|d| {
-                        d.rows
-                            .iter()
-                            .flat_map(|p| p.labels.iter().map(|t| t.name.clone()))
-                            .collect::<Vec<_>>()
-                    });
+                    let mut tags = data
+                        .get()
+                        .rows
+                        .iter()
+                        .flat_map(|pull| {
+                            pull.labels.iter().map(|label| label.name.clone())
+                        })
+                        .collect::<Vec<_>>();
+                    let selected = tag.get();
+                    if !selected.is_empty() {
+                        tags.push(selected);
+                    }
                     tags.sort();
                     tags.dedup();
-                    for t in tags {
-                        m = m.entry(
-                            MenuItem::new(t.clone())
-                                .action(move || tag.set(t.clone())),
-                        );
-                    }
-                    m
+                    tags.insert(0, String::new());
+                    tags
                 },
-                config,
+                move |tags| {
+                    dropdown_with_label(
+                        tag,
+                        tags,
+                        config,
+                        |value| {
+                            if value.is_empty() {
+                                "Label".into()
+                            } else {
+                                value.clone()
+                            }
+                        },
+                        |_| {},
+                    )
+                },
             ),
         ))
         .style(|s| s.height(36.0).gap(14.0).items_center().padding_horiz(16.0)),

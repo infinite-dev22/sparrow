@@ -9,7 +9,7 @@ use floem::{
 };
 
 use super::{
-    device::{DEVICES, Display, Viewport},
+    device::{DeviceChoice, Display, Viewport},
     renderer::{self, Input, Update},
     server::{self, Mode},
 };
@@ -30,7 +30,7 @@ pub(super) struct App {
 
 #[derive(Clone)]
 pub(super) struct Session {
-    pub device: RwSignal<usize>,
+    pub device: RwSignal<DeviceChoice>,
     pub landscape: RwSignal<bool>,
     pub folded: RwSignal<bool>,
     pub dark: RwSignal<bool>,
@@ -60,7 +60,7 @@ pub(super) struct Session {
 impl Session {
     pub fn new() -> Self {
         let session = Self {
-            device: create_rw_signal(0),
+            device: create_rw_signal(DeviceChoice::Preset("pixel-10")),
             landscape: create_rw_signal(false),
             folded: create_rw_signal(false),
             dark: create_rw_signal(false),
@@ -109,7 +109,7 @@ impl Session {
     }
 
     pub fn display(&self) -> Option<Display> {
-        if let Some(device) = DEVICES.get(self.device.get()) {
+        if let Some(device) = self.device.get().device() {
             Some(if self.folded.get() {
                 device.cover.unwrap_or(device.display)
             } else {
@@ -140,9 +140,7 @@ impl Session {
             self.display()?,
             self.landscape.get(),
             dark,
-            DEVICES
-                .get(self.device.get())
-                .is_some_and(|device| device.ios),
+            self.device.get().device().is_some_and(|device| device.ios),
         ))
     }
 
