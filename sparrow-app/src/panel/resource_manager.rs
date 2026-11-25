@@ -1,6 +1,6 @@
 //! Real Flutter assets and Android wrapper resources, with module and variant grouping.
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
 };
 mod view;
@@ -1139,10 +1139,16 @@ fn resolve_import_destination(source: &Path, destination: &Path) -> Result<PathB
 }
 
 #[derive(Clone)]
-pub(super) struct AssetImportPlan {
-    root: PathBuf,
+struct AssetImportEntry {
     source: PathBuf,
     destination: PathBuf,
+    skipped: bool,
+}
+
+#[derive(Clone)]
+pub(super) struct AssetImportPlan {
+    root: PathBuf,
+    entries: Vec<AssetImportEntry>,
     pubspec_change: Option<(String, String)>,
     details: String,
 }
@@ -1153,10 +1159,6 @@ impl AssetImportPlan {
     }
 
     fn apply(&self) -> Result<(), String> {
-        let target = self.root.join(&self.destination);
-        if target.exists() {
-            return Err("A file already exists at the destination.".into());
-        }
         let pubspec = self.root.join("pubspec.yaml");
         if let Some((original, _)) = &self.pubspec_change
             && std::fs::read_to_string(&pubspec).ok().as_deref()
@@ -1167,54 +1169,85 @@ impl AssetImportPlan {
                     .into(),
             );
         }
-        let parent = target.parent().ok_or("Invalid destination")?;
         let canonical_root = self.root.canonicalize().map_err(|error| error.to_string())?;
-        let existing = parent
-            .ancestors()
-            .find(|path| path.exists())
-            .ok_or("Invalid destination")?;
-        if !existing
-            .canonicalize()
-            .map_err(|error| error.to_string())?
-            .starts_with(&canonical_root)
-        {
-            return Err("The destination resolves outside the project.".into());
+        let imports = self.entries.iter().filter(|entry| !entry.skipped).collect::<Vec<_>>();
+        for entry in &imports {
+            if !entry.source.is_file() {
+                return Err(format!("The source file no longer exists: {}", entry.source.display()));
+            }
+            if self.root.join(&entry.destination).exists() {
+                return Err(format!(
+                    "A file appeared at {} after preview. Review the import and retry.",
+                    entry.destination.display()
+                ));
+            }
         }
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        if !parent
-            .canonicalize()
-            .map_err(|error| error.to_string())?
-            .starts_with(&canonical_root)
-        {
-            return Err("The destination resolves outside the project.".into());
+
+        let mut copied = Vec::new();
+        for entry in imports {
+            let result = (|| {
+                let target = self.root.join(&entry.destination);
+                let parent = target.parent().ok_or("Invalid destination")?;
+                let existing = parent
+                    .ancestors()
+                    .find(|path| path.exists())
+                    .ok_or("Invalid destination")?;
+                if !existing
+                    .canonicalize()
+                    .map_err(|error| error.to_string())?
+                    .starts_with(&canonical_root)
+                {
+                    return Err("The destination resolves outside the project.".to_string());
+                }
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                if !parent
+                    .canonicalize()
+                    .map_err(|error| error.to_string())?
+                    .starts_with(&canonical_root)
+                {
+                    return Err("The destination resolves outside the project.".to_string());
+                }
+                let temporary = tempfile::NamedTempFile::new_in(parent)
+                    .map_err(|error| error.to_string())?;
+                std::fs::copy(&entry.source, temporary.path())
+                    .map_err(|error| error.to_string())?;
+                temporary
+                    .persist_noclobber(&target)
+                    .map_err(|error| error.to_string())?;
+                Ok(target)
+            })();
+            match result {
+                Ok(target) => copied.push(target),
+                Err(error) => {
+                    for target in copied {
+                        let _ = std::fs::remove_file(target);
+                    }
+                    return Err(error);
+                }
+            }
         }
-        let temporary =
-            tempfile::NamedTempFile::new_in(parent).map_err(|error| error.to_string())?;
-        std::fs::copy(&self.source, temporary.path())
-            .map_err(|error| error.to_string())?;
-        temporary
-            .persist_noclobber(&target)
-            .map_err(|error| error.to_string())?;
-        let Some((original, updated)) = &self.pubspec_change else {
-            return Ok(());
-        };
-        if std::fs::read_to_string(&pubspec).ok().as_deref()
-            != Some(original.as_str())
-        {
-            let _ = std::fs::remove_file(&target);
-            return Err(
-                "pubspec.yaml changed during import. Review the current manifest and retry."
-                    .into(),
-            );
-        }
-        if updated != original
-            && let Err(error) = crate::persistence::write_files(vec![(
-                pubspec,
-                updated.clone(),
-            )])
-        {
-            let _ = std::fs::remove_file(&target);
-            return Err(error);
+
+        if let Some((original, updated)) = &self.pubspec_change {
+            if std::fs::read_to_string(&pubspec).ok().as_deref() != Some(original.as_str()) {
+                for target in copied {
+                    let _ = std::fs::remove_file(target);
+                }
+                return Err(
+                    "pubspec.yaml changed during import. Review the current manifest and retry."
+                        .into(),
+                );
+            }
+            if updated != original
+                && let Err(error) = crate::persistence::write_files(vec![(
+                    pubspec,
+                    updated.clone(),
+                )])
+            {
+                for target in copied {
+                    let _ = std::fs::remove_file(target);
+                }
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -1225,9 +1258,21 @@ pub(super) fn preview_asset_import(
     source: &Path,
     destination: &Path,
 ) -> Result<AssetImportPlan, String> {
+    let destination = resolve_import_destination(source, destination)?;
+    if root.join(&destination).exists() {
+        return Err("A file already exists at the destination.".into());
+    }
+    preview_asset_import_batch(root, &[source.to_path_buf()], &destination)
+}
+
+pub(super) fn preview_asset_import_batch(
+    root: &Path,
+    sources: &[PathBuf],
+    destination: &Path,
+) -> Result<AssetImportPlan, String> {
     use std::path::Component;
-    if !source.is_file() {
-        return Err("Choose an existing local file to import.".into());
+    if sources.is_empty() {
+        return Err("Choose one or more existing local files to import.".into());
     }
     if destination.as_os_str().is_empty()
         || destination.is_absolute()
@@ -1240,59 +1285,89 @@ pub(super) fn preview_asset_import(
     {
         return Err("Choose a destination inside the project.".into());
     }
-    let destination = resolve_import_destination(source, destination)?;
-    let target = root.join(&destination);
-    if target.exists() {
-        return Err("A file already exists at the destination.".into());
-    }
-    let android = destination.starts_with("android")
-        && destination
-            .components()
-            .any(|part| part.as_os_str() == "res");
-    if android {
-        let stem = destination
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or("");
-        if stem.is_empty()
-            || !stem.chars().all(|character| {
-                character.is_ascii_lowercase()
-                    || character.is_ascii_digit()
-                    || character == '_'
-                    || character == '.'
-            })
-        {
-            return Err("Android resource filenames must use lowercase letters, digits and underscores.".into());
+    let mut entries = Vec::with_capacity(sources.len());
+    let mut planned_destinations = HashSet::new();
+    let mut manifest = None::<(String, String)>;
+    let mut details = Vec::with_capacity(sources.len());
+    let mut copied_count = 0;
+    let mut skipped_count = 0;
+    for source in sources {
+        if !source.is_file() {
+            return Err(format!("Choose an existing local file to import: {}", source.display()));
         }
+        let entry_destination = resolve_import_destination(source, destination)?;
+        let android = entry_destination.starts_with("android")
+            && entry_destination
+                .components()
+                .any(|part| part.as_os_str() == "res");
+        if android {
+            let stem = entry_destination
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            if stem.is_empty()
+                || !stem.chars().all(|character| {
+                    character.is_ascii_lowercase()
+                        || character.is_ascii_digit()
+                        || character == '_'
+                        || character == '.'
+                })
+            {
+                return Err("Android resource filenames must use lowercase letters, digits and underscores.".into());
+            }
+        }
+        let target_exists = root.join(&entry_destination).exists();
+        let duplicate_destination = !planned_destinations.insert(entry_destination.clone());
+        let skipped = target_exists || duplicate_destination;
+        let name = source.file_name().unwrap_or_default().to_string_lossy();
+        if skipped {
+            skipped_count += 1;
+            details.push(format!(
+                "Skip {name} → {} (destination already exists or is duplicated in this selection).",
+                entry_destination.display()
+            ));
+        } else {
+            copied_count += 1;
+            details.push(format!("Copy {name} to {}", entry_destination.display()));
+            if !android {
+                let pubspec = root.join("pubspec.yaml");
+                let (original, current) = match &manifest {
+                    Some((original, current)) => (original.clone(), current.clone()),
+                    None => {
+                        let original = std::fs::read_to_string(&pubspec)
+                            .map_err(|error| error.to_string())?;
+                        (original.clone(), original)
+                    }
+                };
+                let updated = register_asset(
+                    &current,
+                    &entry_destination.to_string_lossy().replace('\\', "/"),
+                )?;
+                manifest = Some((original, updated));
+            }
+        }
+        entries.push(AssetImportEntry {
+            source: source.clone(),
+            destination: entry_destination,
+            skipped,
+        });
     }
-    let (pubspec_change, changes) = if android {
-        (
-            None,
-            "Android resources do not require a pubspec.yaml change.".to_string(),
-        )
-    } else {
-        let pubspec = root.join("pubspec.yaml");
-        let original = std::fs::read_to_string(&pubspec)
-            .map_err(|error| error.to_string())?;
-        let updated = register_asset(
-            &original,
-            &destination.to_string_lossy().replace('\\', "/"),
-        )?;
-        (
-            Some((original.clone(), updated.clone())),
-            manifest_diff(&original, &updated),
-        )
+    let pubspec_change = manifest.filter(|(original, updated)| original != updated);
+    let changes = match &pubspec_change {
+        Some((original, updated)) => manifest_diff(original, updated),
+        None if copied_count > 0 && entries.iter().all(|entry| {
+            entry.destination.starts_with("android")
+                && entry.destination.components().any(|part| part.as_os_str() == "res")
+        }) => "Android resources do not require a pubspec.yaml change.".to_string(),
+        None => "No pubspec.yaml changes are needed.".into(),
     };
+    details.push(format!("{copied_count} file(s) to copy; {skipped_count} skipped."));
+    details.push(changes);
     Ok(AssetImportPlan {
         root: root.to_path_buf(),
-        source: source.to_path_buf(),
-        destination: destination.clone(),
+        entries,
         pubspec_change,
-        details: format!(
-            "Copy {} to {}\n{changes}",
-            source.file_name().unwrap_or_default().to_string_lossy(),
-            destination.display()
-        ),
+        details: details.join("\n"),
     })
 }
 
@@ -1565,6 +1640,71 @@ mod tests {
         assert!(std::fs::read_to_string(&pubspec)
             .unwrap()
             .contains("assets/icon.png"));
+    }
+
+    #[test]
+    fn batch_asset_import_skips_existing_targets_and_registers_only_copied_files() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = tempfile::tempdir().unwrap();
+        let pubspec = root.path().join("pubspec.yaml");
+        std::fs::write(&pubspec, "name: probe\nflutter:\n  assets:\n").unwrap();
+        std::fs::create_dir_all(root.path().join("assets")).unwrap();
+        std::fs::write(root.path().join("assets/existing.png"), "keep this").unwrap();
+        let existing_source = sources.path().join("existing.png");
+        let fresh_source = sources.path().join("fresh.png");
+        let duplicate_source_dir = sources.path().join("another-folder");
+        std::fs::create_dir_all(&duplicate_source_dir).unwrap();
+        let duplicate_source = duplicate_source_dir.join("fresh.png");
+        std::fs::write(&existing_source, "replacement").unwrap();
+        std::fs::write(&fresh_source, "new asset").unwrap();
+        std::fs::write(&duplicate_source, "duplicate name").unwrap();
+
+        let plan = preview_asset_import_batch(
+            root.path(),
+            &[existing_source, fresh_source, duplicate_source],
+            Path::new("assets/"),
+        )
+        .unwrap();
+        assert!(plan.details().contains("Skip existing.png"));
+        assert!(plan.details().contains("Copy fresh.png"));
+        assert!(plan.details().contains("Skip fresh.png"));
+        assert!(plan.details().contains("1 file(s) to copy; 2 skipped."));
+        apply_asset_import(plan).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("assets/existing.png")).unwrap(),
+            "keep this"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("assets/fresh.png")).unwrap(),
+            "new asset"
+        );
+        let manifest = std::fs::read_to_string(pubspec).unwrap();
+        assert!(manifest.contains("assets/fresh.png"));
+        assert!(!manifest.contains("assets/existing.png"));
+    }
+
+    #[test]
+    fn stale_manifest_prevents_every_file_in_a_batch_from_being_copied() {
+        let root = tempfile::tempdir().unwrap();
+        let sources = tempfile::tempdir().unwrap();
+        let pubspec = root.path().join("pubspec.yaml");
+        std::fs::write(&pubspec, "name: probe\nflutter:\n  assets:\n").unwrap();
+        let first = sources.path().join("first.png");
+        let second = sources.path().join("second.png");
+        std::fs::write(&first, "first").unwrap();
+        std::fs::write(&second, "second").unwrap();
+        let plan = preview_asset_import_batch(
+            root.path(),
+            &[first, second],
+            Path::new("assets/"),
+        )
+        .unwrap();
+        std::fs::write(&pubspec, "name: changed\nflutter:\n  assets:\n").unwrap();
+
+        assert!(apply_asset_import(plan).is_err());
+        assert!(!root.path().join("assets/first.png").exists());
+        assert!(!root.path().join("assets/second.png").exists());
     }
 
     #[test]

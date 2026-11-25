@@ -1,7 +1,8 @@
 //! Resource imports and new Android resource values.
 
 use crate::panel::resource_manager::{
-    AssetImportPlan, Kind, apply_asset_import, create_value, preview_asset_import,
+    AssetImportPlan, Kind, apply_asset_import, create_value,
+    preview_asset_import_batch,
 };
 use crate::{
     config::color::SparrowColor,
@@ -30,6 +31,7 @@ pub(super) struct ImportForm {
     import_open: RwSignal<bool>,
     create_kind: RwSignal<Option<Kind>>,
     source: RwSignal<String>,
+    selected_sources: RwSignal<Vec<PathBuf>>,
     destination: RwSignal<String>,
     error: RwSignal<String>,
     preview: RwSignal<String>,
@@ -43,6 +45,7 @@ impl ImportForm {
             import_open: create_rw_signal(false),
             create_kind: create_rw_signal(None),
             source: create_rw_signal(String::new()),
+            selected_sources: create_rw_signal(Vec::new()),
             destination: create_rw_signal(String::from("assets/")),
             error: create_rw_signal(String::new()),
             preview: create_rw_signal(String::new()),
@@ -54,6 +57,7 @@ impl ImportForm {
     pub(super) fn show(self, kind: Option<Kind>, source: &str, destination: &str) {
         self.create_kind.set(kind);
         self.source.set(source.into());
+        self.selected_sources.set(Vec::new());
         self.destination.set(destination.into());
         self.error.set(String::new());
         self.preview.set(String::new());
@@ -73,6 +77,7 @@ impl ImportForm {
             import_open,
             create_kind,
             source,
+            selected_sources,
             destination,
             error,
             preview,
@@ -95,16 +100,25 @@ impl ImportForm {
         )
         .on_click_stop(move |_| {
             let source = browse_source;
+            let selected_sources = selected_sources;
             let preview = browse_preview;
             let pending_plan = pending_plan;
             open_file(
-                FileDialogOptions::new().title("Choose a resource file"),
+                FileDialogOptions::new()
+                    .title("Choose resource files")
+                    .multi_selection(),
                 config,
                 move |info| {
-                    if let Some(path) =
-                        info.and_then(|info| info.path().first().cloned())
+                    if let Some(paths) = info.map(|info| info.path().clone())
+                        && !paths.is_empty()
                     {
-                        source.set(path.to_string_lossy().into_owned());
+                        let source_label = if paths.len() == 1 {
+                            paths[0].to_string_lossy().into_owned()
+                        } else {
+                            format!("{} files selected", paths.len())
+                        };
+                        selected_sources.set(paths);
+                        source.set(source_label);
                         preview.set(String::new());
                         pending_plan.set(None);
                     }
@@ -117,7 +131,7 @@ impl ImportForm {
             label(move ||match create_kind.get(){Some(Kind::Color)=>"New color resource",Some(Kind::String)=>"New string resource",_=>"Import resource"}).style(|s| s.font_bold()),
             stack((
                 text_input(source, config)
-                    .placeholder("Source file path / resource value")
+                    .placeholder("Source file path / resource value; Browse supports multiple files")
                     .disabled(move || importing.get())
                     .style(|s| s.flex_grow(1.0_f32).min_width(0.0)),
                 browse,
@@ -161,6 +175,22 @@ impl ImportForm {
                     let destination_signal = destination;
                     let source_value = source_signal.get_untracked();
                     let destination_value = destination_signal.get_untracked();
+                    let selected_source_paths = selected_sources.get_untracked();
+                    let source_paths = if !selected_source_paths.is_empty()
+                        && (source_value == format!("{} files selected", selected_source_paths.len())
+                            || (selected_source_paths.len() == 1
+                                && source_value
+                                    == selected_source_paths[0].to_string_lossy().as_ref()))
+                    {
+                        selected_source_paths.clone()
+                    } else {
+                        source_value
+                            .lines()
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(PathBuf::from)
+                            .collect()
+                    };
                     let create=create_kind.get_untracked();let selected_module=module.get_untracked();
                     let selected_plan = pending_plan.get_untracked();
                     if create.is_none() && selected_plan.is_none() {
@@ -168,9 +198,11 @@ impl ImportForm {
                         error.set("Preparing import preview…".into());
                         let requested_source = source_value.clone();
                         let requested_destination = destination_value.clone();
+                        let requested_sources = selected_source_paths.clone();
                         let root = root.clone();
                         let current_source = source_signal;
                         let current_destination = destination_signal;
+                        let current_sources = selected_sources;
                         let send = floem::ext_event::create_ext_action(
                             scope,
                             move |result: Result<AssetImportPlan, String>| {
@@ -178,6 +210,7 @@ impl ImportForm {
                                 if current_source.get_untracked() != requested_source
                                     || current_destination.get_untracked()
                                         != requested_destination
+                                    || current_sources.get_untracked() != requested_sources
                                 {
                                     return;
                                 }
@@ -192,9 +225,9 @@ impl ImportForm {
                             },
                         );
                         std::thread::spawn(move || {
-                            send(preview_asset_import(
+                            send(preview_asset_import_batch(
                                 &root,
-                                Path::new(&source_value),
+                                &source_paths,
                                 Path::new(&destination_value),
                             ));
                         });

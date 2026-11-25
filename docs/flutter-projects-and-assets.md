@@ -8,4 +8,6 @@ For local Flutter projects, Sparrow indexes image, SVG/icon, and font files recu
 
 Asset indexing does not modify `pubspec.yaml`. Declare the files/directories there for Flutter to bundle them. This phase provides path completion rather than generating a Dart asset constants file. Runtime-generated paths, package asset catalogs, and asset paths outside `assets/` are not indexed.
 
+Resource Manager can preview and import one or more local files into a project-relative destination. Review the proposed file copies and `pubspec.yaml` additions before applying; existing or duplicate destinations are listed as skipped and are never overwritten. Replace/Keep both choices and undo are not yet available, and Sparrow does not run `flutter pub get` automatically.
+
 Validation: `cargo check -p sparrow-app --offline` and `cargo test -p sparrow-app --lib --offline`. Tests cover wizard validation, asset discovery, watcher additions/deletions, and completion contexts. Temporary empty-app and FFI-package creation have also been checked against the installed Flutter SDK.
