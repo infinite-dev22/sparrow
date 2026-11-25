@@ -22,8 +22,8 @@ use floem::{
     style::CursorStyle,
     views::{Decorators, container, dyn_stack, empty, label, stack, svg},
 };
-use std::{path::Path, rc::Rc};
 use sparrow_rpc::dap_types::{DapId, RunDebugConfig};
+use std::{path::Path, rc::Rc};
 
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
@@ -73,9 +73,9 @@ fn identity_index<T, Id: PartialEq>(
 }
 
 fn set_active_config(wt: &WindowTabData, id: DapId) -> Option<usize> {
-    let index = wt
-        .run_configs
-        .with_untracked(|configs| identity_index(configs, id, |config| config.dap_id));
+    let index = wt.run_configs.with_untracked(|configs| {
+        identity_index(configs, id, |config| config.dap_id)
+    });
     if let Some(index) = index {
         wt.active_run_config_idx.set(index);
     }
@@ -120,29 +120,26 @@ fn configuration_items(configs: &[RunDebugConfig]) -> (Vec<Item>, Vec<Sel>) {
             order.push(Sel::Config(id));
         }
     };
-    add(
-        runs.iter()
-            .map(|(_, config)| {
-                (
-                    config.dap_id,
-                    config.name.clone(),
-                    config_icon(&config.program),
-                )
-            })
-            .collect(),
-    );
-    add(
-        tests
-            .iter()
-            .map(|(_, config)| {
-                (
-                    config.dap_id,
-                    config.name.clone(),
-                    config_icon(&config.program),
-                )
-            })
-            .collect(),
-    );
+    add(runs
+        .iter()
+        .map(|(_, config)| {
+            (
+                config.dap_id,
+                config.name.clone(),
+                config_icon(&config.program),
+            )
+        })
+        .collect());
+    add(tests
+        .iter()
+        .map(|(_, config)| {
+            (
+                config.dap_id,
+                config.name.clone(),
+                config_icon(&config.program),
+            )
+        })
+        .collect());
     if !items.is_empty() {
         items.push(Item::Sep);
     }
@@ -230,7 +227,7 @@ pub(super) fn run_config_chip(window_tab_data: Rc<WindowTabData>) -> impl View {
                     config.get().ui_svg(icon)
                 }
             })
-                .style(|s| s.size(16.0, 16.0).margin_right(6.0)),
+            .style(|s| s.size(16.0, 16.0).margin_right(6.0)),
             label({
                 let wt = window_tab_data.clone();
                 move || {
@@ -242,17 +239,17 @@ pub(super) fn run_config_chip(window_tab_data: Rc<WindowTabData>) -> impl View {
                     })
                 }
             })
-                .style(|s| s.selectable(false)),
+            .style(|s| s.selectable(false)),
             svg(move || config.get().ui_svg(SparrowIcons::DROPDOWN_ARROW)).style(
                 move |s| {
                     let size = config.get().ui.icon_size() as f32;
-                    s.size(size, size)
-                        .margin_left(4.0)
-                        .color(config.get().color(SparrowColor::SPARROW_ICON_INACTIVE))
+                    s.size(size, size).margin_left(4.0).color(
+                        config.get().color(SparrowColor::SPARROW_ICON_INACTIVE),
+                    )
                 },
             ),
         ))
-            .style(|s| s.items_center()),
+        .style(|s| s.items_center()),
     );
     let id = chip.id();
 
@@ -271,25 +268,25 @@ pub(super) fn run_config_chip(window_tab_data: Rc<WindowTabData>) -> impl View {
             );
         }
     })
-        .style(move |s| {
-            let c = config.get();
-            let is_open = open.get();
-            s.height(28.0)
-                .padding_horiz(10.0)
-                .margin_horiz(6.0)
-                .items_center()
-                .border(1.0)
-                .border_color(Color::TRANSPARENT)
-                .border_radius(6.0)
-                .apply_if(is_open, |s| {
-                    s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                        .border_color(c.color(SparrowColor::SPARROW_BORDER))
-                })
-                .hover(|s| {
-                    s.cursor(CursorStyle::Pointer)
-                        .background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                })
-        })
+    .style(move |s| {
+        let c = config.get();
+        let is_open = open.get();
+        s.height(28.0)
+            .padding_horiz(10.0)
+            .margin_horiz(6.0)
+            .items_center()
+            .border(1.0)
+            .border_color(Color::TRANSPARENT)
+            .border_radius(6.0)
+            .apply_if(is_open, |s| {
+                s.background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+                    .border_color(c.color(SparrowColor::SPARROW_BORDER))
+            })
+            .hover(|s| {
+                s.cursor(CursorStyle::Pointer)
+                    .background(c.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
+            })
+    })
 }
 
 // ───────────────────────────── dropdown ─────────────────────────────
@@ -368,10 +365,13 @@ fn show_dropdown(
                 move |(_, item)| item_view(dd.clone(), item)
             },
         )
-            .style(|s| s.flex_col().width_full());
+        .style(|s| s.flex_col().width_full());
 
         let bounds = window_size.get_untracked();
-        let x = anchor.x.min((bounds.width - width as f64 - 8.0).max(0.0)).max(0.0);
+        let x = anchor
+            .x
+            .min((bounds.width - width as f64 - 8.0).max(0.0))
+            .max(0.0);
         let max_h = (bounds.height - anchor.y - 16.0).max(120.0) as f32;
 
         let panel = sparrow_scroll(rows)
@@ -475,10 +475,10 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
                         .selectable(false)
                 }),
             ))
-                .on_event_stop(EventListener::PointerEnter, move |_| sel.set(Sel::Edit))
-                .on_click_stop(move |_| activate(&on_click, Sel::Edit, None))
-                .style(move |s| row_style(config, s, move || sel.get() == Sel::Edit))
-                .into_any()
+            .on_event_stop(EventListener::PointerEnter, move |_| sel.set(Sel::Edit))
+            .on_click_stop(move |_| activate(&on_click, Sel::Edit, None))
+            .style(move |s| row_style(config, s, move || sel.get() == Sel::Edit))
+            .into_any()
         }
         Item::Config { id, name, icon } => {
             let sel = dd.sel;
@@ -509,17 +509,21 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
             let run_btn = button(
                 svg(move || config.get().ui_svg(SparrowIcons::START))
                     .style(move |s| {
-                        s.size(16.0, 16.0)
-                            .color(config.get().color(SparrowColor::SPARROW_RUN_ICON))
+                        s.size(16.0, 16.0).color(
+                            config.get().color(SparrowColor::SPARROW_RUN_ICON),
+                        )
                     })
                     .into_any(),
-                    Box::new(move || activate(&run_dd, Sel::Config(id), Some(RunDebugMode::Run))),
+                Box::new(move || {
+                    activate(&run_dd, Sel::Config(id), Some(RunDebugMode::Run))
+                }),
             );
             let debug_btn = button(
                 svg(move || config.get().ui_svg(SparrowIcons::DEBUG))
                     .style(move |s| {
-                        s.size(16.0, 16.0)
-                            .color(config.get().color(SparrowColor::SPARROW_DEBUG_ICON))
+                        s.size(16.0, 16.0).color(
+                            config.get().color(SparrowColor::SPARROW_DEBUG_ICON),
+                        )
                     })
                     .into_any(),
                 Box::new(move || {
@@ -551,8 +555,9 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
 
             let on_click = dd.clone();
             stack((
-                svg(move || config.get().ui_svg(icon))
-                    .style(|s| s.size(16.0, 16.0).margin_right(8.0).flex_shrink(0.0_f32)),
+                svg(move || config.get().ui_svg(icon)).style(|s| {
+                    s.size(16.0, 16.0).margin_right(8.0).flex_shrink(0.0_f32)
+                }),
                 label(move || name.clone()).style(move |s| {
                     s.flex_grow(1.0_f32)
                         .min_width(0.0)
@@ -562,25 +567,24 @@ fn item_view(dd: Rc<Dd>, item: Item) -> AnyView {
                 }),
                 stack((
                     empty().style(move |s| {
-                        s.width(1.0)
-                            .height(16.0)
-                            .margin_horiz(6.0)
-                            .background(
-                                config.get().color(SparrowColor::SPARROW_BORDER),
-                            )
+                        s.width(1.0).height(16.0).margin_horiz(6.0).background(
+                            config.get().color(SparrowColor::SPARROW_BORDER),
+                        )
                     }),
                     run_btn,
                     debug_btn,
                     more_btn,
                 ))
-                    .style(move |s| s.items_center().apply_if(!selected(), |s| s.hide())),
+                .style(move |s| {
+                    s.items_center().apply_if(!selected(), |s| s.hide())
+                }),
             ))
-                .on_event_stop(EventListener::PointerEnter, move |_| {
-                    sel.set(Sel::Config(id))
-                })
-                .on_click_stop(move |_| activate(&on_click, Sel::Config(id), None))
-                .style(move |s| row_style(config, s, selected))
-                .into_any()
+            .on_event_stop(EventListener::PointerEnter, move |_| {
+                sel.set(Sel::Config(id))
+            })
+            .on_click_stop(move |_| activate(&on_click, Sel::Config(id), None))
+            .style(move |s| row_style(config, s, selected))
+            .into_any()
         }
     }
 }
@@ -609,7 +613,9 @@ fn config_menu(wt: Rc<WindowTabData>, id: DapId) -> Menu {
 }
 
 fn row_style(
-    config: floem::reactive::ReadSignal<std::sync::Arc<crate::config::SparrowConfig>>,
+    config: floem::reactive::ReadSignal<
+        std::sync::Arc<crate::config::SparrowConfig>,
+    >,
     s: floem::style::Style,
     selected: impl Fn() -> bool + 'static,
 ) -> floem::style::Style {
