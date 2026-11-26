@@ -286,13 +286,14 @@ impl TextField {
 // Spec constants (dp)
 // ---------------------------------------------------------------------------
 
-const HEIGHT: f32 = 56.0;
+
+const HEIGHT: f32 = 28.0;
 const RADIUS: f64 = 4.0;
-const SIDE: f32 = 16.0;
-const ICON_SIDE: f32 = 12.0;
-const ICON: f32 = 24.0;
-const ICON_GAP: f32 = 16.0;
-const BODY: f32 = 16.0;
+const SIDE: f32 = 8.0;
+const ICON_SIDE: f32 = 6.0;
+const ICON: f32 = 28.0;
+const ICON_GAP: f32 = 6.0;
+const BODY: f32 = 13.0;
 const LABEL_SMALL: f32 = 12.0;
 const LABEL_NOTCH_PAD: f32 = 4.0;
 
@@ -529,7 +530,9 @@ impl TextField {
                     .min_width(0.0)
                     .height(ICON)
                     .margin_top(if filled_with_label { 16.0 } else { 0.0 })
-                    .padding(0.0)
+                    .items_center()
+                    .padding_horiz(6.0)
+                    .padding_vert(0.0)
                     .border(0.0)
                     .border_radius(0.0)
                     .background(Color::TRANSPARENT)
