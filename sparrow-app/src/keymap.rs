@@ -1,5 +1,6 @@
 use std::rc::Rc;
 
+use floem::prelude::svg;
 use floem::{
     IntoView, View,
     reactive::{
@@ -14,12 +15,14 @@ use crate::{
     command::SparrowCommand,
     config::color::SparrowColor,
     keypress::keymap::{KeyMap, KeyMapPress},
-    widgets::{modal_focus::ModalFocus, text_input::text_input},
+    widgets::modal_focus::ModalFocus,
     window_tab::CommonData,
 };
 
 mod shortcut_picker;
 
+use crate::config::icon::SparrowIcons;
+use crate::text_input::{TextField, m3_from_config};
 use crate::widgets::sparrow_scroll;
 use shortcut_picker::keyboard_picker_view;
 
@@ -64,8 +67,11 @@ fn keymap_contents(common: Rc<CommonData>, focus: Option<ModalFocus>) -> impl Vi
             .input_with_placeholder(query, config, "Search shortcuts")
             .into_any()
     } else {
-        text_input(query, config)
+        TextField::new(query)
+            .colors(move || m3_from_config(config))
             .placeholder("Search shortcuts")
+            .trailing_icon(svg(move || config.get().ui_svg(SparrowIcons::SEARCH)))
+            .autofocus()
             .into_any()
     };
     let input_id = input.id();

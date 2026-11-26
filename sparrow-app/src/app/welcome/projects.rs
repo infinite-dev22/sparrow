@@ -17,7 +17,7 @@ use crate::{
         ButtonKind, button,
         file_picker::{self, FileDialogOptions},
         popup_menu::{Menu, MenuItem},
-        text_input,
+        TextField, m3_from_config,
     },
 };
 
@@ -99,10 +99,17 @@ impl Projects {
         let add = self.clone();
         let submit = self.clone();
         let visible = self.editing_group;
-        let input = text_input(self.group_name, config)
+        let input = TextField::new(self.group_name)
+            .colors(move || m3_from_config(config))
             .placeholder("Project group name")
-            .on_enter(move || submit.create_group())
-            .style(|s| s.flex_grow(1.0_f32).flex_basis(0).min_width(0));
+            .on_submit(move |_| submit.create_group())
+            .into_view()
+            .style(|s| {
+                s.width(floem::unit::PxPctAuto::Auto)
+                    .flex_grow(1.0_f32)
+                    .flex_basis(0)
+                    .min_width(0)
+            });
         let id = input.id();
         floem::reactive::create_effect(move |_| {
             if visible.with(Option::is_some) {

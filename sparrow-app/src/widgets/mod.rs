@@ -64,7 +64,7 @@ pub(crate) use selectable_row::selectable_row_style;
 pub use sparrow_scroll::{horizontal_scroll, sparrow_scroll};
 pub(crate) use tab::tab_close_button;
 pub use tab::{TabStrip, tab_button, tab_strip};
-pub use text_input::text_input;
+pub use text_input::{M3Colors, TextField, TextFieldVariant, m3_from_config};
 pub use toggle_row::toggle_row;
 pub use tooltip::tooltip_label;
 

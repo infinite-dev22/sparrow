@@ -3,7 +3,8 @@
 use super::record;
 use crate::panel::{kind::PanelKind, reference_tools::output};
 use crate::widgets::{
-    ButtonKind, button, dropdown_with_label, sparrow_scroll, text_input,
+    ButtonKind, TextField, button, dropdown_with_label, m3_from_config,
+    sparrow_scroll,
 };
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
@@ -640,11 +641,18 @@ pub fn pull_requests(window: Rc<WindowTabData>) -> impl View {
 
     let create_form = stack((
         label(|| "Create pull request").style(|s| s.font_bold()),
-        text_input(create_title, config).placeholder("Title"),
-        text_input(create_head, config)
+        TextField::new(create_title)
+            .colors(move || m3_from_config(config))
+            .placeholder("Title"),
+        TextField::new(create_head)
+            .colors(move || m3_from_config(config))
             .placeholder("Head branch (branch or owner:branch)"),
-        text_input(create_base, config).placeholder("Base branch (default: main)"),
-        text_input(create_body, config).placeholder("Description"),
+        TextField::new(create_base)
+            .colors(move || m3_from_config(config))
+            .placeholder("Base branch (default: main)"),
+        TextField::new(create_body)
+            .colors(move || m3_from_config(config))
+            .placeholder("Description"),
         stack((
             create_request_button,
             button(|| "Manage accounts", ButtonKind::Outlined, config)
@@ -744,7 +752,9 @@ pub fn pull_requests(window: Rc<WindowTabData>) -> impl View {
                 .items_center()
         }),
         floem::views::container(
-            text_input(query, config).placeholder("Search pull requests"),
+            TextField::new(query)
+                .colors(move || m3_from_config(config))
+                .placeholder("Search pull requests"),
         )
         .style(|s| s.margin_horiz(12.0).min_width(0.0)),
         stack((

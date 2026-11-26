@@ -110,15 +110,21 @@ pub(super) fn panel(state: State) -> impl View {
     let browse = state.clone();
     let cancel = state.show_import;
     let import_bar = stack((
-        crate::widgets::text_input(state.import_path, config)
+        crate::widgets::TextField::new(state.import_path)
+            .colors(move || crate::widgets::m3_from_config(config))
             .placeholder("Capture path (.log, .txt, .json or bugreport .zip)")
-            .on_enter(move || {
-                let path = import_state.import_path.get_untracked();
+            .on_submit(move |path| {
                 if !path.trim().is_empty() {
                     import_state.import(std::path::PathBuf::from(path.trim()));
                 }
             })
-            .style(|s| s.flex_grow(1.0_f32).flex_basis(0).min_width(0.0)),
+            .into_view()
+            .style(|s| {
+                s.width(floem::unit::PxPctAuto::Auto)
+                    .flex_grow(1.0_f32)
+                    .flex_basis(0)
+                    .min_width(0.0)
+            }),
         label(|| "Open")
             .on_click_stop(move |_| {
                 let path = load.import_path.get_untracked();

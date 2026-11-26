@@ -2,7 +2,7 @@
 use std::rc::Rc;
 
 use floem::{
-    View,
+    IntoView, View,
     reactive::{
         SignalGet, SignalTrack, SignalUpdate, create_effect, create_rw_signal,
     },
@@ -17,8 +17,8 @@ use crate::{
     config::color::SparrowColor,
     panel::kind::PanelKind,
     widgets::{
-        ButtonKind, button, dropdown_with_label, sparrow_scroll, text_input,
-        toggle_row,
+        ButtonKind, TextField, button, dropdown_with_label, m3_from_config,
+        sparrow_scroll, toggle_row,
     },
     window_tab::WindowTabData,
 };
@@ -228,10 +228,17 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         .style(|s| s.width_full().min_width(0).font_size(10.0).selectable(true)),
         toggle_row("Device dark mode", None, session.dark, |_| {}, config),
         stack((
-            text_input(url, config)
+            TextField::new(url)
+                .colors(move || m3_from_config(config))
                 .placeholder("Flutter Web URL")
-                .on_enter(move || open_url())
-                .style(|s| s.min_width(0).flex_basis(0).flex_grow(1.0_f32)),
+                .on_submit(move |_| open_url())
+                .into_view()
+                .style(|s| {
+                    s.width(floem::unit::PxPctAuto::Auto)
+                        .min_width(0)
+                        .flex_basis(0)
+                        .flex_grow(1.0_f32)
+                }),
             button(|| "Open", ButtonKind::Outlined, config)
                 .on_click_stop(move |_| open())
                 .style(|s| s.padding_horiz(8.0)),
@@ -278,15 +285,36 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             .apply_if(!options.get(), |s| s.hide())
     });
     let custom = stack((
-        text_input(session.custom_width, config)
+        TextField::new(session.custom_width)
+            .colors(move || m3_from_config(config))
             .placeholder("Width")
-            .style(|s| s.min_width(0).flex_basis(0).flex_grow(1.0_f32)),
-        text_input(session.custom_height, config)
+            .into_view()
+            .style(|s| {
+                s.width(floem::unit::PxPctAuto::Auto)
+                    .min_width(0)
+                    .flex_basis(0)
+                    .flex_grow(1.0_f32)
+            }),
+        TextField::new(session.custom_height)
+            .colors(move || m3_from_config(config))
             .placeholder("Height")
-            .style(|s| s.min_width(0).flex_basis(0).flex_grow(1.0_f32)),
-        text_input(session.custom_scale, config)
+            .into_view()
+            .style(|s| {
+                s.width(floem::unit::PxPctAuto::Auto)
+                    .min_width(0)
+                    .flex_basis(0)
+                    .flex_grow(1.0_f32)
+            }),
+        TextField::new(session.custom_scale)
+            .colors(move || m3_from_config(config))
             .placeholder("Scale")
-            .style(|s| s.min_width(0).flex_basis(0).flex_grow(1.0_f32)),
+            .into_view()
+            .style(|s| {
+                s.width(floem::unit::PxPctAuto::Auto)
+                    .min_width(0)
+                    .flex_basis(0)
+                    .flex_grow(1.0_f32)
+            }),
     ))
     .style(move |s| {
         s.width_full()

@@ -14,7 +14,7 @@ use std::{
 };
 
 use floem::{
-    View, ViewId, WindowIdExt,
+    IntoView, View, ViewId, WindowIdExt,
     event::{Event, EventListener, EventPropagation},
     file::{FileInfo, FileSpec},
     keyboard::{Key, Modifiers, NamedKey},
@@ -28,7 +28,9 @@ use floem::{
 
 use crate::{
     config::{SparrowConfig, color::SparrowColor},
-    widgets::{ButtonKind, Divider, DividerVariant, button, text_input},
+    widgets::{
+        ButtonKind, Divider, DividerVariant, TextField, button, m3_from_config,
+    },
 };
 
 pub(crate) type Config = ReadSignal<Arc<SparrowConfig>>;
@@ -575,10 +577,16 @@ fn dialog(
     let name_options = options.clone();
     let name_finish = finish.clone();
     let save = options.save;
-    let name_field = text_input(filename, config)
+    let name_field = TextField::new(filename)
+        .colors(move || m3_from_config(config))
         .placeholder("Filename")
-        .on_enter(move || add_name.submit(&name_options, &name_finish))
-        .style(move |s| s.margin_horiz(14).apply_if(!save, |s| s.hide()));
+        .on_submit(move |_| add_name.submit(&name_options, &name_finish))
+        .into_view()
+        .style(move |s| {
+            s.width(floem::unit::PxPctAuto::Auto)
+                .margin_horiz(14)
+                .apply_if(!save, |s| s.hide())
+        });
     if options.create_folder {
         let visible = browser.new_folder;
         floem::action::exec_after(std::time::Duration::from_millis(90), move |_| {
@@ -589,10 +597,16 @@ fn dialog(
     let folder_name = browser.folder_name;
     let create = browser.clone();
     let enter_create = browser.clone();
-    let folder_input = text_input(folder_name, config)
+    let folder_input = TextField::new(folder_name)
+        .colors(move || m3_from_config(config))
         .placeholder("New folder name")
-        .on_enter(move || enter_create.create_folder())
-        .style(|s| s.flex_grow(1.0_f32).min_width(0));
+        .on_submit(move |_| enter_create.create_folder())
+        .into_view()
+        .style(|s| {
+            s.width(floem::unit::PxPctAuto::Auto)
+                .flex_grow(1.0_f32)
+                .min_width(0)
+        });
     let folder_input_id = folder_input.id();
     create_effect(move |_| {
         if new_folder.get() {

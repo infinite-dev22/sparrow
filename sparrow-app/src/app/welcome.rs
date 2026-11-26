@@ -10,17 +10,17 @@ use crate::{
     widgets::{
         ButtonKind, button, clickable_icon,
         popup_menu::{Menu, MenuItem, show_context_menu},
-        sparrow_scroll, text_input,
+        sparrow_scroll,
     },
     window_tab::WindowTabData,
 };
-use floem::views::v_stack;
 use floem::{
-    View,
+    IntoView, View,
     reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal, use_context},
     views::editor::{core::register::Clipboard, text::SystemClipboard},
     views::{Decorators, dyn_stack, empty, label, stack, svg},
 };
+use crate::text_input::{m3_from_config, TextField};
 
 #[derive(Clone, Copy)]
 enum WelcomeAction {
@@ -85,9 +85,17 @@ pub(super) fn view(tab: Rc<WindowTabData>) -> impl View {
         ("Open", WelcomeAction::Open),
     ];
     let toolbar = stack((
-        text_input(query, config)
+        TextField::new(query)
+            .colors(move || m3_from_config(config))
             .placeholder("Search recent projects")
-            .style(|s| s.flex_grow(1.0_f32).flex_basis(0).min_width(0)),
+            .leading_icon(svg(move || config.get().ui_svg(SparrowIcons::SEARCH)))
+            .into_view()
+            .style(|s| {
+                s.width(floem::unit::PxPctAuto::Auto)
+                    .flex_grow(1.0_f32)
+                    .flex_basis(0)
+                    .min_width(180.0)
+            }),
         floem::views::stack_from_iter(actions.iter().map(|(title, command)| {
             let title = *title;
             let command = *command;

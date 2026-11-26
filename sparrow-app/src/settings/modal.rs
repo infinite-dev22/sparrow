@@ -1,6 +1,6 @@
 //! Reference-style modal settings with deferred, validated edits.
 use super::{SettingsData, SettingsItem, SettingsValue};
-use crate::widgets::modal_focus::ModalFocus;
+use crate::widgets::{TextField, m3_from_config, modal_focus::ModalFocus};
 use crate::{
     config::{SparrowConfig, color::SparrowColor, icon::SparrowIcons},
     panel::kind::PanelKind,
@@ -311,8 +311,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let epoch = cx.create_rw_signal(0usize);
     let error = cx.create_rw_signal(String::new());
     let help_open = cx.create_rw_signal(false);
-    let search = keyboard.input(query, config);
-    let search_id = search.id();
+    let (search, search_id) = keyboard.text_field_with_id(
+        TextField::new(query).colors(move || m3_from_config(config)),
+    );
     window.settings_search_input.set(Some(search_id));
     let root_id = window.common.view_id;
     let close = move || {
@@ -751,8 +752,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 .apply_if(query.with(String::is_empty), |s| s.hide())
         });
     let icon_grid = tokens::size("search", "search_icon_grid");
-    let search = search_field_with_style(
-        search.on_event(EventListener::KeyDown, move |event| {
+    search_id.add_event_listener(
+        EventListener::KeyDown,
+        Box::new(move |event| {
             navigation::search_navigation(
                 event,
                 tree_id,
@@ -762,6 +764,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 index,
             )
         }),
+    );
+    let search = search_field_with_style(
+        search,
         search_clear,
         config,
         SparrowIcons::SEARCH,

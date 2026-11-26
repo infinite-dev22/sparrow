@@ -1,6 +1,6 @@
 //! Appearance-only theme management; no language-extension marketplace.
 use super::{kind::PanelKind, position::PanelPosition};
-use crate::widgets::{action_group, action_link, sparrow_scroll, text_input};
+use crate::widgets::{TextField, action_group, action_link, m3_from_config, sparrow_scroll};
 use crate::{command::SparrowWorkbenchCommand, window_tab::WindowTabData};
 use floem::{
     View,
@@ -46,7 +46,9 @@ pub fn plugin_panel(
             ))
             .style(|s| s.width_full().padding(16.0)),
             floem::views::container(
-                text_input(query, config).placeholder("Filter installed themes"),
+                TextField::new(query)
+                    .colors(move || m3_from_config(config))
+                    .placeholder("Filter installed themes"),
             )
             .style(|s| s.margin_horiz(16.0).min_width(0.0)),
             label(|| "Built-in themes are available from the theme selectors. Additional local themes appear below.")

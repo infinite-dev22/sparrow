@@ -12,7 +12,7 @@ use crate::{
         search_match_options::search_match_options,
         search_result_row::{search_result_bounds, search_result_row},
         sparrow_scroll, tab_strip,
-        text_input::text_input,
+        text_input::{TextField, m3_from_config},
     },
     window_tab::WindowTabData,
 };
@@ -187,23 +187,25 @@ pub(crate) fn view(window: Rc<WindowTabData>) -> impl View {
     let submit = accept.clone();
     // Floem's text input consumes Enter on key-down and its submit callback
     // receives no modifiers. Handle both shortcuts on the focused field.
-    let input = focus
-        .input_with_placeholder(query, config, "Search")
-        .on_event(EventListener::KeyUp, move |event| {
-            let Event::KeyUp(key) = event else {
-                return EventPropagation::Continue;
-            };
-            if key.key.logical_key != Key::Named(NamedKey::Enter) {
-                return EventPropagation::Continue;
-            }
-            match key.modifiers {
-                modifiers if modifiers.is_empty() => submit(false),
-                Modifiers::SHIFT if can_split() => submit(true),
-                _ => {}
-            }
-            EventPropagation::Stop
-        });
-    let input_id = input.id();
+    let (input, input_id) = focus.text_field_with_id(
+        TextField::new(query)
+            .colors(move || m3_from_config(config))
+            .placeholder("Search")
+            .on_input_event(EventListener::KeyUp, move |event| {
+                let Event::KeyUp(key) = event else {
+                    return EventPropagation::Continue;
+                };
+                if key.key.logical_key != Key::Named(NamedKey::Enter) {
+                    return EventPropagation::Continue;
+                }
+                match key.modifiers {
+                    modifiers if modifiers.is_empty() => submit(false),
+                    Modifiers::SHIFT if can_split() => submit(true),
+                    _ => {}
+                }
+                EventPropagation::Stop
+            }),
+    );
     create_effect(move |_| {
         if active.get() {
             exec_after(Duration::from_millis(30), move |_| {
@@ -251,7 +253,11 @@ pub(crate) fn view(window: Rc<WindowTabData>) -> impl View {
             s.apply_if(matches!(tab.get(), Tab::All | Tab::Actions), |s| s.hide())
         });
     let file_mask = focus
-        .control(text_input(state.mask, config).placeholder("All file types"))
+        .text_field(
+            TextField::new(state.mask)
+                .colors(move || m3_from_config(config))
+                .placeholder("All file types"),
+        )
         .style(move |s| s.width(104).apply_if(tab.get() != Tab::Text, |s| s.hide()));
     let preview_toggle = focus.icon(
         || SparrowIcons::LAYOUT_PANEL,

@@ -14,16 +14,11 @@ use std::{
     time::Duration,
 };
 
-use floem::{
-    View,
-    event::EventListener,
-    ext_event::{create_ext_action, create_trigger, register_ext_trigger},
-    reactive::{
-        SignalGet, SignalUpdate, SignalWith, batch, create_effect, create_memo,
-        create_rw_signal,
-    },
-    views::{Decorators, container, label, stack, virtual_stack},
-};
+use floem::{event::EventListener, ext_event::{create_ext_action, create_trigger, register_ext_trigger}, reactive::{
+    SignalGet, SignalUpdate, SignalWith, batch, create_effect, create_memo,
+    create_rw_signal,
+}, views::{Decorators, container, label, stack, virtual_stack}, IntoView, View};
+use floem::views::svg;
 use notify::{PollWatcher, RecursiveMode, Watcher};
 use sparrow_core::directory::Directory;
 
@@ -34,7 +29,6 @@ use crate::{
     popup_menu::{Menu, MenuItem, PopupMenuExt},
     widgets::{
         ButtonKind, Divider, button, dialog_surface, sparrow_scroll,
-        text_input::text_input,
     },
     window_tab::WindowTabData,
 };
@@ -47,6 +41,8 @@ mod entry;
 
 use details::DetailTab;
 use entry::{Entry, Level, parse_entries};
+use crate::config::icon::SparrowIcons;
+use crate::text_input::{m3_from_config, TextField};
 
 #[derive(Default)]
 struct Snapshot {
@@ -192,9 +188,17 @@ pub(super) fn view(window: Rc<WindowTabData>) -> impl View {
     let detail_tab = create_rw_signal(DetailTab::Overview);
     let body_width = create_rw_signal(0.0);
     let target_row = create_rw_signal(None::<usize>);
-    let search = text_input(query, config)
+    let search = TextField::new(query)
+        .colors(move || m3_from_config(config))
         .placeholder("Search log messages")
-        .style(|s| s.flex_grow(1.0_f32).flex_basis(0.0));
+        .trailing_icon(svg(move || config.get().ui_svg(SparrowIcons::SEARCH)))
+        .into_view()
+        .style(|s| {
+            s.width(floem::unit::PxPctAuto::Auto)
+                .flex_grow(1.0_f32)
+                .flex_basis(0.0)
+                .min_width(180.0)
+        });
     let search_id = search.id();
 
     let watcher = Rc::new(RefCell::new(None::<PollWatcher>));

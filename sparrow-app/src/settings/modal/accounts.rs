@@ -3,7 +3,7 @@
 use std::{sync::Arc, thread};
 
 use floem::{
-    View,
+    IntoView, View,
     ext_event::create_ext_action,
     reactive::{ReadSignal, RwSignal, Scope, SignalGet, SignalUpdate, SignalWith},
     views::{Decorators, dyn_stack, label, stack},
@@ -14,7 +14,9 @@ use crate::{
     config::{SparrowConfig, color::SparrowColor},
     panel::workflow_tools::{Notice, record},
     vcs_credentials::{self, Account, AccountProvider, AccountStatus, StorageKind},
-    widgets::{ButtonKind, button, dropdown_with_label, text_input},
+    widgets::{
+        ButtonKind, TextField, button, dropdown_with_label, m3_from_config,
+    },
 };
 
 fn refresh_accounts(reload: RwSignal<u64>) {
@@ -363,19 +365,27 @@ pub(super) fn view(
             label(|| "GitHub.com and GitHub Enterprise tokens are tested before saving. Secrets are kept in the OS credential store; if unavailable, Sparrow will tell you when it can keep a token in memory for this session only.")
                 .style(move |s| s.width_full().color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))),
             label(|| "Host").style(|s| s.font_bold()),
-            text_input(host, config).placeholder("github.com or your GitHub Enterprise host"),
+            TextField::new(host)
+                .colors(move || m3_from_config(config))
+                .placeholder("github.com or your GitHub Enterprise host"),
             label(|| "Provider").style(|s| s.font_bold()),
             provider_picker,
-            text_input(username, config)
+            TextField::new(username)
+                .colors(move || m3_from_config(config))
                 .placeholder("Username required for generic HTTPS Git")
+                .into_view()
                 .style(move |s| s.apply_if(provider.get() != "generic", |s| s.hide())),
             label(|| "Personal access token (masked while typing)").style(|s| s.font_bold()),
         ))
         .style(|s| s.flex_col().width_full().gap(8.0)),
         stack((
-            text_input(token, config)
-                .placeholder("Token is never saved in settings or repository configuration")
-                .style(|s| s.color(floem::peniko::Color::TRANSPARENT)),
+            TextField::new(token)
+                .colors(move || {
+                    let mut c = m3_from_config(config);
+                    c.on_surface = floem::peniko::Color::TRANSPARENT;
+                    c
+                })
+                .placeholder("Token is never saved in settings or repository configuration"),
             label(move || {
                 let count = token.with(|value| value.chars().count());
                 if count == 0 {

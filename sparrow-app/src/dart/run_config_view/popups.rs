@@ -15,8 +15,8 @@ use crate::{
     config::color::SparrowColor,
     dart::run_config::{self},
     widgets::{
-        ButtonKind, button, dropdown_with_label, labeled_checkbox, sparrow_scroll,
-        text_input,
+        ButtonKind, TextField, button, dropdown_with_label, labeled_checkbox,
+        m3_from_config, sparrow_scroll,
     },
 };
 use floem::{
@@ -346,12 +346,20 @@ pub(super) fn env_dialog(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl View 
                     |row| row.id,
                     move |row| {
                         stack((
-                            text_input(row.name, config)
+                            TextField::new(row.name)
+                                .colors(move || m3_from_config(config))
                                 .placeholder("NAME")
+                                .into_view()
                                 .style(|s| s.width_pct(40.0)),
-                            text_input(row.value, config)
+                            TextField::new(row.value)
+                                .colors(move || m3_from_config(config))
                                 .placeholder("value")
-                                .style(|s| s.flex_grow(1.0_f32).min_width(0.0)),
+                                .into_view()
+                                .style(|s| {
+                                    s.width(floem::unit::PxPctAuto::Auto)
+                                        .flex_grow(1.0_f32)
+                                        .min_width(0.0)
+                                }),
                         ))
                         .on_click_cont(move |_| selected.set(Some(row.id)))
                         .style(move |s| {
@@ -697,9 +705,15 @@ pub(super) fn add_task_popup(d: Rc<Dialog>, popups: Popups, cx: Scope) -> impl V
             .style(|s| s.items_center().width_full()),
             stack((
                 label(|| "URL:").style(|s| s.width(70.0)),
-                text_input(url, config)
+                TextField::new(url)
+                    .colors(move || m3_from_config(config))
                     .placeholder("http://localhost:8080")
-                    .style(|s| s.flex_grow(1.0_f32).min_width(0.0)),
+                    .into_view()
+                    .style(|s| {
+                        s.width(floem::unit::PxPctAuto::Auto)
+                            .flex_grow(1.0_f32)
+                            .min_width(0.0)
+                    }),
             ))
             .style(|s| s.items_center().width_full()),
             label(move || error.get()).style(move |s| {

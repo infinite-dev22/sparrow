@@ -370,8 +370,10 @@ pub fn source_control_panel(
         ai_preview,
         label(|| "Local inference may take up to 90 seconds. Close hides this preview but does not interrupt an active request.")
             .style(move |s| s.font_size(10.0).color(config.get().color(SparrowColor::PANEL_FOREGROUND_DIM))),
-        crate::widgets::text_input(ai_suggestion, config)
+        crate::widgets::TextField::new(ai_suggestion)
+            .colors(move || crate::widgets::m3_from_config(config))
             .placeholder("Generated subject — edit before applying")
+            .into_view()
             .style(move |s| {
                 s.apply_if(ai_suggestion.get().trim().is_empty(), |s| s.hide())
             }),

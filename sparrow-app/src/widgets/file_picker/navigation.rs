@@ -19,8 +19,8 @@ use super::{Browser, Complete, Config, FileDialogOptions};
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
     widgets::{
-        ButtonKind, breadcrumb_item, button, clickable_icon, dropdown::Dropdown,
-        horizontal_scroll, text_input, tooltip_label,
+        ButtonKind, TextField, breadcrumb_item, button, clickable_icon,
+        dropdown::Dropdown, horizontal_scroll, m3_from_config, tooltip_label,
     },
 };
 
@@ -329,9 +329,10 @@ pub(super) fn location(
     let edit = browser.clone();
     let go = browser.clone();
     let search = browser.query;
-    let input = text_input(browser.path, config)
+    let input = TextField::new(browser.path)
+        .colors(move || m3_from_config(config))
         .placeholder("Enter a path")
-        .on_enter(move || {
+        .on_submit(move |_| {
             go.message.set(String::new());
             go.path_entry(&options, &finish);
             if go
@@ -343,28 +344,15 @@ pub(super) fn location(
                 tree_id.request_focus();
             }
         })
-        .style(move |s| {
-            let config = config.get();
-            s.height(32)
-                .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                .cursor_color(floem::peniko::Brush::Solid(
-                    config.color(SparrowColor::EDITOR_CARET).multiply_alpha(0.6),
-                ))
-                .apply_if(mode.get() != Mode::Edit, |s| s.hide())
-        });
+        .into_view()
+        .style(move |s| s.apply_if(mode.get() != Mode::Edit, |s| s.hide()));
     let input_id = input.id();
-    let search_input = text_input(search, config)
+    let search_input = TextField::new(search)
+        .colors(move || m3_from_config(config))
         .placeholder("Search this folder")
-        .on_enter(move || tree_id.request_focus())
-        .style(move |s| {
-            let config = config.get();
-            s.height(32)
-                .background(config.color(SparrowColor::PANEL_HOVERED_BACKGROUND))
-                .cursor_color(floem::peniko::Brush::Solid(
-                    config.color(SparrowColor::EDITOR_CARET).multiply_alpha(0.6),
-                ))
-                .apply_if(mode.get() != Mode::Search, |s| s.hide())
-        });
+        .on_submit(move |_| tree_id.request_focus())
+        .into_view()
+        .style(move |s| s.apply_if(mode.get() != Mode::Search, |s| s.hide()));
     let search_id = search_input.id();
     create_effect(move |_| match mode.get() {
         Mode::Edit => input_id.request_focus(),

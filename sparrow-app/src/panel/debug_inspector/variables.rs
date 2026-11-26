@@ -8,12 +8,13 @@ use crate::{
 };
 use floem::{
     IntoView, View,
+    event::{Event, EventListener, EventPropagation},
+    keyboard::{Key, NamedKey},
     reactive::{SignalGet, SignalUpdate, SignalWith, create_rw_signal},
     views::{Decorators, dyn_container, dyn_stack, label, stack},
 };
 use std::rc::Rc;
 use crate::widgets::sparrow_scroll;
-use super::expression_input::ExpressionInput;
 
 pub(super) fn variables_workspace(window: Rc<WindowTabData>) -> impl View {
     let config = window.common.config;
@@ -24,13 +25,28 @@ pub(super) fn variables_workspace(window: Rc<WindowTabData>) -> impl View {
             dap.evaluate(&input.get_untracked(), watch);
         }
     });
-    let field = ExpressionInput {
-        input: crate::widgets::text_input(input, config).placeholder(
+    let key_submit = submit.clone();
+    let field = crate::widgets::TextField::new(input)
+        .colors(move || crate::widgets::m3_from_config(config))
+        .placeholder(
             "Evaluate expression (Enter) or add a watch (Ctrl+Shift+Enter)",
-        ),
-        submit: submit.clone(),
-    }
-    .style(|s| s.flex_grow(1.0_f32).flex_basis(0).min_width(0.0));
+        )
+        .on_input_event(EventListener::KeyUp, move |event| {
+            if let Event::KeyUp(key) = event {
+                if key.key.logical_key == Key::Named(NamedKey::Enter) {
+                    key_submit(key.modifiers.control() && key.modifiers.shift());
+                    return EventPropagation::Stop;
+                }
+            }
+            EventPropagation::Continue
+        })
+        .into_view()
+        .style(|s| {
+            s.width(floem::unit::PxPctAuto::Auto)
+                .flex_grow(1.0_f32)
+                .flex_basis(0)
+                .min_width(0.0)
+        });
     let input_row = stack((
         field,
         clickable_icon(

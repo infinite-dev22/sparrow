@@ -7,20 +7,8 @@ use std::{
     time::Duration,
 };
 
-use floem::{
-    View,
-    action::exec_after,
-    event::{Event, EventListener, EventPropagation},
-    keyboard::{Key, NamedKey},
-    reactive::{
-        SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal,
-    },
-    views::{
-        Decorators, dyn_container, dyn_stack, empty, label, stack, stack_from_iter,
-    },
-};
-
 use super::{FileScope, Results, preview, scan};
+use crate::text_input::{TextField, m3_from_config};
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
     editor_tab::EditorTabChild,
@@ -33,9 +21,21 @@ use crate::{
         search_match_options::search_match_options,
         search_result_row::{search_result_bounds, search_result_row},
         sparrow_scroll, tab_button,
-        text_input::text_input,
     },
     window_tab::WindowTabData,
+};
+use floem::{
+    View,
+    action::exec_after,
+    event::{Event, EventListener, EventPropagation},
+    keyboard::{Key, NamedKey},
+    reactive::{
+        SignalGet, SignalUpdate, SignalWith, create_effect, create_rw_signal,
+    },
+    views::{
+        Decorators, dyn_container, dyn_stack, label, stack, stack_from_iter,
+        svg,
+    },
 };
 
 pub fn view(window: Rc<WindowTabData>) -> impl View {
@@ -171,13 +171,16 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
         config,
         SparrowIcons::SEARCH,
     );
-    let replacements = search_field(
-        focus.control(text_input(state.replace, config).placeholder("Replace with")),
-        empty(),
-        config,
-        SparrowIcons::SEARCH_REPLACE,
-    )
-    .style(move |s| s.apply_if(!replacement.get(), |s| s.hide()));
+    let replacements = focus
+        .text_field(
+            TextField::new(state.replace)
+                .colors(move || m3_from_config(config))
+                .placeholder("Replace with")
+                .leading_icon(svg(move || {
+                    config.get().ui_svg(SparrowIcons::SEARCH_REPLACE)
+                })),
+        )
+        .style(move |s| s.apply_if(!replacement.get(), |s| s.hide()));
 
     let mask_options = stack((
         focus.control(labeled_checkbox(
@@ -187,14 +190,21 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
             config,
         )),
         focus
-            .control_if(text_input(mask, config).placeholder("*.dart"), move || {
-                mask_enabled.get_untracked()
-            })
+            .text_field_if(
+                TextField::new(mask)
+                    .colors(move || m3_from_config(config))
+                    .placeholder("*.dart"),
+                move || mask_enabled.get_untracked(),
+            )
             .disabled(move || !mask_enabled.get())
             .style(|s| s.width(92)),
         focus
             .menu_if(
-                crate::widgets::button_with_content(crate::widgets::tree_chevron(config, || true, || true), ButtonKind::Plain, config),
+                crate::widgets::button_with_content(
+                    crate::widgets::tree_chevron(config, || true, || true),
+                    ButtonKind::Plain,
+                    config,
+                ),
                 move || mask_enabled.get_untracked(),
                 move || {
                     [
@@ -226,14 +236,23 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let root_for_picker = root.clone();
     let directory_controls = stack((
         focus
-            .control(text_input(directory, config).placeholder("Project root"))
-            .style(|s| s.flex_grow(1.0_f32).flex_basis(0)),
+            .text_field(
+                TextField::new(directory)
+                    .colors(move || m3_from_config(config))
+                    .placeholder("Project root"),
+            )
+            .style(|s| {
+                s.width(floem::unit::PxPctAuto::Auto)
+                    .flex_grow(1.0_f32)
+                    .flex_basis(0)
+            }),
         focus.control(
             button(|| "Browse…", ButtonKind::Plain, config).on_click_stop(
                 move |_| {
-                    let mut options = crate::widgets::file_picker::FileDialogOptions::new()
-                        .title("Search directory")
-                        .select_directories();
+                    let mut options =
+                        crate::widgets::file_picker::FileDialogOptions::new()
+                            .title("Search directory")
+                            .select_directories();
                     if let Some(root) = &root_for_picker {
                         options = options.force_starting_directory(root.clone());
                     }

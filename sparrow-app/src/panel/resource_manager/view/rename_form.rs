@@ -2,7 +2,9 @@
 
 use crate::panel::{resource_manager::Resource, resource_rename::Plan};
 use crate::{
-    config::color::SparrowColor, widgets::text_input, window_tab::WindowTabData,
+    config::color::SparrowColor,
+    widgets::{TextField, m3_from_config},
+    window_tab::WindowTabData,
 };
 use floem::{
     View,
@@ -64,7 +66,10 @@ impl RenameForm {
         let config = window.common.config;
         stack((
             label(||"Rename resource and usages").style(|s|s.font_bold()),
-            text_input(rename_name, config).disabled(move ||rename_busy.get()).placeholder("New resource name"),
+            TextField::new(rename_name)
+                .colors(move || m3_from_config(config))
+                .disabled(move || rename_busy.get())
+                .placeholder("New resource name"),
             sparrow_scroll(label(move ||rename_plan.with(|p|p.as_ref().map(|p|p.details()).unwrap_or_default()))).style(|s|s.width_full().max_height(220.0)),
             label(move ||rename_error.get()),
             crate::widgets::action_group((

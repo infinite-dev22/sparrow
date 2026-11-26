@@ -6,17 +6,9 @@ use crate::{
     widgets::clickable_icon,
     widgets::popup_menu::{Menu, MenuItem, PopupMenuExt},
 };
-use floem::{
-    View,
-    event::{Event, EventListener, EventPropagation},
-    keyboard::{Key, NamedKey},
-    peniko::{Color, kurbo::Point},
-    reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal},
-    style::CursorStyle,
-    views::{
-        Decorators, dyn_container, empty, label, stack, svg, virtual_stack,
-    },
-};
+use floem::{event::{Event, EventListener, EventPropagation}, keyboard::{Key, NamedKey}, peniko::{Color, kurbo::Point}, reactive::{SignalGet, SignalUpdate, SignalWith, create_memo, create_rw_signal}, style::CursorStyle, views::{
+    Decorators, dyn_container, empty, label, stack, svg, virtual_stack,
+}, IntoView, View};
 use std::sync::Arc;
 use crate::widgets::sparrow_scroll;
 use super::history::history;
@@ -108,10 +100,33 @@ pub(super) fn pane_view(state: State, pane: Pane) -> impl View {
     let favorite = state.clone();
     let favorite_q = pane.query;
     let favorites = state.saved;
-    let query=crate::widgets::text_input(pane.query,config).placeholder("Filter logs (Ctrl+Space)")
- .on_enter(move ||record.remember(&q.get_untracked(),false))
- .on_event(EventListener::KeyUp,move |event|{if let Event::KeyUp(key)=event{if key.modifiers.control()&&matches!(&key.key.logical_key,Key::Named(NamedKey::Space))||key.modifiers.control()&&matches!(&key.key.logical_key,Key::Character(c) if c.as_str()==" "){crate::widgets::popup_menu::show_context_menu(history(suggest.clone(),suggest_p.clone(),true),None);return EventPropagation::Stop;}}EventPropagation::Continue})
- .style(|s|s.flex_grow(1.0_f32).flex_basis(0).min_width(0.0).border(0.0).border_radius(0.0));
+    let query = crate::widgets::TextField::new(pane.query)
+        .colors(move || crate::widgets::m3_from_config(config))
+        .placeholder("Filter logs (Ctrl+Space)")
+        .on_submit(move |_| record.remember(&q.get_untracked(), false))
+        .on_input_event(EventListener::KeyUp, move |event| {
+            if let Event::KeyUp(key) = event {
+                if key.modifiers.control()
+                    && matches!(&key.key.logical_key, Key::Named(NamedKey::Space))
+                    || key.modifiers.control()
+                        && matches!(&key.key.logical_key, Key::Character(c) if c.as_str() == " ")
+                {
+                    crate::widgets::popup_menu::show_context_menu(
+                        history(suggest.clone(), suggest_p.clone(), true),
+                        None,
+                    );
+                    return EventPropagation::Stop;
+                }
+            }
+            EventPropagation::Continue
+        })
+        .into_view()
+        .style(|s| {
+            s.width(floem::unit::PxPctAuto::Auto)
+                .flex_grow(1.0_f32)
+                .flex_basis(0)
+                .min_width(0.0)
+        });
     let filter = stack((
         clickable_icon(
             || SparrowIcons::LOGCAT_FILTER,

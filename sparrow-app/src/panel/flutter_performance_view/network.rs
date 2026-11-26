@@ -14,7 +14,7 @@ use crate::{
         performance::{PerformanceData, Sample},
         vm_service::VmServiceClient,
     },
-    widgets::{ButtonKind, button, text_input},
+    widgets::{ButtonKind, TextField, button, m3_from_config},
 };
 
 pub(super) fn view(
@@ -147,9 +147,9 @@ pub(super) fn view(
                 .disabled(move || busy() || data.network.with(Vec::is_empty)),
         ))
         .style(|s| s.items_center().gap(4.0)),
-        text_input(filter, config)
-            .placeholder("Filter by method, URL or status")
-            .style(|s| s.width_full()),
+        TextField::new(filter)
+            .colors(move || m3_from_config(config))
+            .placeholder("Filter by method, URL or status"),
         label(move || {
             data.network_error.get().unwrap_or_else(|| {
                 if data.network.with(Vec::is_empty) {

@@ -6,7 +6,7 @@ use super::{
     files, load, ref_chips,
 };
 use crate::panel::{kind::PanelKind, reference_tools::output};
-use crate::widgets::text_input;
+use crate::widgets::{TextField, m3_from_config};
 use crate::{
     config::{color::SparrowColor, icon::SparrowIcons},
     widgets::popup_menu::{Menu, MenuItem, PopupMenuExt},
@@ -623,7 +623,9 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
         stack((
             // ── branch tree ──
             stack((
-                text_input(branch_query, config).placeholder("Branch or tag"),
+                TextField::new(branch_query)
+                    .colors(move || m3_from_config(config))
+                    .placeholder("Branch or tag"),
                 crate::widgets::sparrow_scroll(branch_tree)
                     .style(|s| s.flex_grow(1.0_f32).width_full().min_height(0.0)),
             ))
@@ -638,13 +640,17 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
             // ── log ──
             stack((
                 stack((
-                    text_input(query, config)
+                    TextField::new(query)
+                        .colors(move || m3_from_config(config))
                         .placeholder("Text or hash")
+                        .into_view()
                         .style(move |s| s.min_width(80.0).width_pct(30.0)),
                     toggle("Aa", "Match Case", match_case),
                     toggle(".*", "Regex", regex),
-                    text_input(user, config)
+                    TextField::new(user)
+                        .colors(move || m3_from_config(config))
                         .placeholder("User")
+                        .into_view()
                         .style(move |s| s.width(90.0)),
                     dropdown_with_label(
                         since,
@@ -665,8 +671,10 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                         |_| {},
                     )
                         .style(|s| s.max_width(130.0)),
-                    text_input(path, config)
+                    TextField::new(path)
+                        .colors(move || m3_from_config(config))
                         .placeholder("Paths")
+                        .into_view()
                         .style(move |s| s.width(85.0)),
                     toggle("⇅", "Sort by date", date_order),
                     label(|| "Load more")
@@ -687,7 +695,7 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     ),
                 ))
                     .style(|s| {
-                        s.height(30.0)
+                        s.min_height(30.0)
                             .width_full()
                             .gap(6.0)
                             .padding_horiz(6.0)

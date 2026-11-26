@@ -2,7 +2,7 @@
 
 use super::{Inventory, Kind, Resource, scan};
 use crate::panel::kind::PanelKind;
-use crate::widgets::{dropdown_with_label, sparrow_scroll, text_input};
+use crate::widgets::{TextField, dropdown_with_label, m3_from_config, sparrow_scroll};
 use crate::{
     command::InternalCommand,
     config::{color::SparrowColor, icon::SparrowIcons},
@@ -12,7 +12,7 @@ use crate::{
     window_tab::WindowTabData,
 };
 use floem::{
-    View,
+    IntoView, View,
     reactive::{
         Scope, SignalGet, SignalUpdate, SignalWith, create_effect, create_memo,
         create_rw_signal,
@@ -205,13 +205,19 @@ pub fn panel(window: Rc<WindowTabData>) -> impl View {
                     .style(|s| s.max_width(160.0))
                 },
             ),
-            text_input(query, config)
+            TextField::new(query)
+                .colors(move || m3_from_config(config))
                 .placeholder("Search resources")
-                .style(|s| s.flex_grow(1.0_f32).min_width(30.0)),
+                .into_view()
+                .style(|s| {
+                    s.width(floem::unit::PxPctAuto::Auto)
+                        .flex_grow(1.0_f32)
+                        .min_width(30.0)
+                }),
         ))
         .style(|s| {
             s.width_full()
-                .height(34.0)
+                .min_height(34.0)
                 .items_center()
                 .gap(6.0)
                 .padding_horiz(6.0)

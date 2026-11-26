@@ -1,5 +1,5 @@
 //! Keyboard navigation confined to the controls of an open IDE dialog.
-use crate::widgets::text_input;
+use super::text_input::{TextField, m3_from_config};
 use floem::{
     IntoView, View, ViewId,
     event::{Event, EventListener, EventPropagation},
@@ -404,26 +404,94 @@ impl ModalFocus {
     ) -> impl View + use<> {
         let submit = self.submit.clone();
         let picker_open = self.picker_open;
-        let input = text_input(value, config).placeholder(placeholder).on_enter(move || {
-            if picker_open.get_untracked() {
-                return;
-            }
-            let action = submit.borrow().clone();
-            if let Some(action) = action {
-                action();
-            }
-        });
-        self.register_control(input, || true, false)
+        let mut field = TextField::new(value)
+            .colors(move || m3_from_config(config))
+            .on_submit(move |_| {
+                if picker_open.get_untracked() {
+                    return;
+                }
+                let action = submit.borrow().clone();
+                if let Some(action) = action {
+                    action();
+                }
+            });
+        if !placeholder.is_empty() {
+            field = field.placeholder(placeholder);
+        }
+        self.text_field(field)
     }
-    pub fn control<V: View + 'static>(&self, view: V) -> impl View + use<V> {
+    pub fn text_field(&self, field: TextField) -> impl View + use<> {
+        self.text_field_with_id(field).0
+    }
+    pub(crate) fn text_field_with_id(
+        &self,
+        field: TextField,
+    ) -> (impl View + use<>, ViewId) {
+        let (view, input_id) = self.register_text_field(field, || true);
+        (view, input_id)
+    }
+    pub fn text_field_if<E: Fn() -> bool + 'static>(
+        &self,
+        field: TextField,
+        enabled: E,
+    ) -> impl View + use<E> {
+        self.register_text_field(field, enabled).0
+    }
+    fn register_text_field<E: Fn() -> bool + 'static>(
+        &self,
+        field: TextField,
+        enabled: E,
+    ) -> (floem::views::Stack, ViewId) {
+        let (view, input_id) = field.build_with_input_id();
+        self.controls.borrow_mut().insert(input_id, Rc::new(enabled));
+        let navigation = self.clone();
+        let cleanup = self.controls.clone();
+        let picker_open = self.picker_open;
+        input_id.add_event_listener(
+            EventListener::KeyDown,
+            Box::new(move |event| {
+                if picker_open.get_untracked() {
+                    return EventPropagation::Stop;
+                }
+                if let Event::KeyDown(key) = event {
+                    if key.key.logical_key == Key::Named(NamedKey::Tab)
+                        && !key.modifiers.intersects(
+                            Modifiers::CONTROL | Modifiers::ALT | Modifiers::META,
+                        )
+                    {
+                        navigation
+                            .advance(input_id, key.modifiers.contains(Modifiers::SHIFT));
+                        return EventPropagation::Stop;
+                    }
+                    if key.modifiers.is_empty()
+                        && navigation
+                            .list_navigation
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(|list| list.handle_key(&key.key.logical_key))
+                    {
+                        return EventPropagation::Stop;
+                    }
+                }
+                EventPropagation::Continue
+            }),
+        );
+        (
+            view.on_cleanup(move || {
+                cleanup.borrow_mut().remove(&input_id);
+            }),
+            input_id,
+        )
+    }
+    pub fn control<V: IntoView + 'static>(&self, view: V) -> impl View + use<V> {
         self.control_if(view, || true)
     }
-    pub fn control_if<V: View + 'static, E: Fn() -> bool + 'static>(
+    pub fn control_if<V: IntoView + 'static, E: Fn() -> bool + 'static>(
         &self,
         view: V,
         enabled: E,
     ) -> impl View + use<V, E> {
-        self.register_control(view, enabled, true)
+        self.register_control(view.into_view(), enabled, true)
     }
     fn register_control<V: View + 'static, E: Fn() -> bool + 'static>(
         &self,

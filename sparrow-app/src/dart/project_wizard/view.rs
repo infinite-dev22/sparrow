@@ -1,10 +1,12 @@
 //! New Dart and Flutter project form.
 
 use super::{PLATFORMS, TEMPLATES};
-use crate::widgets::{labeled_checkbox, radio_group, text_input};
+use crate::widgets::{
+    TextField, labeled_checkbox, m3_from_config, radio_group,
+};
 use crate::{config::color::SparrowColor, window_tab::WindowTabData};
 use floem::{
-    View,
+    IntoView, View,
     reactive::{SignalGet, SignalUpdate, SignalWith},
     views::{Decorators, container, dyn_stack, label, stack},
 };
@@ -19,7 +21,9 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
     let empty = wizard.empty;
     let message = wizard.message;
     let config = window.common.config;
-    let name = text_input(wizard.name, config);
+    let name = TextField::new(wizard.name)
+        .colors(move || m3_from_config(config))
+        .into_view();
     let name_id = name.id();
     floem::reactive::create_effect(move |_| {
         if active.get() {
@@ -35,7 +39,8 @@ pub fn view(window: Rc<WindowTabData>) -> impl View {
                 label(|| "Project name"),
                 name,
                 label(|| "Parent directory (absolute path)"),
-                text_input(wizard.parent, config),
+                TextField::new(wizard.parent)
+                    .colors(move || m3_from_config(config)),
                 label(|| "Project type"),
                 radio_group(template, TEMPLATES.map(str::to_owned), config),
                 labeled_checkbox(
